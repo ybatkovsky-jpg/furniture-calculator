@@ -1,0 +1,11 @@
+роект: Telegram-бот для расчёта стоимости корпусной мебели.
+Стек: Python 3.12, FastAPI, aiogram 3, SQLite, openpyxl, ReportLab.
+
+Правила:
+- Пиши на Python 3.12 с type hints
+- Используй async/await везде
+- Модели данных — SQLAlchemy 2.0
+- FSM для Telegram — через aiogram StatesGroup
+- Все цены в рублях, Float
+- Комментарии на русском
+- Не используй print() — используй logging

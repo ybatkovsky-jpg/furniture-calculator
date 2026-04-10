@@ -9,7 +9,7 @@ import logging
 from app.config import settings
 from app.db import init_db
 from app.bot.bot import bot, dp, setup_bot_commands
-from app.bot.handlers import start_router, price_router
+from app.bot.handlers import start_router, price_router, project_router
 
 # Логирование
 logging.basicConfig(
@@ -35,6 +35,7 @@ async def main():
     # 2. Подключаем routers (обработчики)
     dp.include_router(start_router)
     dp.include_router(price_router)
+    dp.include_router(project_router)
     logger.info("✓ Handlers подключены")
     
     # 3. Устанавливаем команды бота

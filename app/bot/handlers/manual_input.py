@@ -27,6 +27,8 @@ async def start_manual_input(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     project_id = data.get('project_id')
 
+    print(f"DEBUG: start_manual_input - data={data}, project_id={project_id}")
+
     if not project_id:
         await callback.message.answer("Ошибка: проект не найден. Начните с создания нового проекта.")
         await callback.answer()
@@ -289,16 +291,22 @@ async def process_module_action(callback: CallbackQuery, state: FSMContext):
                     await session.commit()
                 break
 
-        await state.clear()
-
         await callback.message.answer(
             f"✅ Ввод модулей завершён!\n"
             f"Добавлено модулей: {len(current_modules)}\n\n"
             "Теперь выберите материалы для изготовления."
         )
-        
-        # Начинаем выбор материалов
+
+        if not calculation_id:
+            await callback.message.answer("❌ Ошибка: ID расчёта не найден")
+            await callback.answer()
+            return
+
+        # Начинаем выбор материалов (состояние не очищаем, так как процесс продолжается)
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"STARTING MATERIAL SELECTION: calculation_id={calculation_id}")
         from app.bot.handlers.materials import start_material_selection
-        await start_material_selection(callback.message, calculation_id)
+        await start_material_selection(callback.message, calculation_id, state)
 
     await callback.answer()

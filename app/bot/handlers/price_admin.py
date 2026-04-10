@@ -42,6 +42,11 @@ async def receive_price_document(message: Message, state: FSMContext):
         await message.answer("Ошибка: нужен файл в формате .xlsx. Попробуйте еще раз.")
         return
 
+    # Проверяем, что пользователь существует
+    if not message.from_user:
+        await message.answer("Ошибка: пользователь не найден.")
+        return
+
     with tempfile.TemporaryDirectory() as tmpdir:
         target_path = Path(tmpdir) / file_name
         await document.download(destination_file=str(target_path))
@@ -96,6 +101,11 @@ async def cmd_price_search(message: Message):
 
 @router.message(Command("price_edit"))
 async def cmd_price_edit(message: Message):
+    # Проверяем, что пользователь существует
+    if not message.from_user:
+        await message.answer("Ошибка: пользователь не найден.")
+        return
+
     text = message.text or ""
     parts = text.split(maxsplit=2)
     if len(parts) < 3:

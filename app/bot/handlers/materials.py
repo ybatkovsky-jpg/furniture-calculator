@@ -15,15 +15,40 @@ from app.models.calculation import Calculation
 router = Router()
 
 
-async def start_material_selection(message: Message, calculation_id: int):
-    """Начинает процесс выбора материалов."""
-    # Сохраняем calculation_id в состоянии
-    await message.bot.get('fsm_storage').update_data(
-        user=message.from_user.id,
-        chat=message.chat.id,
-        data={'calculation_id': calculation_id, 'selected_materials': {}, 'selected_hardware': {}}
-    )
+def get_calculation_id(user_id: int) -> int | None:
+    """Получает calculation_id из глобального словаря."""
+    global _user_calculation_ids
+    if '_user_calculation_ids' not in globals():
+        _user_calculation_ids = {}
     
+    calc_id = _user_calculation_ids.get(user_id)
+    print(f"DEBUG: get_calculation_id for user {user_id}: {calc_id}")
+    print(f"DEBUG: _user_calculation_ids = {_user_calculation_ids}")
+    return calc_id
+
+
+async def start_material_selection(message: Message, calculation_id: int, state: FSMContext):
+    """Начинает процесс выбора материалов."""
+    # Проверяем, что пользователь существует
+    if not message.from_user:
+        await message.answer("Ошибка: пользователь не найден.")
+        return
+
+    print(f"DEBUG: start_material_selection called with calculation_id={calculation_id}, user_id={message.from_user.id}")
+
+    # Сохраняем calculation_id в состоянии FSM
+    await state.update_data(calculation_id=calculation_id)
+
+    # Также сохраняем в глобальном словаре для совместимости
+    global _user_calculation_ids
+    if '_user_calculation_ids' not in globals():
+        _user_calculation_ids = {}
+    _user_calculation_ids[message.from_user.id] = calculation_id
+
+    print(f"DEBUG: saved calculation_id {calculation_id} for user {message.from_user.id}")
+    print(f"DEBUG: _user_calculation_ids = {_user_calculation_ids}")
+    print(f"DEBUG: state data after update: {await state.get_data()}")
+
     # Начинаем с выбора ЛДСП
     await select_ldsp(message)
 
@@ -74,7 +99,27 @@ async def select_ldsp(message: Message):
 @router.callback_query(F.data.startswith("ldsp:"))
 async def process_ldsp_selection(callback: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор ЛДСП."""
+    # Проверяем, что пользователь существует
+    if not callback.from_user:
+        await callback.answer("Ошибка: пользователь не найден")
+        return
+
     ldsp_id = int(callback.data.split(":")[1])
+
+    # Получаем calculation_id из глобального словаря (приоритет) или состояния FSM
+    calculation_id = get_calculation_id(callback.from_user.id)
+    if not calculation_id:
+        data = await state.get_data()
+        calculation_id = data.get('calculation_id')
+
+    print(f"DEBUG: process_ldsp_selection - calculation_id={calculation_id}")
+
+    if not calculation_id:
+        await callback.answer("Ошибка: не найден ID расчёта")
+        return
+
+    # Сохраняем calculation_id в состоянии для будущих вызовов
+    await state.update_data(calculation_id=calculation_id)
     
     # Получаем данные о выбранном ЛДСП
     async for session in get_session():
@@ -84,7 +129,7 @@ async def process_ldsp_selection(callback: CallbackQuery, state: FSMContext):
             return
         break
 
-    # Сохраняем выбор ЛДСП
+    # Сохраняем calculation_id и выбор ЛДСП в состоянии
     data = await state.get_data()
     selected_materials = data.get('selected_materials', {})
     selected_materials['ldsp'] = {
@@ -93,7 +138,10 @@ async def process_ldsp_selection(callback: CallbackQuery, state: FSMContext):
         'price': ldsp_item.unit_price,
         'brand': ldsp_item.brand
     }
-    await state.update_data(selected_materials=selected_materials)
+    await state.update_data(
+        calculation_id=calculation_id,
+        selected_materials=selected_materials
+    )
     
     await callback.message.answer(
         f"✅ Выбрано ЛДСП: {ldsp_item.name}\n"
@@ -152,7 +200,22 @@ async def select_facade_category(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("facade_cat:"))
 async def process_facade_category(callback: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор категории фасадов."""
+    # Проверяем, что пользователь существует
+    if not callback.from_user:
+        await callback.answer("Ошибка: пользователь не найден")
+        return
+
     category = callback.data.split(":", 1)[1]
+
+    # Получаем calculation_id из глобального словаря (приоритет) или состояния FSM
+    calculation_id = get_calculation_id(callback.from_user.id)
+    if not calculation_id:
+        data = await state.get_data()
+        calculation_id = data.get('calculation_id')
+
+    if not calculation_id:
+        await callback.answer("Ошибка: не найден ID расчёта")
+        return
     
     # Получаем фасады выбранной категории
     async for session in get_session():
@@ -169,6 +232,9 @@ async def process_facade_category(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer(f"❌ В категории '{category}' нет доступных позиций.")
         return
 
+    # Сохраняем calculation_id в состоянии
+    await state.update_data(calculation_id=calculation_id)
+    
     # Создаём клавиатуру с фасадами
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     keyboard = []
@@ -200,7 +266,22 @@ async def process_facade_category(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("facade:"))
 async def process_facade_selection(callback: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор фасада."""
+    # Проверяем, что пользователь существует
+    if not callback.from_user:
+        await callback.answer("Ошибка: пользователь не найден")
+        return
+
     facade_id = int(callback.data.split(":")[1])
+
+    # Получаем calculation_id из глобального словаря (приоритет) или состояния FSM
+    calculation_id = get_calculation_id(callback.from_user.id)
+    if not calculation_id:
+        data = await state.get_data()
+        calculation_id = data.get('calculation_id')
+
+    if not calculation_id:
+        await callback.answer("Ошибка: не найден ID расчёта")
+        return
     
     # Получаем данные о выбранном фасаде
     async for session in get_session():
@@ -210,6 +291,9 @@ async def process_facade_selection(callback: CallbackQuery, state: FSMContext):
             return
         break
 
+    # Сохраняем calculation_id в состоянии
+    await state.update_data(calculation_id=calculation_id)
+    
     # Проверяем, требуется ли ручной ввод цены
     if facade_item.requires_manual_price:
         # Сохраняем временно выбранный фасад и переходим к вводу цены
@@ -259,11 +343,20 @@ async def process_manual_price(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("Введите корректную цену (положительное число):")
         return
-
-    # Получаем временные данные
+    # Получаем calculation_id из состояния
     data = await state.get_data()
+    calculation_id = data.get('calculation_id')
+    
+    if not calculation_id:
+        await message.answer("Ошибка: не найден ID расчёта")
+        return
+    
+    # Получаем временные данные
     selected_materials = data.get('selected_materials', {})
     selected_hardware = data.get('selected_hardware', {})
+    
+    # Сохраняем calculation_id в состоянии
+    await state.update_data(calculation_id=calculation_id)
     
     # Определяем, для чего вводится цена
     if 'temp_facade_id' in data:
@@ -457,7 +550,22 @@ async def select_hinge_brand(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("hinge_brand:"))
 async def process_hinge_brand(callback: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор бренда петель."""
+    # Проверяем, что пользователь существует
+    if not callback.from_user:
+        await callback.answer("Ошибка: пользователь не найден")
+        return
+
     brand = callback.data.split(":", 1)[1]
+
+    # Получаем calculation_id из глобального словаря (приоритет) или состояния FSM
+    calculation_id = get_calculation_id(callback.from_user.id)
+    if not calculation_id:
+        data = await state.get_data()
+        calculation_id = data.get('calculation_id')
+
+    if not calculation_id:
+        await callback.answer("Ошибка: не найден ID расчёта")
+        return
     
     # Получаем петли выбранного бренда
     async for session in get_session():
@@ -475,6 +583,9 @@ async def process_hinge_brand(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer(f"❌ Петли бренда '{brand}' не найдены в прайсе.")
         return
 
+    # Сохраняем calculation_id в состоянии
+    await state.update_data(calculation_id=calculation_id)
+    
     # Создаём клавиатуру с петлями
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     keyboard = []
@@ -506,7 +617,22 @@ async def process_hinge_brand(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("hinge:"))
 async def process_hinge_selection(callback: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор петель."""
+    # Проверяем, что пользователь существует
+    if not callback.from_user:
+        await callback.answer("Ошибка: пользователь не найден")
+        return
+
     hinge_id = int(callback.data.split(":")[1])
+
+    # Получаем calculation_id из глобального словаря (приоритет) или состояния FSM
+    calculation_id = get_calculation_id(callback.from_user.id)
+    if not calculation_id:
+        data = await state.get_data()
+        calculation_id = data.get('calculation_id')
+
+    if not calculation_id:
+        await callback.answer("Ошибка: не найден ID расчёта")
+        return
     
     # Получаем данные о выбранных петлях
     async for session in get_session():
@@ -516,6 +642,9 @@ async def process_hinge_selection(callback: CallbackQuery, state: FSMContext):
             return
         break
 
+    # Сохраняем calculation_id в состоянии
+    await state.update_data(calculation_id=calculation_id)
+    
     # Проверяем ручной ввод цены
     if hinge_item.requires_manual_price:
         await state.update_data(temp_hinge_id=hinge_id)
@@ -600,7 +729,22 @@ async def select_drawer_brand(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("drawer_brand:"))
 async def process_drawer_brand(callback: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор бренда ящиков."""
+    # Проверяем, что пользователь существует
+    if not callback.from_user:
+        await callback.answer("Ошибка: пользователь не найден")
+        return
+
     brand = callback.data.split(":", 1)[1]
+
+    # Получаем calculation_id из глобального словаря (приоритет) или состояния FSM
+    calculation_id = get_calculation_id(callback.from_user.id)
+    if not calculation_id:
+        data = await state.get_data()
+        calculation_id = data.get('calculation_id')
+
+    if not calculation_id:
+        await callback.answer("Ошибка: не найден ID расчёта")
+        return
     
     # Получаем ящики выбранного бренда
     async for session in get_session():
@@ -620,6 +764,9 @@ async def process_drawer_brand(callback: CallbackQuery, state: FSMContext):
         await finish_material_selection(callback.message, state)
         return
 
+    # Сохраняем calculation_id в состоянии
+    await state.update_data(calculation_id=calculation_id)
+    
     # Создаём клавиатуру с ящиками
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     keyboard = []
@@ -651,7 +798,22 @@ async def process_drawer_brand(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("drawer:"))
 async def process_drawer_selection(callback: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор ящиков."""
+    # Проверяем, что пользователь существует
+    if not callback.from_user:
+        await callback.answer("Ошибка: пользователь не найден")
+        return
+
     drawer_id = int(callback.data.split(":")[1])
+
+    # Получаем calculation_id из глобального словаря (приоритет) или состояния FSM
+    calculation_id = get_calculation_id(callback.from_user.id)
+    if not calculation_id:
+        data = await state.get_data()
+        calculation_id = data.get('calculation_id')
+
+    if not calculation_id:
+        await callback.answer("Ошибка: не найден ID расчёта")
+        return
     
     # Получаем данные о выбранных ящиках
     async for session in get_session():
@@ -661,6 +823,9 @@ async def process_drawer_selection(callback: CallbackQuery, state: FSMContext):
             return
         break
 
+    # Сохраняем calculation_id в состоянии
+    await state.update_data(calculation_id=calculation_id)
+    
     # Проверяем ручной ввод цены
     if drawer_item.requires_manual_price:
         await state.update_data(temp_drawer_id=drawer_id)

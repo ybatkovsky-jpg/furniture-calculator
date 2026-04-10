@@ -40,8 +40,19 @@ async def process_client_phone(message: Message, state: FSMContext):
 async def process_client_address(message: Message, state: FSMContext):
     """Обрабатывает ввод адреса и создаёт проект."""
     data = await state.get_data()
+
+    # Проверяем, не создан ли уже проект
+    if data.get('project_created'):
+        await message.answer("Проект уже создан. Выберите способ ввода данных.")
+        return
+
     data['client_address'] = message.text
-    
+
+    # Проверяем, что пользователь существует
+    if not message.from_user:
+        await message.answer("Ошибка: пользователь не найден.")
+        return
+
     # Создаём проект в БД
     async for session in get_session():
         project = Project(
@@ -54,12 +65,27 @@ async def process_client_address(message: Message, state: FSMContext):
         session.add(project)
         await session.commit()
         await session.refresh(project)
-        
+
         # Сохраняем ID проекта в состоянии для дальнейшего использования
-        await state.update_data(project_id=project.id)
+        await state.update_data(project_id=project.id, project_created=True)
         break
-    
-    await state.clear()
+
+    # Клавиатура для выбора способа ввода данных
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📷 Фото чертежа", callback_data="input_photo")],
+            [InlineKeyboardButton(text="✏️ Вручную", callback_data="input_manual")]
+        ]
+    )
+
+    await message.answer(
+        f"Проект создан!\n\n"
+        f"Клиент: {data['client_name']}\n"
+        f"Телефон: {data['client_phone']}\n"
+        f"Адрес: {data['client_address']}\n\n"
+        f"Как ввести данные?",
+        reply_markup=keyboard
+    )
     
     # Клавиатура для выбора способа ввода данных
     keyboard = InlineKeyboardMarkup(
@@ -91,16 +117,41 @@ async def choose_photo_input(callback, state: FSMContext):
 @router.callback_query(F.data == "input_manual")
 async def choose_manual_input(callback, state: FSMContext):
     """Обработка выбора ручного ввода."""
-    # Сохраняем project_id в состоянии для передачи в manual_input
+    # Получаем данные проекта из состояния
     data = await state.get_data()
-    await state.update_data(project_id=data.get('project_id'))
-    
+    project_id = data.get('project_id')
+
+    import logging
+    logger = logging.getLogger(__name__)
+
+    logger.info(f"USER CHOSE MANUAL INPUT: project_id={project_id}")
+
+    if not project_id:
+        await callback.message.answer("Ошибка: проект не найден. Начните с создания нового проекта.")
+        await callback.answer()
+        return
+
+    # Создаём расчёт для проекта
+    from app.models.calculation import Calculation
+    from app.db.session import get_session
+
+    async for session in get_session():
+        calculation = Calculation(project_id=project_id, modules=[])
+        session.add(calculation)
+        await session.commit()
+        await session.refresh(calculation)
+
+        # Сохраняем calculation_id в состоянии
+        await state.update_data(calculation_id=calculation.id, current_modules=[])
+        logger.info(f"CALCULATION CREATED: id={calculation.id} for project {project_id}")
+        break
+
     # Перенаправляем на обработчик ручного ввода
     await callback.message.answer("Переходим к ручному вводу модулей.")
     # Устанавливаем состояние для начала ручного ввода
     from app.bot.states.manual_input import ManualInputStates
     await state.set_state(ManualInputStates.waiting_for_module_type)
-    
+
     from app.bot.keyboards.inline import get_module_type_keyboard
     await callback.message.answer(
         "Выберите тип модуля:",

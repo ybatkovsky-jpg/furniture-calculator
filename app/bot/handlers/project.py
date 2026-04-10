@@ -91,7 +91,19 @@ async def choose_photo_input(callback, state: FSMContext):
 @router.callback_query(F.data == "input_manual")
 async def choose_manual_input(callback, state: FSMContext):
     """Обработка выбора ручного ввода."""
+    # Сохраняем project_id в состоянии для передачи в manual_input
+    data = await state.get_data()
+    await state.update_data(project_id=data.get('project_id'))
+    
+    # Перенаправляем на обработчик ручного ввода
     await callback.message.answer("Переходим к ручному вводу модулей.")
-    # Здесь можно перейти к следующему шагу FSM для ручного ввода
-    # Пока просто ответим
+    # Устанавливаем состояние для начала ручного ввода
+    from app.bot.states.manual_input import ManualInputStates
+    await state.set_state(ManualInputStates.waiting_for_module_type)
+    
+    from app.bot.keyboards.inline import get_module_type_keyboard
+    await callback.message.answer(
+        "Выберите тип модуля:",
+        reply_markup=get_module_type_keyboard()
+    )
     await callback.answer()

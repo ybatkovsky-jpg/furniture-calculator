@@ -277,7 +277,7 @@ async def process_module_action(callback: CallbackQuery, state: FSMContext):
             "Выберите тип следующего модуля:",
             reply_markup=get_module_type_keyboard()
         )
-    elif action == "done":
+    elif action == "select_materials":
         # Сохраняем все модули в базу данных
         data = await state.get_data()
         current_modules = data.get('current_modules', [])

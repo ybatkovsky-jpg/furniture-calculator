@@ -878,7 +878,7 @@ async def finish_material_selection(message: Message, state: FSMContext):
             await session.commit()
         break
 
-    await state.clear()
+    # await state.clear()  # Не очищаем состояние, чтобы сохранить calculation_id
     
     # Показываем резюме выбранных материалов
     summary = "✅ Выбор материалов завершён!\n\n"
@@ -904,5 +904,13 @@ async def finish_material_selection(message: Message, state: FSMContext):
         summary += f"📦 Ящики: {drawers['name']} ({drawers['price']}₽)\n"
     
     summary += "\nТеперь можно запустить расчёт стоимости!"
-    
-    await message.answer(summary)
+
+    # Клавиатура для запуска расчёта
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🧮 Рассчитать стоимость", callback_data=f"calculate_cost:{calculation_id}")]
+        ]
+    )
+
+    await message.answer(summary, reply_markup=keyboard)

@@ -86,23 +86,6 @@ async def process_client_address(message: Message, state: FSMContext):
         f"Как ввести данные?",
         reply_markup=keyboard
     )
-    
-    # Клавиатура для выбора способа ввода данных
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📷 Фото чертежа", callback_data="input_photo")],
-            [InlineKeyboardButton(text="✏️ Вручную", callback_data="input_manual")]
-        ]
-    )
-    
-    await message.answer(
-        f"Проект создан!\n\n"
-        f"Клиент: {data['client_name']}\n"
-        f"Телефон: {data['client_phone']}\n"
-        f"Адрес: {data['client_address']}\n\n"
-        f"Как ввести данные?",
-        reply_markup=keyboard
-    )
 
 
 @router.callback_query(F.data == "input_photo")

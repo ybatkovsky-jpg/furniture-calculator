@@ -78,7 +78,32 @@ def get_module_actions_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [
             InlineKeyboardButton(text="➕ Ещё модуль", callback_data="action:add_module"),
-            InlineKeyboardButton(text="✅ Готово", callback_data="action:done")
+            InlineKeyboardButton(text="✅ Выбрать материалы", callback_data="action:select_materials")
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_discount_keyboard(calculation) -> InlineKeyboardMarkup:
+    """Клавиатура для скидок/наценок."""
+    calc_id = calculation.id
+    bonus_status = "✅ ВКЛ" if calculation.designer_bonus_enabled else "❌ ВЫКЛ"
+
+    keyboard = [
+        [
+            InlineKeyboardButton(text="Скидка %", callback_data=f"set_discount_percent:{calc_id}"),
+            InlineKeyboardButton(text="Скидка ₽", callback_data=f"set_discount_fixed:{calc_id}")
+        ],
+        [
+            InlineKeyboardButton(text="Наценка %", callback_data=f"set_discount_markup_percent:{calc_id}"),
+            InlineKeyboardButton(text="Наценка ₽", callback_data=f"set_discount_markup_fixed:{calc_id}")
+        ],
+        [
+            InlineKeyboardButton(text=f"Бонус дизайнера {bonus_status}", callback_data=f"toggle_designer_bonus:{calc_id}")
+        ],
+        [
+            InlineKeyboardButton(text="Убрать скидку", callback_data=f"remove_discount:{calc_id}"),
+            InlineKeyboardButton(text="← Назад к смете", callback_data=f"back_to_estimate:{calc_id}")
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)

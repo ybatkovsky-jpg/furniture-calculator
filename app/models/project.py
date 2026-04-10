@@ -41,5 +41,11 @@ class Project(Base):
         cascade="all, delete-orphan"
     )
 
+    # Свойство для получения текущего/первого расчёта
+    @property
+    def calculation(self):
+        """Получить первый/текущий расчёт проекта."""
+        return self.calculations[0] if self.calculations else None
+
     def __repr__(self):
         return f"<Project {self.client_name} - {self.project_name}>"

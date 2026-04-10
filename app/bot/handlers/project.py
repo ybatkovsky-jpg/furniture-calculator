@@ -13,9 +13,18 @@ from app.models.project import Project
 router = Router()
 
 
+@router.message(F.text == "/reset")
+async def reset_state(message: Message, state: FSMContext):
+    """Сброс состояния пользователя."""
+    await state.clear()
+    await message.answer("✅ Состояние сброшено. Вы можете начать заново.")
+
+
 @router.message(F.text == "📁 Новый проект")
 async def start_project_creation(message: Message, state: FSMContext):
     """Начинает процесс создания нового проекта."""
+    # Очищаем состояние перед началом нового проекта
+    await state.clear()
     await state.set_state(ProjectCreationStates.waiting_for_client_name)
     await message.answer("Введите ФИО клиента:")
 
@@ -91,9 +100,25 @@ async def process_client_address(message: Message, state: FSMContext):
 @router.callback_query(F.data == "input_photo")
 async def choose_photo_input(callback, state: FSMContext):
     """Обработка выбора ввода через фото."""
-    await callback.message.answer("Отправьте фото чертежа для распознавания.")
-    # Здесь можно установить состояние для ожидания фото
-    # Пока просто ответим
+    data = await state.get_data()
+    project_id = data.get('project_id')
+
+    if not project_id:
+        await callback.message.answer("Ошибка: проект не найден. Начните с создания нового проекта.")
+        await callback.answer()
+        return
+
+    # Сохраняем project_id для обработчика изображений
+    await state.update_data(project_id=project_id)
+
+    # Переключаемся на состояние ожидания фото
+    from app.bot.handlers.image import ImageRecognitionState
+    await state.set_state(ImageRecognitionState.waiting_for_photo)
+
+    await callback.message.answer(
+        "📷 Отправьте фотографию чертежа кухонной мебели.\n\n"
+        "Убедитесь, что на фото хорошо видны размеры модулей и их расположение."
+    )
     await callback.answer()
 
 

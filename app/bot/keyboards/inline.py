@@ -107,3 +107,17 @@ def get_discount_keyboard(calculation) -> InlineKeyboardMarkup:
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def recognition_result_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для подтверждения результатов распознавания."""
+    keyboard = [
+        [
+            InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_recognition"),
+            InlineKeyboardButton(text="✏️ Скорректировать", callback_data="correct_recognition")
+        ],
+        [
+            InlineKeyboardButton(text="📷 Новое фото", callback_data="retry_recognition")
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)

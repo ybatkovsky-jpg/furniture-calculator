@@ -26,6 +26,7 @@ async def setup_bot_commands():
         ("start", "⏬ Главное меню"),
         ("help", "❓ Помощь"),
         ("price_list", "💰 Список цен"),
+        ("reset", "🔄 Сброс состояния"),
     ]
     
     from aiogram.types import BotCommand

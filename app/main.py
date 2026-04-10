@@ -9,7 +9,7 @@ import logging
 from app.config import settings
 from app.db import init_db
 from app.bot.bot import bot, dp, setup_bot_commands
-from app.bot.handlers import start_router, price_router, project_router, manual_input_router, materials_router, calculation_router, discounts_router
+from app.bot.handlers import start_router, price_router, project_router, image_router, manual_input_router, materials_router, calculation_router, discounts_router
 
 # Логирование
 logging.basicConfig(
@@ -40,6 +40,7 @@ async def main():
     dp.include_router(start_router)
     dp.include_router(price_router)
     dp.include_router(project_router)
+    dp.include_router(image_router)
     dp.include_router(manual_input_router)
     dp.include_router(materials_router)
     dp.include_router(calculation_router)

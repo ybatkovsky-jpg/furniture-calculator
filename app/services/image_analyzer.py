@@ -286,53 +286,148 @@ class GeminiImageAnalyzer:
         if not result.modules:
             return result
 
+        logger.info(f"Исходные модули: {[f'{m.type} {m.width}x{m.depth}x{m.height}' for m in result.modules]}")
         processed_modules = []
 
-        # Группируем модули по типу и размерам для выявления потенциальных проблем
-        module_groups = {}
+        # Собираем модули
+        valid_corners = []
+        regular_modules = []
+
         for module in result.modules:
+            if module.type == "corner":
+                # Corner модули должны быть квадратными
+                if module.width == module.depth and module.width in [600, 900, 1000]:
+                    valid_corners.append(module)
+                else:
+                    # Неквадратный corner - переводим в обычный модуль
+                    module.type = "upper_base"  # Предполагаем, что corner был upper_base
+                    module.is_corner = False
+                    regular_modules.append(module)
+                    logger.warning(f"Неквадратный corner модуль {module.width}x{module.depth} переведен в upper_base")
+            else:
+                regular_modules.append(module)
+
+        # Оставляем только уникальные corner модули (по width и depth, игнорируя height)
+        unique_corners = {}
+        for corner in valid_corners:
+            key = f"{corner.width}_{corner.depth}"  # Игнорируем height для corner модулей
+            if key not in unique_corners:
+                unique_corners[key] = corner
+            else:
+                logger.warning(f"Найден дубликат corner модуля {key}: заменен на новый")
+
+        processed_modules.extend(unique_corners.values())
+
+        duplicates_removed = len(valid_corners) - len(unique_corners)
+        if duplicates_removed > 0:
+            logger.warning(f"Удалены дубликаты corner модулей: {duplicates_removed} шт")
+
+        logger.info(f"Corner модули: {len(unique_corners)} уникальных")
+        logger.info(f"Regular модули: {len(regular_modules)} шт")
+
+        # Обрабатываем обычные модули
+        module_groups = {}
+        for module in regular_modules:
             key = f"{module.type}_{module.width}_{module.depth}_{module.height}"
             if key not in module_groups:
                 module_groups[key] = []
             module_groups[key].append(module)
 
-        # Анализируем группы и исправляем потенциальные проблемы
+        logger.info(f"Группы модулей: {list(module_groups.keys())}")
+
+        # Анализируем группы обычных модулей
         for key, modules in module_groups.items():
             if len(modules) == 1:
-                # Одиночный модуль - добавляем как есть
-                processed_modules.extend(modules)
+                processed_modules.append(modules[0])
             else:
-                # Несколько модулей с одинаковыми размерами
                 module_type, dimensions = key.split('_', 1)
 
-                if module_type == "corner":
-                    # Для corner модулей оставляем только один
-                    processed_modules.append(modules[0])
-                    logger.info(f"Убраны дубликаты corner модулей: {len(modules)-1} шт")
-                elif module_type in ["upper_base", "lower_base"]:
-                    # Для обычных баз проверяем на возможные ошибки интерпретации угловых модулей
+                if module_type in ["upper_base", "lower_base"]:
                     width, depth, height = map(int, dimensions.split('_'))
 
-                    # Если есть много модулей с шириной 600 и глубиной 320,
-                    # и есть corner модуль шириной 600,
-                    # возможно, это неправильная интерпретация углового модуля
-                    if width == 600 and depth == 320 and len(modules) >= 2:
-                        # Проверяем, есть ли corner модуль с шириной 600
-                        has_corner_600 = any(m.type == "corner" and m.width == 600 for m in result.modules)
+                    # Проверяем на возможные ошибки интерпретации угловых модулей
+                    # Если есть модули 600x320 и есть corner модуль 600x600
+                    if width == 600 and depth == 320:
+                        # Проверяем наличие corner модулей 600x600
+                        has_corner_600 = any(c.width == 600 and c.depth == 600 for c in unique_corners.values())
                         if has_corner_600:
-                            # Возможно, эти модули - ошибка интерпретации
-                            # Уменьшаем количество или удаляем некоторые
-                            processed_modules.append(modules[0])  # Оставляем только один
-                            logger.warning(f"Возможная ошибка интерпретации углового модуля: оставлен 1 модуль {key} из {len(modules)}")
+                            # Есть corner 600x600 - модули 600x320 могут быть ошибкой интерпретации
+                            # Не добавляем их вообще, или оставляем максимум 1
+                            total_quantity = sum(m.quantity for m in modules)
+                            if total_quantity <= 1:
+                                # Оставляем только если всего 1
+                                combined_module = modules[0].__class__(
+                                    type=modules[0].type,
+                                    width=modules[0].width,
+                                    depth=modules[0].depth,
+                                    height=modules[0].height,
+                                    quantity=1,
+                                    has_glass=modules[0].has_glass,
+                                    facades=modules[0].facades,
+                                    drawers=modules[0].drawers,
+                                    shelves=modules[0].shelves,
+                                    is_corner=modules[0].is_corner
+                                )
+                                processed_modules.append(combined_module)
+                                logger.warning(f"Corner 600x600 найден: оставлен 1 модуль 600x320 (возможно, это часть углового)")
+                            else:
+                                # Если больше 1, возможно, это ошибка - не добавляем
+                                logger.warning(f"Corner 600x600 найден: пропущены {total_quantity} модулей 600x320 (вероятно, ошибка интерпретации)")
                         else:
-                            processed_modules.extend(modules)
+                            # Оставляем все, но объединяем в один модуль с суммарным quantity
+                            total_quantity = sum(m.quantity for m in modules)
+                            combined_module = modules[0].__class__(
+                                type=modules[0].type,
+                                width=modules[0].width,
+                                depth=modules[0].depth,
+                                height=modules[0].height,
+                                quantity=total_quantity,
+                                has_glass=modules[0].has_glass,
+                                facades=modules[0].facades,
+                                drawers=modules[0].drawers,
+                                shelves=modules[0].shelves,
+                                is_corner=modules[0].is_corner
+                            )
+                            processed_modules.append(combined_module)
+                    elif len(modules) <= 3:
+                        # Оставляем все, но объединяем в один модуль с суммарным quantity
+                        total_quantity = sum(m.quantity for m in modules)
+                        combined_module = modules[0].__class__(
+                            type=modules[0].type,
+                            width=modules[0].width,
+                            depth=modules[0].depth,
+                            height=modules[0].height,
+                            quantity=total_quantity,
+                            has_glass=modules[0].has_glass,
+                            facades=modules[0].facades,
+                            drawers=modules[0].drawers,
+                            shelves=modules[0].shelves,
+                            is_corner=modules[0].is_corner
+                        )
+                        processed_modules.append(combined_module)
                     else:
-                        processed_modules.extend(modules)
+                        # Слишком много одинаковых модулей - оставляем только один
+                        processed_modules.append(modules[0])
+                        logger.warning(f"Слишком много одинаковых модулей {key}: оставлен 1 из {len(modules)}")
                 else:
-                    # Для других типов оставляем все
-                    processed_modules.extend(modules)
+                    # Для других типов объединяем quantity
+                    total_quantity = sum(m.quantity for m in modules)
+                    combined_module = modules[0].__class__(
+                        type=modules[0].type,
+                        width=modules[0].width,
+                        depth=modules[0].depth,
+                        height=modules[0].height,
+                        quantity=total_quantity,
+                        has_glass=modules[0].has_glass,
+                        facades=modules[0].facades,
+                        drawers=modules[0].drawers,
+                        shelves=modules[0].shelves,
+                        is_corner=modules[0].is_corner
+                    )
+                    processed_modules.append(combined_module)
 
         logger.info(f"Постобработка: {len(result.modules)} -> {len(processed_modules)} модулей")
+        logger.info(f"Итоговые модули: {[f'{m.type} {m.width}x{m.depth}x{m.height}' for m in processed_modules]}")
 
         return RecognitionResult(
             modules=processed_modules,

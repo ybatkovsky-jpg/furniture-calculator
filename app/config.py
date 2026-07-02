@@ -16,7 +16,19 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str = Field(default="", description="Токен Telegram-бота")
 
-    # Gemini Flash
+    # Vision LLM — Z.ai (основной: GLM-4.6V) / OpenRouter (Qwen3-VL)
+    zai_api_key: str = Field(default="", description="Ключ Z.ai API (GLM-4.6V, GLM-OCR)")
+    openrouter_api_key: str = Field(default="", description="Ключ OpenRouter API (Qwen3-VL)")
+    vision_model: str = Field(
+        default="glm-5v-turbo",
+        description="Модель для распознавания чертежей (glm-4.6v / qwen/qwen3-vl-235b-a22b-instruct)"
+    )
+    vision_api_url: str = Field(
+        default="https://api.z.ai/api/paas/v4/chat/completions",
+        description="URL эндпоинта Vision API"
+    )
+
+    # Gemini Flash (устаревший, оставлен для совместимости)
     gemini_api_key: str = Field(default="", description="Ключ Google Gemini API")
 
     # База данных
@@ -42,6 +54,13 @@ class Settings(BaseSettings):
 
     # Бонус дизайнера
     designer_bonus_rate: float = 0.10
+
+    # Настройки компании для КП
+    company_name: str = "Мебельная Компания"
+    company_address: str = "г. Хабаровск, ул. Дикопольцева, 7а"
+    company_phone: str = "+7 999 256 3879"
+    company_email: str = "pro.mebel25@mail.ru"
+    kp_number_prefix: str = "КП-"
 
 
 settings = Settings()

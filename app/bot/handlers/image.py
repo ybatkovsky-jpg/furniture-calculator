@@ -70,9 +70,9 @@ async def process_photo(message: Message, state: FSMContext, bot: Bot):
         # Показываем статус
         status_msg = await message.answer("🔍 Распознаю чертёж...")
 
-        # Анализируем через Gemini
+        # Анализируем через Vision LLM (асинхронно)
         analyzer = GeminiImageAnalyzer()
-        result = analyzer.analyze_drawing(image_path)
+        result = await analyzer.analyze_drawing(image_path)
 
         # Логируем результат для отладки
         logger.info(f"Recognition result: confidence={result.confidence}, modules={len(result.modules)}")

@@ -20,6 +20,39 @@ class DiscountState(StatesGroup):
     entering_value = State()
 
 
+@router.callback_query(F.data.startswith("discount_menu:"))
+async def show_discount_menu(callback: CallbackQuery):
+    """Показать меню скидок/наценок."""
+    parts = callback.data.split(":")
+    if len(parts) > 1:
+        calculation_id = int(parts[1])
+    else:
+        await callback.answer("Ошибка: расчёт не найден.")
+        return
+
+    async for session in get_session():
+        calculation = await session.get(Calculation, calculation_id)
+        if not calculation:
+            await callback.message.answer("Ошибка: расчёт не найден.")
+            await callback.answer()
+            return
+
+        price = calculation.final_price_cash or calculation.total_base_cash or 0
+        text = (
+            "💰 Скидка / наценка / бонус\n\n"
+            f"Текущая цена наличка: {price:,.0f} ₽\n"
+            f"Бонус дизайнера: {'✅ ВКЛ' if calculation.designer_bonus_enabled else '❌ ВЫКЛ'}\n\n"
+            "Выберите действие:"
+        )
+
+        from app.bot.keyboards.inline import get_discount_keyboard
+        keyboard = get_discount_keyboard(calculation)
+        await callback.message.edit_text(text, reply_markup=keyboard)
+        break
+
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("set_discount_"))
 async def start_discount_input(callback: CallbackQuery, state: FSMContext):
     """Начинает ввод значения скидки/наценки."""
@@ -148,7 +181,7 @@ async def process_discount_value(message: Message, state: FSMContext):
                 [InlineKeyboardButton(text="📄 Скачать КП", callback_data=f"download_kp:{calculation.id}")],
                 [InlineKeyboardButton(text="✏️ Скорректировать", callback_data=f"edit_calculation:{calculation.id}")],
                 [InlineKeyboardButton(text="💰 Скидка/наценка", callback_data=f"discount_menu:{calculation.id}")],
-                [InlineKeyboardButton(text="➕ Ещё вариант", callback_data=f"new_variant:{calculation.id}")],
+                [InlineKeyboardButton(text="➕ Ещё вариант", callback_data=f"create_variant:{calculation.id}")],
             ]
         )
         await message.answer(text, reply_markup=keyboard)
@@ -296,7 +329,7 @@ async def back_to_estimate(callback: CallbackQuery):
                 [InlineKeyboardButton(text="📄 Скачать КП", callback_data=f"download_kp:{calculation.id}")],
                 [InlineKeyboardButton(text="✏️ Скорректировать", callback_data=f"edit_calculation:{calculation.id}")],
                 [InlineKeyboardButton(text="💰 Скидка/наценка", callback_data=f"discount_menu:{calculation.id}")],
-                [InlineKeyboardButton(text="➕ Ещё вариант", callback_data=f"new_variant:{calculation.id}")],
+                [InlineKeyboardButton(text="➕ Ещё вариант", callback_data=f"create_variant:{calculation.id}")],
             ]
         )
         await callback.message.answer(text, reply_markup=keyboard)

@@ -84,7 +84,7 @@ async def show_estimate(message: Message, calculation: Calculation, result):
             [InlineKeyboardButton(text="📄 Скачать КП", callback_data=f"download_kp:{calculation.id}")],
             [InlineKeyboardButton(text="✏️ Скорректировать", callback_data=f"edit_calculation:{calculation.id}")],
             [InlineKeyboardButton(text="💰 Скидка/наценка", callback_data=f"discount_menu:{calculation.id}")],
-            [InlineKeyboardButton(text="➕ Ещё вариант", callback_data=f"new_variant:{calculation.id}")],
+            [InlineKeyboardButton(text="➕ Ещё вариант", callback_data=f"create_variant:{calculation.id}")],
         ]
     )
 
@@ -172,101 +172,3 @@ def _extract_discount_info(calculation: Calculation) -> DiscountInfo:
     )
 
 
-# Обработчики для кнопок в смете
-@router.callback_query(F.data.startswith("download_kp"))
-async def download_kp(callback: CallbackQuery):
-    """Скачать коммерческое предложение."""
-    parts = callback.data.split(":")
-    if len(parts) > 1:
-        calculation_id = int(parts[1])
-    else:
-        calculation_id = None
-
-    if not calculation_id:
-        await callback.message.answer("Ошибка: расчёт не найден.")
-        await callback.answer()
-        return
-
-    await callback.message.answer("📄 Генерация КП...")
-    # TODO: реализовать генерацию PDF с calculation_id
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("edit_calculation"))
-async def edit_calculation(callback: CallbackQuery):
-    """Скорректировать расчёт."""
-    parts = callback.data.split(":")
-    if len(parts) > 1:
-        calculation_id = int(parts[1])
-    else:
-        calculation_id = None
-
-    if not calculation_id:
-        await callback.message.answer("Ошибка: расчёт не найден.")
-        await callback.answer()
-        return
-
-    await callback.message.answer("✏️ Функция редактирования пока не реализована.")
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("new_variant"))
-async def create_new_variant(callback: CallbackQuery):
-    """Создать новый вариант расчёта."""
-    parts = callback.data.split(":")
-    if len(parts) > 1:
-        calculation_id = int(parts[1])
-    else:
-        calculation_id = None
-
-    if not calculation_id:
-        await callback.message.answer("Ошибка: расчёт не найден.")
-        await callback.answer()
-        return
-
-    await callback.message.answer("➕ Создание нового варианта...")
-    # TODO: реализовать создание нового варианта
-    await callback.answer()
-@router.callback_query(F.data.startswith("discount_menu"))
-async def show_discount_menu(callback: CallbackQuery):
-    """Показать меню скидок/наценок."""
-    parts = callback.data.split(":")
-    if len(parts) > 1:
-        calculation_id = int(parts[1])
-    else:
-        data = await state.get_data()
-        calculation_id = data.get("current_calc_id") or data.get("calculation_id")
-
-    if not calculation_id:
-        await callback.message.answer("Ошибка: расчёт не найден.")
-        await callback.answer()
-        return
-
-    async for session in get_session():
-        calculation = await session.get(Calculation, calculation_id)
-        if not calculation:
-            await callback.message.answer("Ошибка: расчёт не найден.")
-            await callback.answer()
-            return
-
-        price = calculation.final_price_cash or calculation.total_base_cash or 0
-        text = (
-            "💰 Скидка / наценка / бонус\n\n"
-            f"Текущая цена наличка: {price:,.0f} ₽\n"
-            f"Бонус дизайнера: {'✅ ВКЛ' if calculation.designer_bonus_enabled else '❌ ВЫКЛ'}\n\n"
-            "Выберите действие:"
-        )
-
-        keyboard = get_discount_keyboard(calculation)
-        await callback.message.edit_text(text, reply_markup=keyboard)
-        break
-
-    await callback.answer()
-
-
-@router.callback_query(F.data == "new_variant")
-async def create_new_variant(callback: CallbackQuery):
-    """Создать новый вариант расчёта."""
-    await callback.message.answer("➕ Создание нового варианта...")
-    # TODO: реализовать создание нового варианта
-    await callback.answer()

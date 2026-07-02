@@ -112,7 +112,9 @@ def calculate_full_cost(
         modules=modules_with_details,
         material_prices=material_prices
     )
-    result.material_cost = result.sheets_calc.total_sheets * _get_average_sheet_price(material_prices)
+    total_sheets = result.sheets_calc.total_sheets or 0
+    avg_price = _get_average_sheet_price(material_prices)
+    result.material_cost = float(total_sheets * avg_price)
 
     # 2. Расчёт кромки
     edge_prices = _extract_edge_prices(selected_materials)
@@ -121,7 +123,7 @@ def calculate_full_cost(
         edge_preset="kitchen_standard",  # по умолчанию
         edge_prices=edge_prices
     )
-    result.edge_cost = result.edge_calc.total_cost
+    result.edge_cost = float(result.edge_calc.total_cost or 0)
 
     # 3. Расчёт фасадов
     result.facade_cost = _calculate_facades_cost(modules, selected_materials)
@@ -134,13 +136,13 @@ def calculate_full_cost(
         hinge_price=hinge_price,
         drawer_prices=drawer_prices
     )
-    result.hardware_cost = result.hardware_calc.total_cost
+    result.hardware_cost = float(result.hardware_calc.total_cost or 0)
 
     # 5. Расчёт стекла
     # Преобразуем glass_items в формат для модулей
     modules_with_glass = _add_glass_to_modules(modules, glass_items)
     result.glass_calc = calculate_glass_for_modules(modules_with_glass)
-    result.glass_cost = result.glass_calc.total_cost
+    result.glass_cost = float(result.glass_calc.total_cost or 0)
 
     # 6. Дополнительные позиции (пока заглушки)
     result.lighting_cost = 0
@@ -190,8 +192,8 @@ def _extract_material_prices(selected_materials: Dict) -> Dict[str, float]:
     prices = {}
     if "ldsp" in selected_materials:
         ldsp = selected_materials["ldsp"]
-        if isinstance(ldsp, dict) and "price" in ldsp:
-            prices[ldsp.get("name", "ldsp")] = ldsp["price"]
+        if isinstance(ldsp, dict) and "price" in ldsp and ldsp["price"] is not None:
+            prices[ldsp.get("name", "ldsp")] = float(ldsp["price"])
     return prices
 
 
@@ -200,7 +202,7 @@ def _extract_edge_prices(selected_materials: Dict) -> Dict[str, float]:
     prices = {}
     if "edge" in selected_materials:
         edge = selected_materials["edge"]
-        if isinstance(edge, dict) and "price" in edge:
+        if isinstance(edge, dict) and "price" in edge and edge["price"] is not None:
             # Определяем толщину из имени или используем по умолчанию
             name = edge.get("name", "").lower()
             thickness = "0.8"  # по умолчанию
@@ -208,7 +210,7 @@ def _extract_edge_prices(selected_materials: Dict) -> Dict[str, float]:
                 thickness = "0.4"
             elif "2" in name or "hpl" in name:  # HPL часто 2мм
                 thickness = "2"
-            prices[thickness] = edge["price"]
+            prices[thickness] = float(edge["price"])
     return prices
 
 
@@ -220,8 +222,8 @@ def _calculate_facades_cost(modules: List[Dict], selected_materials: Dict) -> fl
     facade_price_per_m2 = 0
     if "facades" in selected_materials:
         facades = selected_materials["facades"]
-        if isinstance(facades, dict) and "price" in facades:
-            facade_price_per_m2 = facades["price"]
+        if isinstance(facades, dict) and "price" in facades and facades["price"] is not None:
+            facade_price_per_m2 = float(facades["price"])
 
     for module in modules:
         if "facades" not in module:
@@ -242,8 +244,8 @@ def _extract_hinge_price(selected_hardware: Dict) -> float:
     """Извлекает цену петель."""
     if "hinges" in selected_hardware:
         hinges = selected_hardware["hinges"]
-        if isinstance(hinges, dict) and "price" in hinges:
-            return hinges["price"]
+        if isinstance(hinges, dict) and "price" in hinges and hinges["price"] is not None:
+            return float(hinges["price"])
     return 0
 
 
@@ -254,9 +256,9 @@ def _extract_drawer_prices(selected_hardware: Dict) -> Dict[str, float]:
         drawers = selected_hardware["drawers"]
         if isinstance(drawers, list):
             for drawer in drawers:
-                if "price" in drawer:
+                if "price" in drawer and drawer["price"] is not None:
                     key = f"{drawer.get('brand', 'UNKNOWN')} {drawer.get('type', 'standard')} {drawer.get('height_type', 'medium')} {drawer.get('runner_type', '450mm')}"
-                    prices[key] = drawer["price"]
+                    prices[key] = float(drawer["price"])
     return prices
 
 
@@ -363,5 +365,7 @@ def _get_average_sheet_price(material_prices: Dict[str, float]) -> float:
     """Средняя цена листа."""
     if not material_prices:
         return 0
-    prices = list(material_prices.values())
+    prices = [p for p in material_prices.values() if p is not None]
+    if not prices:
+        return 0
     return sum(prices) / len(prices)

@@ -10,5 +10,6 @@ from app.bot.handlers.manual_input import router as manual_input_router
 from app.bot.handlers.materials import router as materials_router
 from app.bot.handlers.calculation import router as calculation_router
 from app.bot.handlers.discounts import router as discounts_router
+from app.bot.handlers.kp import router as kp_router
 
-__all__ = ["start_router", "price_router", "project_router", "image_router", "manual_input_router", "materials_router", "calculation_router", "discounts_router"]
+__all__ = ["start_router", "price_router", "project_router", "image_router", "manual_input_router", "materials_router", "calculation_router", "discounts_router", "kp_router"]

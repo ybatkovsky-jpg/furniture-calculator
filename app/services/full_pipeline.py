@@ -147,22 +147,22 @@ class FullPipeline:
         # ── Сборка результата ──
         result.rooms = sorted(room_specs.values(), key=lambda r: r.page)
 
-        # Добавляем OCR-комнаты без модулей (для информации)
+        # Добавляем OCR-комнаты без модулей (для информации), фильтруя технические
+        SKIP_NAMES = {"описание:", "приемание:", "примечание:", "условные обозначения:"}
         for ocr_room in ocr_result.rooms:
-            if ocr_room.name and ocr_room.name not in {
-                "Описание:", "Приемание:", "Примечание:", "Условные обозначения:"
-            }:
-                # Проверяем, нет ли уже такой комнаты
-                already = any(
-                    ocr_room.name.lower() in r.room_name.lower()
-                    for r in result.rooms
-                )
-                if not already:
-                    result.rooms.append(RoomSpec(
-                        room_name=ocr_room.name,
-                        materials=ocr_room.materials,
-                        notes=ocr_room.notes,
-                    ))
+            name_clean = ocr_room.name.lower().rstrip(':')
+            if not ocr_room.name or name_clean in SKIP_NAMES:
+                continue
+            already = any(
+                ocr_room.name.lower() in r.room_name.lower()
+                for r in result.rooms
+            )
+            if not already:
+                result.rooms.append(RoomSpec(
+                    room_name=ocr_room.name,
+                    materials=ocr_room.materials,
+                    notes=ocr_room.notes,
+                ))
 
         result.success = len(result.rooms) > 0
         logger.info(

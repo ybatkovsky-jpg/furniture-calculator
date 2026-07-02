@@ -103,6 +103,17 @@ def calculate_cost(
     5. Бонус дизайнера (если включён)
     6. Безнал
     """
+    # Проверяем и исправляем None значения на 0
+    material_cost = material_cost if material_cost is not None else 0
+    edge_cost = edge_cost if edge_cost is not None else 0
+    facade_cost = facade_cost if facade_cost is not None else 0
+    hardware_cost = hardware_cost if hardware_cost is not None else 0
+    glass_cost = glass_cost if glass_cost is not None else 0
+    lighting_cost = lighting_cost if lighting_cost is not None else 0
+    countertop_cost = countertop_cost if countertop_cost is not None else 0
+    accessories_cost = accessories_cost if accessories_cost is not None else 0
+    subcontractor_cost = subcontractor_cost if subcontractor_cost is not None else 0
+
     r = CostBreakdown(
         material_cost=material_cost,
         edge_cost=edge_cost,

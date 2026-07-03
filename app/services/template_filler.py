@@ -12,6 +12,7 @@ import logging
 import math
 import re
 import copy
+import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -101,6 +102,33 @@ ROW_MAPPING: List[Tuple[List[str], str, str, float]] = [
 ]
 
 
+def _load_row_mapping(config_path: Optional[str] = None) -> List[Tuple[List[str], str, str, float]]:
+    """
+    Загрузить маппинг строк из JSON-конфига.
+    Если конфиг не найден — используется хардкод ROW_MAPPING.
+    
+    Args:
+        config_path: путь к JSON-файлу (по умолчанию templates/row_mapping.json)
+    """
+    if config_path is None:
+        config_path = str(Path(__file__).parent.parent.parent / "templates" / "row_mapping.json")
+    
+    if Path(config_path).exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            mappings = [
+                (item["keywords"], item["field"], item["unit"], item["multiplier"])
+                for item in data["mappings"]
+            ]
+            logger.info(f"📋 Загружен маппинг из {config_path}: {len(mappings)} строк (v{data.get('version', '?')})")
+            return mappings
+        except (json.JSONDecodeError, KeyError, FileNotFoundError) as e:
+            logger.warning(f"⚠️ Ошибка загрузки маппинга из JSON: {e}. Использую хардкод.")
+    
+    return ROW_MAPPING
+
+
 def _find_row_for_material(ws, keywords: List[str]) -> Optional[int]:
     """
     Найти номер строки в листе по ключевым словам в колонках A (Наименование)
@@ -117,6 +145,51 @@ def _find_row_for_material(ws, keywords: List[str]) -> Optional[int]:
         if all(kw.lower() in combined.lower() for kw in keywords):
             return row
     return None
+
+
+def _find_row_for_material_fuzzy(
+    ws, keywords: List[str], threshold: float = 0.80
+) -> Optional[int]:
+    """
+    Найти строку с нечётким совпадением (fuzzy).
+    Используется как fallback, если точный поиск не дал результата.
+    
+    Сравнивает запрос с объединённым текстом A+B через SequenceMatcher.
+    """
+    from difflib import SequenceMatcher
+
+    query = " ".join(keywords).lower()
+    best_row, best_score = None, 0.0
+
+    for row in range(1, ws.max_row + 1):
+        cell_a = str(ws.cell(row=row, column=1).value or "")
+        cell_b = str(ws.cell(row=row, column=2).value or "")
+        combined = f"{cell_a} | {cell_b}".lower()
+
+        if not cell_a and not cell_b:
+            continue
+
+        score = SequenceMatcher(None, query, combined).ratio()
+        if score > best_score:
+            best_score, best_row = score, row
+
+    if best_score >= threshold and best_row:
+        logger.info(
+            f"🎯 Fuzzy match: «{query[:60]}...» → R{best_row} (score={best_score:.2f})"
+        )
+        return best_row
+
+    return None
+
+
+def _find_row_smart(ws, keywords: List[str]) -> Optional[int]:
+    """
+    Умный поиск строки: точный → нечёткий.
+    """
+    row = _find_row_for_material(ws, keywords)
+    if row:
+        return row
+    return _find_row_for_material_fuzzy(ws, keywords, threshold=0.75)
 
 
 def _build_quantity_map(
@@ -250,6 +323,9 @@ def fill_template_from_pipeline(
     template_ws = wb["Рассчет"]
     rooms_with_modules = [r for r in pipeline_result.rooms if r.modules]
 
+    # Загружаем маппинг (из JSON или хардкод)
+    row_mapping = _load_row_mapping()
+
     if not rooms_with_modules:
         logger.warning("⚠️ Нет помещений с модулями для заполнения")
         wb.save(output_path)
@@ -277,10 +353,10 @@ def fill_template_from_pipeline(
         # Заполняем колонку E (Количество) в найденных строках
         filled_rows = []
         unfilled_here = []
-        for keywords, field, unit, multiplier in ROW_MAPPING:
+        for keywords, field, unit, multiplier in row_mapping:
             value = qty_map.get(field)
             if value is not None and value > 0:
-                row_num = _find_row_for_material(new_ws, keywords)
+                row_num = _find_row_smart(new_ws, keywords)
                 if row_num:
                     final_value = value * multiplier
                     # Записываем ТОЛЬКО в колонку E (5)
@@ -430,6 +506,62 @@ def _write_problems_sheet(wb: Workbook, items: List[dict]):
                 value="Внести вручную ИЛИ добавить строку в шаблон «Рассчет»").font = normal_font
 
     logger.info(f"📋 Лист «⚠ Проблемы»: {len(items)} незаполненных позиций")
+
+
+def validate_template(template_path: str) -> dict:
+    """
+    Проверить шаблон ДО заполнения: все ли ожидаемые строки присутствуют.
+    
+    Запускать при смене шаблона или добавлении новых материалов.
+    
+    Returns:
+        {"valid": bool, "missing": [...], "found_count": int, "total_expected": int}
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(template_path)
+
+    if "Рассчет" not in [ws.title for ws in wb.worksheets]:
+        return {"valid": False, "missing": [], "found_count": 0,
+                "total_expected": len(ROW_MAPPING),
+                "error": "Нет листа «Рассчет»"}
+
+    ws = wb["Рассчет"]
+    missing = []
+    found = 0
+    fuzzy_found = 0
+
+    for keywords, field, unit, multiplier in ROW_MAPPING:
+        row = _find_row_for_material(ws, keywords)
+        if row:
+            found += 1
+        else:
+            # Пробуем нечёткий поиск
+            fuzzy_row = _find_row_for_material_fuzzy(ws, keywords, threshold=0.75)
+            if fuzzy_row:
+                fuzzy_found += 1
+                logger.info(
+                    f"🔍 Fuzzy match при валидации: «{' + '.join(keywords[:2])}» → R{fuzzy_row}"
+                )
+            else:
+                missing.append(" + ".join(keywords[:2]))
+
+    result = {
+        "valid": len(missing) == 0,
+        "missing": missing,
+        "found_exact": found,
+        "found_fuzzy": fuzzy_found,
+        "total_expected": len(ROW_MAPPING),
+    }
+
+    if missing:
+        logger.warning(f"⚠️ Валидация шаблона: НЕ найдены {len(missing)} строк:")
+        for m in missing:
+            logger.warning(f"   - {m}")
+    else:
+        logger.info(f"✅ Шаблон валиден: {found} точных + {fuzzy_found} нечётких")
+
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════

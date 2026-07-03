@@ -1,0 +1,56 @@
+{
+  "version": "1.0",
+  "description": "Маппинг категорий материалов на строки шаблона «Рассчет». При изменении шаблона править здесь, не в коде.",
+  "mappings": [
+    {"keywords": ["EGGER ЛДСП", "однотон"], "field": "ldsp_sheets_plain", "unit": "листов", "multiplier": 1.0},
+    {"keywords": ["EGGER ЛДСП", "текстура"], "field": "ldsp_sheets_texture", "unit": "листов", "multiplier": 1.0},
+    {"keywords": ["EGGER ЛМДФ", "древесн"], "field": "mdf_sheets", "unit": "листов", "multiplier": 1.0},
+    {"keywords": ["EXTRAVERT", "однотон"], "field": "ldsp_sheets_plain_extravert", "unit": "листов", "multiplier": 1.0},
+    {"keywords": ["EXTRAVERT", "текстуры"], "field": "ldsp_sheets_texture_extravert", "unit": "листов", "multiplier": 1.0},
+    {"keywords": ["LAMARTY", "однотон"], "field": "ldsp_sheets_plain_lamarty", "unit": "листов", "multiplier": 1.0},
+    {"keywords": ["LAMARTY", "текстуры"], "field": "ldsp_sheets_texture_lamarty", "unit": "листов", "multiplier": 1.0},
+    {"keywords": ["ТОМЛЕСДРЕВ", "однотон"], "field": "ldsp_sheets_tomlesdrev", "unit": "листов", "multiplier": 1.0},
+
+    {"keywords": ["EGGER 0,4*19"], "field": "edge_04_m", "unit": "м.п.", "multiplier": 1.0},
+    {"keywords": ["EGGER 0,8*19"], "field": "edge_08_m", "unit": "м.п.", "multiplier": 1.0},
+    {"keywords": ["EGGER 2*19"], "field": "edge_2_m", "unit": "м.п.", "multiplier": 1.0},
+    {"keywords": ["EGGER 2*35"], "field": "edge_2_35_m", "unit": "м.п.", "multiplier": 1.0},
+    {"keywords": ["EXTRAVERT 0,4*19"], "field": "edge_04_m_extravert", "unit": "м.п.", "multiplier": 1.0},
+    {"keywords": ["EXTRAVERT 0,8*19"], "field": "edge_08_m_extravert", "unit": "м.п.", "multiplier": 1.0},
+    {"keywords": ["EXTRAVERT 2*19"], "field": "edge_2_m_extravert", "unit": "м.п.", "multiplier": 1.0},
+
+    {"keywords": ["ЛХДФ"], "field": "hdf_sheets", "unit": "листов", "multiplier": 1.0},
+
+    {"keywords": ["EMDIWAY (однотонные матовые"], "field": "facades_m2_emdiway", "unit": "м²", "multiplier": 1.0},
+    {"keywords": ["EMDIWAY", "Titan 3108"], "field": "facades_m2_emdiway_titan", "unit": "м²", "multiplier": 1.0},
+    {"keywords": ["ЛЕМАКОМ", "ФАСАДЫ одностор. ПВХ 16 мм, фрезеровка S"], "field": "facades_m2_pvh_s", "unit": "м²", "multiplier": 1.0},
+    {"keywords": ["ЛЕМАКОМ", "ФАСАДЫ одностор. ПВХ 16 мм, фрезеровка K"], "field": "facades_m2_pvh_k", "unit": "м²", "multiplier": 1.0},
+    {"keywords": ["Лемаком", "Прямой односторон. МАТОВЫЙ"], "field": "facades_m2_paint_matte", "unit": "м²", "multiplier": 1.0},
+    {"keywords": ["Лемаком", "Прямой односторон. ГЛЯНЕЦ"], "field": "facades_m2_paint_gloss", "unit": "м²", "multiplier": 1.0},
+
+    {"keywords": ["Петля FIRMAX с доводчиком (накладная, вкладная)"], "field": "hinges_firmax_closer", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Петля FIRMAX без доводчика (вкладная, накладная)"], "field": "hinges_firmax_no_closer", "unit": "шт", "multiplier": 1.0},
+
+    {"keywords": ["Ящик внутренний TANDEMBOX", "МФ-ГРУПП"], "field": "drawers_internal_tandembox", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Ящик стандартный для низких фасадов TANDEMBOX"], "field": "drawers_tandembox", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Ящик с 1м релингом для средних фасадов TANDEMBOX"], "field": "drawers_tandembox_mid", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Ящик с 2мя релингами для высоких фасадов TANDEMBOX"], "field": "drawers_tandembox_high", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Ящик стандартный для низких фасадов LEGRABOX"], "field": "drawers_legrabox", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Ящик  для средних фасадов LEGRABOX 144мм"], "field": "drawers_legrabox_mid", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Ящик  для высоких фасадов LEGRABOX 193 мм"], "field": "drawers_legrabox_high", "unit": "шт", "multiplier": 1.0},
+
+    {"keywords": ["Стандартный ящик тонкий СТАРТ h=86 мм для низких фасадов"], "field": "drawers_boyard_start", "unit": "шт", "multiplier": 1.0},
+
+    {"keywords": ["GOLA профиль горизонтальный 3 м (C,L)"], "field": "gola_horizontal_3m", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["GOLA профиль вертикальный боковой", "3 м"], "field": "gola_vertical_3m", "unit": "шт", "multiplier": 1.0},
+
+    {"keywords": ["Подсветка LED (Бухта 5м)"], "field": "led_strip_5m", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Блок питания", "324"], "field": "led_power_supply", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Датчик", "325"], "field": "led_sensor", "unit": "шт", "multiplier": 1.0},
+
+    {"keywords": ["Сушка для посуды Alba, в модуль на 900мм"], "field": "drying_rack", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Выдвижная корзина 2-х уровн.(150) Flora BOYARD круглый пруток"], "field": "bottle_holder_150", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Выдвижная корзина 2-х уровн.(200) Flora BOYARD круглый пруток"], "field": "bottle_holder_200", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Лоток для столовых приборов"], "field": "cutlery_tray", "unit": "шт", "multiplier": 1.0}
+  ]
+}

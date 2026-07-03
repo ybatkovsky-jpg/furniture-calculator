@@ -404,6 +404,9 @@ def fill_template_from_pipeline(
         _write_problems_sheet(wb, all_unfilled)
         logger.warning(f"⚠️  {len(all_unfilled)} строк не найдены в шаблоне — см. лист «⚠ Проблемы»")
 
+    # ── Лист «✅ Контроль качества» ──
+    _add_quality_sheet(wb, pipeline_result)
+
     # Сохраняем
     wb.save(output_path)
     logger.info(f"💾 Сохранено: {output_path}")
@@ -506,6 +509,84 @@ def _write_problems_sheet(wb: Workbook, items: List[dict]):
                 value="Внести вручную ИЛИ добавить строку в шаблон «Рассчет»").font = normal_font
 
     logger.info(f"📋 Лист «⚠ Проблемы»: {len(items)} незаполненных позиций")
+
+
+def _add_quality_sheet(wb: Workbook, pipeline_result: PipelineResult):
+    """
+    Добавить лист «✅ Контроль качества» со сводкой по всем помещениям.
+    
+    Оператор видит: какие помещения требуют проверки, какие ОК.
+    """
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    sheet_name = "✅ Контроль качества"
+    if sheet_name in [ws.title for ws in wb.worksheets]:
+        ws = wb[sheet_name]
+        # Очищаем старые данные
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
+            for cell in row:
+                cell.value = None
+    else:
+        ws = wb.create_sheet(sheet_name)
+
+    # Стили
+    header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+    header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+    good_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    warn_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    bad_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+
+    # Заголовки
+    headers = ["Помещение", "Стр.", "Модулей", "Уверенность",
+               "Quality", "Флаги", "Рекомендация"]
+    widths = [22, 6, 10, 14, 10, 45, 30]
+
+    for col, (h, w) in enumerate(zip(headers, widths), 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(wrap_text=True)
+        ws.column_dimensions[chr(64 + col)].width = w
+
+    rooms = pipeline_result.rooms if pipeline_result else []
+
+    for i, room in enumerate(rooms, 2):
+        ws.cell(row=i, column=1, value=room.room_name)
+        ws.cell(row=i, column=2, value=room.page)
+        ws.cell(row=i, column=3, value=len(room.modules))
+        ws.cell(row=i, column=4, value=room.confidence)
+        ws.cell(row=i, column=5, value=f"{room.quality_score:.0%}")
+        ws.cell(row=i, column=6, value="; ".join(room.quality_flags))
+
+        # Рекомендация + цвет строки
+        if room.quality_score < 0.5:
+            recommendation = "🔴 ПЕРЕПРОВЕРИТЬ ВРУЧНУЮ"
+            row_fill = bad_fill
+        elif room.quality_score < 0.8:
+            recommendation = "🟡 Желательно проверить"
+            row_fill = warn_fill
+        else:
+            recommendation = "🟢 ОК"
+            row_fill = good_fill
+
+        ws.cell(row=i, column=7, value=recommendation)
+
+        # Подсветка строки
+        for col in range(1, 8):
+            ws.cell(row=i, column=col).fill = row_fill
+            ws.cell(row=i, column=col).font = Font(name="Arial", size=9)
+
+    # Итого
+    summary_row = len(rooms) + 3
+    total_modules = sum(len(r.modules) for r in rooms)
+    avg_quality = (sum(r.quality_score for r in rooms) / max(len(rooms), 1))
+    ws.merge_cells(f"A{summary_row}:G{summary_row}")
+    cell = ws.cell(row=summary_row, column=1,
+                   value=f"ИТОГО: {len(rooms)} помещений, {total_modules} модулей, "
+                         f"среднее качество: {avg_quality:.0%}")
+    cell.font = Font(name="Arial", size=10, bold=True)
+
+    logger.info(f"📋 Лист «✅ Контроль качества»: {len(rooms)} помещений")
 
 
 def validate_template(template_path: str) -> dict:

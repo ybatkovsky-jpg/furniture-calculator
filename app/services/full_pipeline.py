@@ -33,6 +33,8 @@ class RoomSpec:
     materials: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
     confidence: str = ""
+    quality_score: float = 0.0          # 0..1, рассчитывается после анализа
+    quality_flags: List[str] = field(default_factory=list)  # предупреждения
 
 
 @dataclass
@@ -164,6 +166,28 @@ class FullPipeline:
                     notes=ocr_room.notes,
                 ))
 
+        # ── Кросс-валидация OCR ↔ Vision ──
+        for room in result.rooms:
+            if not room.modules:
+                continue
+            # Сравниваем с OCR-комнатой по имени
+            ocr_match = self._find_room_by_name(ocr_result, room.room_name)
+            if ocr_match and ocr_match.dimensions:
+                ocr_dim_count = len(ocr_match.dimensions)
+                vis_mod_count = len(room.modules)
+                if abs(ocr_dim_count - vis_mod_count) >= 2:
+                    room.notes.append(
+                        f"⚠ Расхождение OCR/Vision: OCR={ocr_dim_count} размеров, "
+                        f"Vision={vis_mod_count} модулей. Проверьте!"
+                    )
+                    logger.warning(
+                        f"⚠ {room.room_name}: OCR={ocr_dim_count}, Vision={vis_mod_count}"
+                    )
+
+        # ── Расчёт Quality Score для каждого помещения ──
+        for room in result.rooms:
+            room.quality_score = self._calculate_quality(room)
+
         result.success = len(result.rooms) > 0
         logger.info(
             f"✅ Конвейер завершён: {len(result.rooms)} помещений, "
@@ -175,48 +199,124 @@ class FullPipeline:
     # ВСПОМОГАТЕЛЬНЫЕ
     # -----------------------------------------------------------
 
+    def _calculate_quality(self, room: RoomSpec) -> float:
+        """
+        Рассчитать оценку качества распознавания для помещения.
+        1.0 = идеально, 0.0 = полностью ошибочно.
+        """
+        score = 1.0
+        flags = []
+
+        # Confidence
+        if room.confidence == "low":
+            score -= 0.4
+            flags.append("Низкая уверенность AI")
+        elif room.confidence == "medium":
+            score -= 0.2
+
+        # Нет модулей
+        if not room.modules:
+            score -= 0.5
+            flags.append("Модули не найдены")
+            room.quality_score = max(0, score)
+            room.quality_flags = flags
+            return room.quality_score
+
+        # Подозрительно мало модулей для кухни
+        if any(kw in room.room_name.lower() for kw in ["кухн", "kitchen"]):
+            if len(room.modules) < 2:
+                score -= 0.2
+                flags.append("Слишком мало модулей для кухни")
+
+        # Все модули одного размера — возможный дубликат
+        if len(room.modules) >= 3:
+            unique_sizes = set((m.width, m.depth, m.height) for m in room.modules)
+            if len(unique_sizes) == 1:
+                score -= 0.15
+                flags.append("Все модули одного размера — возможно дубликат")
+
+        # Нет материалов — возможно не распознаны
+        if not room.materials:
+            score -= 0.1
+            flags.append("Материалы не определены")
+
+        room.quality_score = max(0, min(1.0, score))
+        room.quality_flags = flags
+        return room.quality_score
+
+    def _find_room_by_name(
+        self, ocr_result: PDFParseResult, room_name: str
+    ) -> Optional[ParsedRoom]:
+        """Найти OCR-комнату по имени (нечёткое совпадение)."""
+        name_lower = room_name.lower().rstrip(':')
+        for room in ocr_result.rooms:
+            ocr_lower = room.name.lower().rstrip(':')
+            if ocr_lower in name_lower or name_lower in ocr_lower:
+                return room
+        return None
+
     def _pick_key_pages(
         self, ocr_result: PDFParseResult, total: int
     ) -> List[int]:
         """
-        Выбрать страницы, которые с высокой вероятностью содержат чертежи.
+        Выбрать страницы с чертежами, анализируя OCR-контент.
         
-        Использует данные OCR для пропуска титульных страниц, содержания,
-        ведомостей, штампов и технических секций.
+        Полная версия: использует и имена комнат, и содержимое текста
+        для определения, является ли страница чертежом.
         """
         if total <= 3:
             return list(range(total))
 
-        # Индикаторы НЕ-чертежей (титул, содержание, ведомость, штамп, примечания)
+        # Индикаторы НЕ-чертежей
         SKIP_INDICATORS = [
             "содержание", "ведомость", "спецификация", "титул",
             "примечание", "приемание", "условные обозначения",
             "штамп", "печать", "общие данные", "общие указания",
         ]
 
-        # Собираем номера страниц, которые точно НЕ чертежи,
-        # на основе имён OCR-комнат
+        # Индикаторы ЧЕРТЕЖА (размеры, масштаб, виды)
+        import re
+        DRAWING_SIGNALS = re.compile(
+            r'М\d*:?\d+|масштаб|[×xXхХ]\s*\d{2,4}|мм\b|габарит|фасад|разрез|'
+            r'вид сверху|план|сечение|спецификаци|модул|база|пенал|шкаф|тумб',
+            re.IGNORECASE
+        )
+
+        # Собираем страницы для пропуска (по имени комнаты)
         skip_pages: set[int] = set()
+        drawing_pages: set[int] = set()
+
         for room in ocr_result.rooms:
             name_lower = room.name.lower().rstrip(':')
+            # Проверяем имя
             if any(skip in name_lower for skip in SKIP_INDICATORS):
                 if room.page > 0:
-                    skip_pages.add(room.page - 1)  # page в OCR = 1-based
+                    skip_pages.add(room.page - 1)
+            # Проверяем контент на признаки чертежа
+            if DRAWING_SIGNALS.search(room.raw_text or "") or DRAWING_SIGNALS.search(room.description or ""):
+                if room.page > 0:
+                    drawing_pages.add(room.page - 1)
 
-        # Если OCR не дал данных — используем базовую эвристику
-        if not skip_pages:
-            # Пропускаем первую (титул) и последнюю (штамп)
-            return list(range(1, total - 1))
+        # Проверяем также таблицы на признаки чертежа
+        for table in ocr_result.tables:
+            combined = " ".join(str(cell) for row in table.rows for cell in row)
+            if DRAWING_SIGNALS.search(combined):
+                if table.page > 0:
+                    drawing_pages.add(table.page - 1)
 
-        # Отбираем страницы, не попавшие в skip
-        key_pages = []
-        for page_num in range(1, total - 1):  # 1..total-2 (0-based)
-            if page_num not in skip_pages:
-                key_pages.append(page_num)
+        # Если нашли drawing-страницы — используем их как положительный сигнал
+        if drawing_pages:
+            key_pages = sorted(drawing_pages - skip_pages)
+        elif skip_pages:
+            # Только негативные сигналы — берём всё кроме skip
+            key_pages = [p for p in range(1, total - 1) if p not in skip_pages]
+        else:
+            # Нет данных от OCR — базовая эвристика
+            key_pages = list(range(1, total - 1))
 
         logger.info(
             f"🎯 Страниц для анализа: {len(key_pages)}/{total} "
-            f"(пропущено: {len(skip_pages)} — {sorted(skip_pages)})"
+            f"(пропущено: {total - len(key_pages)})"
         )
         return key_pages if key_pages else list(range(1, total - 1))
 

@@ -263,6 +263,8 @@ def fill_template_from_pipeline(
         return output_path
 
     # Для каждого помещения создаём копию листа-шаблона
+    all_unfilled = []  # собираем незаполненные строки со всех помещений
+
     for i, room in enumerate(rooms_with_modules):
         sheet_name = _clean_sheet_name(room.room_name)[:31]
 
@@ -281,6 +283,7 @@ def fill_template_from_pipeline(
 
         # Заполняем колонку E (Количество) в найденных строках
         filled_rows = []
+        unfilled_here = []
         for keywords, field, unit, multiplier in ROW_MAPPING:
             value = qty_map.get(field)
             if value is not None and value > 0:
@@ -296,12 +299,24 @@ def fill_template_from_pipeline(
                         f"{final_value} {unit}"
                     )
                 else:
-                    logger.debug(
-                        f"  {sheet_name}: ⚠ не найдена строка для {keywords}"
+                    unfilled_here.append((keywords, field, value, unit, multiplier))
+                    logger.warning(
+                        f"  {sheet_name}: ⚠ не найдена строка для {keywords[0]} "
+                        f"(ожидалось {value * multiplier} {unit})"
                     )
+
+        # Сохраняем незаполненные для сводного отчёта
+        for keywords, field, value, unit, multiplier in unfilled_here:
+            all_unfilled.append({
+                "room": sheet_name,
+                "material": " + ".join(keywords[:2]),
+                "expected_value": f"{value * multiplier} {unit}",
+                "field": field,
+            })
 
         logger.info(
             f"✅ {sheet_name}: заполнено {len(filled_rows)} строк, "
+            f"пропущено {len(unfilled_here)}, "
             f"модулей={len(room.modules)}, "
             f"ЛДСП={q.ldsp_sheets} листов, "
             f"кромка={q.edge_08_m:.0f}+{q.edge_04_m:.0f} м"
@@ -314,6 +329,11 @@ def fill_template_from_pipeline(
     # ── Сводный лист ──
     if "СВОДКА" in [ws.title for ws in wb.worksheets]:
         _update_summary(wb, pipeline_result, rooms_with_modules)
+
+    # ── Лист «⚠ Проблемы» если есть незаполненные строки ──
+    if all_unfilled:
+        _write_problems_sheet(wb, all_unfilled)
+        logger.warning(f"⚠️  {len(all_unfilled)} строк не найдены в шаблоне — см. лист «⚠ Проблемы»")
 
     # Сохраняем
     wb.save(output_path)
@@ -375,6 +395,48 @@ def _add_suggestions_section(ws, q: MaterialQuantities):
         ws.merge_cells(f"A{row}:F{row}")
         cell = ws.cell(row=row, column=1, value=s)
         cell.font = suggest_font
+
+
+def _write_problems_sheet(wb: Workbook, items: List[dict]):
+    """
+    Создать/обновить лист «⚠ Проблемы» с незаполненными позициями.
+    
+    Оператор видит все строки, которые не удалось найти в шаблоне,
+    и может внести их вручную или добавить недостающие строки в шаблон.
+    """
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    sheet_name = "⚠ Проблемы"
+    if sheet_name in [ws.title for ws in wb.worksheets]:
+        ws = wb[sheet_name]
+    else:
+        ws = wb.create_sheet(sheet_name)
+
+    # Стили
+    header_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    header_font = Font(name="Arial", size=10, bold=True, color="9C0006")
+    normal_font = Font(name="Arial", size=9)
+
+    # Заголовки
+    headers = ["Помещение", "Материал (не найдена строка в шаблоне)",
+               "Ожидаемое значение", "Действие оператора"]
+    widths = [18, 55, 22, 45]
+
+    for col, (h, w) in enumerate(zip(headers, widths), 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(wrap_text=True)
+        ws.column_dimensions[chr(64 + col)].width = w
+
+    for i, item in enumerate(items, 2):
+        ws.cell(row=i, column=1, value=item["room"]).font = normal_font
+        ws.cell(row=i, column=2, value=item["material"]).font = normal_font
+        ws.cell(row=i, column=3, value=item["expected_value"]).font = normal_font
+        ws.cell(row=i, column=4,
+                value="Внести вручную ИЛИ добавить строку в шаблон «Рассчет»").font = normal_font
+
+    logger.info(f"📋 Лист «⚠ Проблемы»: {len(items)} незаполненных позиций")
 
 
 # ═══════════════════════════════════════════════════════════════════

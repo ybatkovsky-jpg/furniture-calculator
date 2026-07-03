@@ -60,6 +60,50 @@ class RecognitionResult:
 
 
 # ================================================================
+# ВАЛИДАЦИЯ РАЗМЕРОВ
+# ================================================================
+
+# Реалистичные диапазоны размеров мебельных модулей (мм)
+DIMENSION_LIMITS = {
+    "width":  (150, 2400),   # мин/макс ширина модуля
+    "depth":  (200, 1200),   # мин/макс глубина
+    "height": (300, 2800),   # мин/макс высота
+    "quantity": (1, 30),     # мин/макс количество одинаковых модулей
+}
+
+
+def _validate_module(module: RecognizedModule) -> tuple:
+    """
+    Проверить реалистичность размеров модуля.
+    Возвращает (валиден: bool, причина: str).
+    """
+    w, d, h, qty = module.width, module.depth, module.height, module.quantity
+
+    if w < DIMENSION_LIMITS["width"][0] or w > DIMENSION_LIMITS["width"][1]:
+        return False, f"width={w} вне [{DIMENSION_LIMITS['width'][0]}..{DIMENSION_LIMITS['width'][1]}] мм"
+    if d < DIMENSION_LIMITS["depth"][0] or d > DIMENSION_LIMITS["depth"][1]:
+        return False, f"depth={d} вне [{DIMENSION_LIMITS['depth'][0]}..{DIMENSION_LIMITS['depth'][1]}] мм"
+    if h < DIMENSION_LIMITS["height"][0] or h > DIMENSION_LIMITS["height"][1]:
+        return False, f"height={h} вне [{DIMENSION_LIMITS['height'][0]}..{DIMENSION_LIMITS['height'][1]}] мм"
+    if qty < DIMENSION_LIMITS["quantity"][0] or qty > DIMENSION_LIMITS["quantity"][1]:
+        return False, f"quantity={qty} вне [{DIMENSION_LIMITS['quantity'][0]}..{DIMENSION_LIMITS['quantity'][1]}]"
+
+    # Угловой модуль должен быть квадратным
+    if module.is_corner and w != d:
+        return False, f"угловой модуль не квадратный: {w}×{d}"
+
+    # Высота должна соответствовать типу
+    if module.type == "lower_base" and h > 1000:
+        return False, f"нижняя база слишком высокая: {h} мм (ожидается ≤1000)"
+    if module.type == "upper_base" and h > 1200:
+        return False, f"верхняя база слишком высокая: {h} мм (ожидается ≤1200)"
+    if module.type == "penal" and h < 1500:
+        return False, f"пенал слишком низкий: {h} мм (ожидается ≥1500)"
+
+    return True, ""
+
+
+# ================================================================
 # ПРОМПТЫ
 # ================================================================
 
@@ -332,6 +376,7 @@ class GeminiImageAnalyzer:
             "temperature": 0.1,
             "max_tokens": 8000,              # GLM-4.6V нужно место под reasoning + JSON
             "reasoning_effort": "medium",     # medium = быстрее, но всё ещё думает
+            "response_format": {"type": "json_object"},  # гарантирует валидный JSON
         }
 
         # 5. Определяем URL эндпоинта
@@ -515,6 +560,11 @@ class GeminiImageAnalyzer:
                     is_corner=is_corner,
                     bbox=bbox,
                 )
+                # Валидация размеров
+                is_valid, reason = _validate_module(module)
+                if not is_valid:
+                    logger.warning(f"⚠️  Пропущен модуль: {reason}, data={module_data}")
+                    continue
                 modules.append(module)
             except (KeyError, ValueError, TypeError) as e:
                 logger.warning(f"Parse error for module: {e}, data={module_data}")

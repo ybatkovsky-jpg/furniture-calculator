@@ -178,14 +178,47 @@ class FullPipeline:
     def _pick_key_pages(
         self, ocr_result: PDFParseResult, total: int
     ) -> List[int]:
-        """Выбрать страницы с чертежами (не титульные, не штампы)."""
-        # Простая эвристика: страницы 1..N-2 (пропускаем первую и последние)
-        # TODO: использовать page-референсы из OCR
+        """
+        Выбрать страницы, которые с высокой вероятностью содержат чертежи.
+        
+        Использует данные OCR для пропуска титульных страниц, содержания,
+        ведомостей, штампов и технических секций.
+        """
         if total <= 3:
             return list(range(total))
 
-        # Страницы с 1-й по предпоследнюю
-        return list(range(1, total - 1))
+        # Индикаторы НЕ-чертежей (титул, содержание, ведомость, штамп, примечания)
+        SKIP_INDICATORS = [
+            "содержание", "ведомость", "спецификация", "титул",
+            "примечание", "приемание", "условные обозначения",
+            "штамп", "печать", "общие данные", "общие указания",
+        ]
+
+        # Собираем номера страниц, которые точно НЕ чертежи,
+        # на основе имён OCR-комнат
+        skip_pages: set[int] = set()
+        for room in ocr_result.rooms:
+            name_lower = room.name.lower().rstrip(':')
+            if any(skip in name_lower for skip in SKIP_INDICATORS):
+                if room.page > 0:
+                    skip_pages.add(room.page - 1)  # page в OCR = 1-based
+
+        # Если OCR не дал данных — используем базовую эвристику
+        if not skip_pages:
+            # Пропускаем первую (титул) и последнюю (штамп)
+            return list(range(1, total - 1))
+
+        # Отбираем страницы, не попавшие в skip
+        key_pages = []
+        for page_num in range(1, total - 1):  # 1..total-2 (0-based)
+            if page_num not in skip_pages:
+                key_pages.append(page_num)
+
+        logger.info(
+            f"🎯 Страниц для анализа: {len(key_pages)}/{total} "
+            f"(пропущено: {len(skip_pages)} — {sorted(skip_pages)})"
+        )
+        return key_pages if key_pages else list(range(1, total - 1))
 
     def _find_room_for_page(
         self, ocr_result: PDFParseResult, page_num: int

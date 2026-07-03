@@ -23,6 +23,7 @@ from app.services.quantity_calc import (
     MaterialQuantities,
     calculate_quantities,
     fill_template_for_room,
+    detect_material_properties,
 )
 
 logger = logging.getLogger(__name__)
@@ -131,17 +132,9 @@ def _build_quantity_map(
     """
     m = {}
 
-    # Определяем тип материала ЛДСП
-    is_texture = False
-    for mat in materials:
-        mat_upper = mat.upper()
-        # Текстура = древесный декор (H1/H3 префиксы EGGER) или явное указание
-        if any(kw in mat_upper for kw in ["ТЕКСТУР", "ДРЕВЕСН", "WOOD", "ДУБ", "ОРЕХ", "ЯСЕНЬ"]):
-            is_texture = True
-            break
-        if any(mat_upper.startswith(p) for p in ["H1", "H3"]):
-            is_texture = True
-            break
+    # Определяем свойства материала (единая функция)
+    mat_props = detect_material_properties(materials)
+    is_texture = mat_props["surface"] == "texture"
 
     # ЛДСП
     if is_texture:

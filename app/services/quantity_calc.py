@@ -37,6 +37,62 @@ EDGE_PREMIUM_MM  = 2.0   # премиум (влагостойкие зоны)
 EDGE_OVERLAP     = 1.05  # +5%
 
 
+def detect_material_properties(materials: List[str]) -> dict:
+    """
+    Единая точка определения свойств материала по AI-распознанным названиям.
+    
+    Используется ВСЕМИ модулями: quantity_calc, template_filler, calculation_excel.
+    Изменения в логике детекции делаются ТОЛЬКО здесь.
+    
+    Returns:
+        {
+            "surface": "plain" | "texture",
+            "brand": "EGGER" | "EXTRAVERT" | "LAMARTY" | "ТОМЛЕСДРЕВ" | "unknown",
+            "facade_type": "pvh" | "emdiway" | "emdiway_titan" | "paint_matte" | "paint_gloss" | "unknown",
+            "has_glass": bool,
+        }
+    """
+    result = {"surface": "plain", "brand": "unknown", "facade_type": "unknown", "has_glass": False}
+    
+    if not materials:
+        return result
+    
+    materials_upper = " ".join(m.upper() for m in materials)
+    
+    # ── Бренд ЛДСП ──
+    for brand in ["EGGER", "EXTRAVERT", "LAMARTY"]:
+        if brand in materials_upper:
+            result["brand"] = brand
+            break
+    if "ТОМЛЕСДРЕВ" in materials_upper:
+        result["brand"] = "ТОМЛЕСДРЕВ"
+    
+    # ── Текстура vs однотон ──
+    TEXTURE_KEYWORDS = ["ТЕКСТУР", "ДРЕВЕСН", "WOOD", "ДУБ", "ОРЕХ", "ЯСЕНЬ"]
+    if any(kw in materials_upper for kw in TEXTURE_KEYWORDS):
+        result["surface"] = "texture"
+    elif any(m.upper().startswith(p) for m in materials for p in ["H1", "H3"]):
+        # H1xxx, H3xxx — древесные декоры EGGER
+        result["surface"] = "texture"
+    
+    # ── Тип фасада ──
+    if "EMDIWAY" in materials_upper:
+        result["facade_type"] = "emdiway_titan" if "TITAN" in materials_upper else "emdiway"
+    elif any(kw in materials_upper for kw in ["ЛАКОКРАСКА", "МАТОВЫЙ", "МАТОВАЯ"]):
+        result["facade_type"] = "paint_matte"
+    elif "ГЛЯНЕЦ" in materials_upper or "ГЛЯНЦЕВ" in materials_upper:
+        result["facade_type"] = "paint_gloss"
+    elif "ПВХ" in materials_upper:
+        result["facade_type"] = "pvh"
+    
+    # ── Стекло ──
+    result["has_glass"] = any(
+        kw in materials_upper for kw in ["СТЕКЛО", "ЗЕРКАЛО", "GLASS", "MIRROR"]
+    )
+    
+    return result
+
+
 @dataclass
 class MaterialQuantities:
     """Рассчитанные количества материалов."""
@@ -95,7 +151,7 @@ class MaterialQuantities:
     warnings: List[str] = field(default_factory=list)
 
 
-def calculate_quantities(modules: List[RecognizedModule], room_name: str = "", materials: List[str] = None) -> MaterialQuantities:
+def calculate_quantities(modules: List[RecognizedModule], room_name: str = "", materials: List[str] = None, *, auto_accessories: bool = True) -> MaterialQuantities:
     """
     Рассчитать количества материалов для списка модулей.
 
@@ -105,6 +161,12 @@ def calculate_quantities(modules: List[RecognizedModule], room_name: str = "", m
     - Петли стандартные (2-5 на фасад)
     - Gola вертикальные + горизонтальные
     - Эргономические рекомендации
+
+    Args:
+        modules: список AI-распознанных модулей
+        room_name: название помещения (для эвристик)
+        materials: список AI-распознанных материалов
+        auto_accessories: автоматически добавлять сушки/лотки/ящики (False = только расчёт)
     """
     q = MaterialQuantities()
     materials = materials or []
@@ -113,15 +175,9 @@ def calculate_quantities(modules: List[RecognizedModule], room_name: str = "", m
     is_kitchen = any(kw in room_lower for kw in ["кухн", "остров", "гарнитур", "kitchen"])
     is_wardrobe = any(kw in room_lower for kw in ["гардероб", "шкаф", "wardrobe", "прием", "приём"])
 
-    # Определяем тип материала ЛДСП
-    for mat in materials:
-        mat_upper = mat.upper()
-        if any(kw in mat_upper for kw in ["ТЕКСТУР", "ДРЕВЕСН", "WOOD", "ДУБ", "ОРЕХ", "ЯСЕНЬ"]):
-            q.ldsp_material = "текстура"
-            break
-        if any(mat_upper.startswith(p) for p in ["H1", "H3"]):
-            q.ldsp_material = "текстура"
-            break
+    # Определяем свойства материала (единая функция)
+    mat_props = detect_material_properties(materials)
+    q.ldsp_material = "текстура" if mat_props["surface"] == "texture" else "однотон"
 
     total_hdf_area = 0.0  # Суммируем площадь, делим в конце
     total_back_area = 0.0
@@ -230,6 +286,22 @@ def calculate_quantities(modules: List[RecognizedModule], room_name: str = "", m
     q.ldsp_sheets = max(1, math.ceil(q.ldsp_area_m2 * waste / SHEET_LDSP["area_m2"])) if q.ldsp_area_m2 > 0 else 0
     q.mdf_sheets  = max(0, math.ceil(q.facades_area_m2 * WASTE_FACTOR_MDF / SHEET_MDF["area_m2"]))
 
+    # Учёт смежных стенок: соседние модули с одинаковой глубиной делят боковину
+    # Экономия ~0.011 м² ЛДСП на каждый стык (560мм глубина × ~20мм толщина)
+    SHARED_SIDE_SAVINGS_M2 = 0.0112
+    modules_by_depth: dict = {}
+    for m in modules:
+        modules_by_depth.setdefault((m.type, m.depth), []).append(m)
+    shared_pairs = 0
+    for mods in modules_by_depth.values():
+        shared_pairs += max(0, sum(m.quantity for m in mods) - 1)
+    if shared_pairs > 0:
+        savings = shared_pairs * SHARED_SIDE_SAVINGS_M2
+        q.ldsp_area_m2 = max(0, q.ldsp_area_m2 - savings)
+        # Пересчитываем листы с учётом экономии
+        q.ldsp_sheets = max(1, math.ceil(q.ldsp_area_m2 * waste / SHEET_LDSP["area_m2"])) if q.ldsp_area_m2 > 0.1 else q.ldsp_sheets
+        logger.info(f"Учтено {shared_pairs} смежных стенок, экономия {savings:.2f} м² ЛДСП → листов: {q.ldsp_sheets}")
+
     # ХДФ: для кухонь — минус 40% (техника, мойка без задней стенки)
     if total_hdf_area > 0:
         if is_kitchen:
@@ -267,52 +339,53 @@ def calculate_quantities(modules: List[RecognizedModule], room_name: str = "", m
         q.led_power_supply = max(1, math.ceil(q.led_strip_m / 10)) if q.led_strip_m > 0 else 0
         q.led_sensor       = 1 if q.led_strip_m > 0 else 0
 
-    # ── Эргономика / рекомендации ──
-    if is_kitchen:
-        # Ящики: если AI не нашёл — рекомендуем
-        if q.drawers_count == 0:
-            q.drawers_count = 2           # минимум 2 ящика на кухню
-            q.drawers_internal_count = 1   # один внутренний для приборов
-            q.drawer_system = "Tandembox"
-            q.suggestions.append(
-                "🍴 Рекомендация: добавить 2 ящика Tandembox — "
-                "один стандартный, один с внутренним для столовых приборов"
-            )
-
-        # Лоток для приборов
-        q.cutlery_tray_count = 1
-        # Бутылочница: если есть узкий модуль (≤200мм)
-        q.bottle_holder_count = 1 if any(m.width <= 200 for m in modules) else 0
-        # Мойка — предполагаем что есть
-        q.has_sink = True
-        if q.has_sink:
-            q.drying_rack_count = 1
-            q.suggestions.append(
-                "💧 Рекомендация: сушка для посуды Alba в модуль 900мм"
-            )
-
-        # Зоны хранения
-        has_upper = any(m.type == "upper_base" for m in modules)
-        has_lower = any(m.type == "lower_base" for m in modules)
-        if has_upper:
-            q.suggestions.append(
-                "📦 Верхние базы: посуда, чашки, специи, лёгкие продукты"
-            )
-        if has_lower:
-            q.suggestions.append(
-                "📦 Нижние базы: кастрюли, сковородки, бытовая химия, мойка"
-            )
-
-    if is_wardrobe:
-        q.suggestions.append(
-            "👔 Рекомендация: штанга для одежды + полки для обуви в нижней зоне"
-        )
-        # Штанга
-        for m in modules:
-            if m.type == "penal" and m.width >= 600:
+    # ── Эргономика / рекомендации (только если включены) ──
+    if auto_accessories:
+        if is_kitchen:
+            # Ящики: если AI не нашёл — рекомендуем
+            if q.drawers_count == 0:
+                q.drawers_count = 2           # минимум 2 ящика на кухню
+                q.drawers_internal_count = 1   # один внутренний для приборов
+                q.drawer_system = "Tandembox"
                 q.suggestions.append(
-                    f"👕 Штанга прямоугольная в пенал {m.width}мм — {m.quantity} шт."
+                    "🍴 Рекомендация: добавить 2 ящика Tandembox — "
+                    "один стандартный, один с внутренним для столовых приборов"
                 )
+
+            # Лоток для приборов
+            q.cutlery_tray_count = 1
+            # Бутылочница: если есть узкий модуль (≤200мм)
+            q.bottle_holder_count = 1 if any(m.width <= 200 for m in modules) else 0
+            # Мойка — предполагаем что есть
+            q.has_sink = True
+            if q.has_sink:
+                q.drying_rack_count = 1
+                q.suggestions.append(
+                    "💧 Рекомендация: сушка для посуды Alba в модуль 900мм"
+                )
+
+            # Зоны хранения
+            has_upper = any(m.type == "upper_base" for m in modules)
+            has_lower = any(m.type == "lower_base" for m in modules)
+            if has_upper:
+                q.suggestions.append(
+                    "📦 Верхние базы: посуда, чашки, специи, лёгкие продукты"
+                )
+            if has_lower:
+                q.suggestions.append(
+                    "📦 Нижние базы: кастрюли, сковородки, бытовая химия, мойка"
+                )
+
+        if is_wardrobe:
+            q.suggestions.append(
+                "👔 Рекомендация: штанга для одежды + полки для обуви в нижней зоне"
+            )
+            # Штанга
+            for m in modules:
+                if m.type == "penal" and m.width >= 600:
+                    q.suggestions.append(
+                        f"👕 Штанга прямоугольная в пенал {m.width}мм — {m.quantity} шт."
+                    )
 
     return q
 
@@ -334,21 +407,11 @@ def fill_template_for_room(
     room_lower = room_name.lower()
     is_kitchen = any(kw in room_lower for kw in ["кухн", "остров", "гарнитур", "kitchen"])
 
-    # Определяем материал ЛДСП из AI-распознанных
-    ldsp_material = "EGGER однотон"
+    # Определяем материал через единую функцию
+    mat_props = detect_material_properties(materials)
+    is_texture = mat_props["surface"] == "texture"
+    ldsp_material = "EGGER текстура" if is_texture else "EGGER однотон"
     ldsp_price = 6000
-    is_texture = False
-    for mat in materials:
-        mat_upper = mat.upper()
-        # Текстура = древесный декор: H1xxx, H3xxx, либо явно указано
-        if any(kw in mat_upper for kw in ["ТЕКСТУР", "ДРЕВЕСН", "WOOD", "ДУБ", "ОРЕХ", "ЯСЕНЬ"]):
-            is_texture = True
-            break
-        # H1/H3 префиксы EGGER = древесные декоры
-        if any(mat_upper.startswith(p) for p in ["H1", "H3"]):
-            is_texture = True
-            break
-    # ST9, ST36 и т.д. — это финиш, а не текстура. U, W префиксы = однотон.
 
     # ── 1. ЛДСП ──
     if q.ldsp_sheets > 0:

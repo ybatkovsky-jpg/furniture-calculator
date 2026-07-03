@@ -49,10 +49,25 @@ COEFFS = {
 def generate_calculation_excel(
     pipeline_result: PipelineResult,
     output_path: str = "Расчет_по_модулям.xlsx",
+    template_path: str = None,
 ) -> str:
     """
-    Сгенерировать Excel с расчётом по шаблону для каждого помещения.
+    Сгенерировать Excel с расчётом для каждого помещения.
+
+    Если передан template_path — заполняет существующий шаблон (колонка «Количество»).
+    Иначе — генерирует новый Excel с нуля в упрощённом формате.
     """
+    # Режим заполнения шаблона
+    if template_path:
+        from app.services.template_filler import fill_template_from_pipeline
+        logger.info(f"📄 Режим шаблона: {template_path}")
+        return fill_template_from_pipeline(
+            pipeline_result=pipeline_result,
+            template_path=template_path,
+            output_path=output_path,
+        )
+
+    # Режим генерации с нуля
     wb = Workbook()
     wb.remove(wb.active)
 
@@ -234,7 +249,7 @@ def _write_summary(ws, result: PipelineResult):
     for room in result.rooms:
         if not room.modules:
             continue
-        q = calculate_quantities(room.modules, room.room_name)
+        q = calculate_quantities(room.modules, room.room_name, room.materials)
         total_ldsp += q.ldsp_sheets
         total_edge += q.edge_08_m + q.edge_04_m
 

@@ -2,12 +2,13 @@
 Калькулятор количества материалов на основе AI-модулей.
 
 Переводит модули (600×560×820) в реальные позиции прайса:
-- Листы ЛДСП (площадь деталей / площадь листа × k запаса)
-- Кромка (периметр деталей × тип кромки)
+- Листы ЛДСП (площадь деталей / площадь листа × k запаса на раскрой)
+- Кромка (ВСЕ торцы всех деталей — кромим вкруг)
 - Фасады (площадь фасадов × цена за м²)
-- Петли (высота фасада → N петель)
-- Ящики (ширина фасада → тип системы)
-- Gola, LED, комплектующие
+- Петли (высота фасада → N петель с запасом)
+- Ящики (ширина фасада → тип системы; рекомендации)
+- Gola (горизонтальные + вертикальные профиля)
+- LED, комплектующие, эргономика
 """
 
 import math
@@ -20,10 +21,20 @@ from app.services.image_analyzer import RecognizedModule
 
 # Стандартные размеры листов
 SHEET_LDSP = {"width_mm": 2800, "height_mm": 2070, "area_m2": 5.796}
-SHEET_MDF = {"width_mm": 2800, "height_mm": 1220, "area_m2": 3.416}
-WASTE_FACTOR_PLAIN = 1.15    # однотонный ЛДСП
-WASTE_FACTOR_TEXTURE = 1.20  # текстурный ЛДСП
-EDGE_OVERLAP_MM = 2          # нахлёст кромки
+SHEET_MDF  = {"width_mm": 2800, "height_mm": 1220, "area_m2": 3.416}
+
+# Коэффициенты запаса на раскрой (увеличены — реальный раскрой)
+WASTE_FACTOR_PLAIN   = 1.35   # однотонный ЛДСП (деловой отход ~25%)
+WASTE_FACTOR_TEXTURE = 1.40   # текстурный ЛДСП (учёт направления рисунка)
+WASTE_FACTOR_MDF     = 1.25   # МДФ фасады
+
+# Толщина кромки по умолчанию (кромим ВСЕ детали вкруг)
+EDGE_DEFAULT_MM  = 0.4   # невидимые торцы
+EDGE_VISIBLE_MM  = 0.8   # видимые (фасадные) торцы
+EDGE_PREMIUM_MM  = 2.0   # премиум (влагостойкие зоны)
+
+# Запас кромки на обработку
+EDGE_OVERLAP     = 1.05  # +5%
 
 
 @dataclass
@@ -42,10 +53,13 @@ class MaterialQuantities:
     # ХДФ (задние стенки)
     hdf_sheets: int = 0
 
-    # Кромка
-    edge_04_m: float = 0   # 0.4 мм (скрытые торцы)
-    edge_08_m: float = 0   # 0.8 мм (видимые торцы)
-    edge_2_m: float = 0    # 2 мм (премиум)
+    # Кромка — ВСЕ торцы (детали кромятся вкруг)
+    edge_total_m: float = 0      # общий метраж кромки (0.4мм)
+    edge_visible_m: float = 0    # видимые торцы (0.8мм)
+    edge_premium_m: float = 0    # премиум (2мм)
+    edge_04_m: float = 0         # итого 0.4мм (невидимые = общие − видимые − премиум)
+    edge_08_m: float = 0         # итого 0.8мм
+    edge_2_m: float = 0          # итого 2мм
 
     # Фасады
     facades_area_m2: float = 0
@@ -54,13 +68,16 @@ class MaterialQuantities:
     # Фурнитура
     hinges_count: int = 0
     hinge_brand: str = "FIRMAX"   # FIRMAX / BLUM / HETTICH
+
     drawers_count: int = 0
     drawer_system: str = "Tandembox"  # Tandembox / Legrabox / Boyard Start
+    drawers_internal_count: int = 0   # внутренние ящики (для столовых приборов)
 
-    # Gola
-    gola_vertical_m: float = 0
-    gola_horizontal_m: float = 0
-    gola_with_led: bool = False
+    # Gola — вертикальные и горизонтальные
+    gola_vertical_m: float = 0     # вертикальные профиля (межмодульные)
+    gola_horizontal_m: float = 0   # горизонтальные профиля (столешница)
+    gola_vertical_pcs: int = 0     # штук по 3м
+    gola_horizontal_pcs: int = 0   # штук по 3м
 
     # LED
     led_strip_m: float = 0
@@ -73,19 +90,44 @@ class MaterialQuantities:
     cutlery_tray_count: int = 0
     drying_rack_count: int = 0
 
-    # Примечания
+    # Эргономика / рекомендации
+    suggestions: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
 
-def calculate_quantities(modules: List[RecognizedModule], room_name: str = "") -> MaterialQuantities:
+def calculate_quantities(modules: List[RecognizedModule], room_name: str = "", materials: List[str] = None) -> MaterialQuantities:
     """
     Рассчитать количества материалов для списка модулей.
 
-    Args:
-        modules: список AI-распознанных модулей
-        room_name: название помещения (для эвристик)
+    Учтены реальные нормы:
+    - Кромка на ВСЕ торцы (детали кромятся вкруг)
+    - Запас на раскрой ЛДСП ~35-40%
+    - Петли стандартные (2-5 на фасад)
+    - Gola вертикальные + горизонтальные
+    - Эргономические рекомендации
     """
     q = MaterialQuantities()
+    materials = materials or []
+
+    room_lower = room_name.lower()
+    is_kitchen = any(kw in room_lower for kw in ["кухн", "остров", "гарнитур", "kitchen"])
+    is_wardrobe = any(kw in room_lower for kw in ["гардероб", "шкаф", "wardrobe", "прием", "приём"])
+
+    # Определяем тип материала ЛДСП
+    for mat in materials:
+        mat_upper = mat.upper()
+        if any(kw in mat_upper for kw in ["ТЕКСТУР", "ДРЕВЕСН", "WOOD", "ДУБ", "ОРЕХ", "ЯСЕНЬ"]):
+            q.ldsp_material = "текстура"
+            break
+        if any(mat_upper.startswith(p) for p in ["H1", "H3"]):
+            q.ldsp_material = "текстура"
+            break
+
+    total_hdf_area = 0.0  # Суммируем площадь, делим в конце
+    total_back_area = 0.0
+    lower_modules_width = 0.0  # Суммарная ширина нижних баз (для Gola)
+    lower_modules_count = 0
+    visible_module_count = 0  # Количество «видимых» модулей (для верт. Gola)
 
     for module in modules:
         w_m = module.width / 1000
@@ -93,36 +135,56 @@ def calculate_quantities(modules: List[RecognizedModule], room_name: str = "") -
         h_m = module.height / 1000
         qty = max(module.quantity, 1)
 
-        # ── ЛДСП (корпус) ──
-        # Детали: 2 боковины + дно + крыша + задняя стенка (ХДФ) + полки
-        # Площадь на 1 модуль:
-        sides = 2 * (d_m * h_m)           # 2 боковины
-        bottom_top = 2 * (w_m * d_m)       # дно + крыша
-        back = w_m * h_m                   # задняя стенка (ХДФ)
-        shelves = w_m * d_m                # 1 полка (если shelves > 0)
+        # ── Детали корпуса (на 1 модуль) ──
+        sides_area      = 2 * (d_m * h_m)        # 2 боковины
+        bottom_top_area = 2 * (w_m * d_m)         # дно + крыша
+        back_area       = w_m * h_m               # задняя стенка (ХДФ)
+        shelf_area      = w_m * d_m * max(module.shelves, 1 if module.type in ("lower_base", "upper_base") else 0)
 
-        ldsp_per_module = sides + bottom_top + (shelves * max(module.shelves, 0))
+        ldsp_per_module = sides_area + bottom_top_area + shelf_area
         q.ldsp_area_m2 += ldsp_per_module * qty
 
-        # ХДФ
-        q.hdf_sheets += math.ceil((back * qty) / SHEET_MDF["area_m2"])
+        # ХДФ — суммируем площадь, пересчитаем в листы в конце
+        total_hdf_area += back_area * qty
 
-        # ── Кромка ──
-        # Видимые торцы: передние кромки боковин + дно + крыша
-        visible_edge = (2 * h_m + 2 * w_m) * qty  # периметр фасада
-        hidden_edge = (2 * h_m + 2 * d_m) * qty   # торцы боковин внутри
+        # ── КРОМКА: ВСЕ торцы ВСЕХ деталей (кромим вкруг) ──
+        # Каждая деталь имеет 4 стороны. Считаем периметр каждой детали.
+        # 2 боковины: 4 стороны каждая = 2*(d+h) × 2
+        # Дно + крыша: 4 стороны каждая = 2*(w+d) × 2
+        # Полки: 4 стороны каждая = 2*(w+d) × N
+        # ХДФ (задняя стенка): обычно не кромится или кромится 0.4мм — считаем
 
-        q.edge_08_m += visible_edge * 1.05    # +5% запас
-        q.edge_04_m += hidden_edge * 1.05
+        sides_perimeter      = 2 * (2 * (d_m + h_m))   # периметр 2 боковин
+        bottom_top_perimeter = 2 * (2 * (w_m + d_m))   # периметр дна + крыши
+        shelf_perimeter      = max(module.shelves, 1 if module.type in ("lower_base", "upper_base") else 0) * (2 * (w_m + d_m))
+        back_perimeter       = 2 * (w_m + h_m)          # задняя стенка (кромится 0.4)
+
+        total_perimeter = (sides_perimeter + bottom_top_perimeter + shelf_perimeter + back_perimeter) * qty
+
+        # Распределение по типу кромки:
+        # - Видимые (передние) торцы: фасадная сторона боковин + дно + крыша
+        #   = 2*(h_m) для боковин + 2*(w_m) для дна/крыши
+        # - Невидимые: всё остальное → 0.4мм
+        # - Премиум (2мм): если есть мойка или влажная зона
+
+        visible_per_module = (2 * h_m + 2 * w_m)  # передние кромки
+        visible_total = visible_per_module * qty
+
+        # Премиум 2мм — не используется (по требованию заказчика)
+        premium_total = 0
+
+        q.edge_total_m    += total_perimeter * EDGE_OVERLAP
+        q.edge_visible_m  += visible_total * EDGE_OVERLAP
+        q.edge_premium_m  += premium_total * EDGE_OVERLAP
 
         # ── Фасады ──
         if module.facades and module.facades.get("count", 0) > 0:
             facade_count = module.facades.get("count", 1)
-            facade_h_m = (module.height - 4) / 1000  # зазор 4мм
+            facade_h_m = (module.height - 4) / 1000   # зазор 4мм
             facade_w_m = (module.width / facade_count - 3) / 1000  # зазор 3мм
             q.facades_area_m2 += facade_w_m * facade_h_m * facade_count * qty
 
-        # ── Петли ──
+        # ── Петли (стандартная формула) ──
         if module.type in ("lower_base", "upper_base", "penal", "column", "tumbler"):
             facade_h = module.height
             if facade_h < 900:
@@ -131,14 +193,16 @@ def calculate_quantities(modules: List[RecognizedModule], room_name: str = "") -
                 hinges = 3
             elif facade_h <= 1900:
                 hinges = 4
-            else:
+            elif facade_h <= 2400:
                 hinges = 5
+            else:
+                hinges = 6
 
             if module.facades:
                 facade_count = module.facades.get("count", 1)
                 q.hinges_count += hinges * facade_count * qty
 
-        # ── Ящики ──
+        # ── Ящики (AI + рекомендации) ──
         if module.drawers and module.drawers.get("count", 0) > 0:
             drawer_count = module.drawers.get("count", 1)
             q.drawers_count += drawer_count * qty
@@ -152,30 +216,103 @@ def calculate_quantities(modules: List[RecognizedModule], room_name: str = "") -
             else:
                 q.drawer_system = "Boyard Start"
 
-    # ── Округление листов ──
+        # Счётчики для Gola
+        if module.type == "lower_base":
+            lower_modules_width += (module.width / 1000) * qty
+            lower_modules_count += qty
+        if module.type in ("lower_base", "upper_base", "penal"):
+            visible_module_count += qty
+
+    # ── ИТОГОВЫЕ РАСЧЁТЫ ──
+
+    # ЛДСП: листы с запасом на раскрой
     waste = WASTE_FACTOR_TEXTURE if "текстур" in (q.ldsp_material or "").lower() else WASTE_FACTOR_PLAIN
-    q.ldsp_sheets = max(1, math.ceil(q.ldsp_area_m2 * waste / SHEET_LDSP["area_m2"]))
-    q.mdf_sheets = max(0, math.ceil(q.facades_area_m2 * WASTE_FACTOR_PLAIN / SHEET_MDF["area_m2"]))
+    q.ldsp_sheets = max(1, math.ceil(q.ldsp_area_m2 * waste / SHEET_LDSP["area_m2"])) if q.ldsp_area_m2 > 0 else 0
+    q.mdf_sheets  = max(0, math.ceil(q.facades_area_m2 * WASTE_FACTOR_MDF / SHEET_MDF["area_m2"]))
 
-    # ── Gola (только для кухни) ──
-    room_lower = room_name.lower()
-    if any(kw in room_lower for kw in ["кухн", "остров", "гарнитур"]):
-        # Горизонтальный Gola: длина всех нижних баз
-        for m in modules:
-            if m.type == "lower_base":
-                q.gola_horizontal_m += (m.width / 1000) * m.quantity
-        q.gola_with_led = True
-        q.led_strip_m = q.gola_horizontal_m * 0.7  # LED на 70% длины
-        q.led_power_supply = 1
-        q.led_sensor = 1
+    # ХДФ: для кухонь — минус 40% (техника, мойка без задней стенки)
+    if total_hdf_area > 0:
+        if is_kitchen:
+            total_hdf_area *= 0.6  # ~40% модулей без ХДФ (техника, мойка)
+        q.hdf_sheets = max(1, math.ceil(total_hdf_area * WASTE_FACTOR_PLAIN / SHEET_MDF["area_m2"]))
 
-    # ── Комплектующие ──
-    if any(kw in room_lower for kw in ["кухн", "гарнитур"]):
-        q.cutlery_tray_count = 1  # лоток для приборов — всегда на кухне
+    # Кромка: распределяем
+    # edge_total_m — всё
+    # edge_premium_m — 2мм
+    # edge_visible_m — 0.8мм (включая премиум)
+    # Остальное → 0.4мм
+    q.edge_2_m  = math.ceil(q.edge_premium_m)
+    q.edge_08_m = math.ceil(q.edge_visible_m)
+    q.edge_04_m = math.ceil(q.edge_total_m - q.edge_visible_m - q.edge_premium_m)
+    if q.edge_04_m < 0:
+        q.edge_04_m = 0
+
+    # ── Gola: вертикальные + горизонтальные ──
+    if is_kitchen:
+        # Горизонтальный Gola: сумма ширин нижних баз
+        q.gola_horizontal_m = lower_modules_width
+
+        # Вертикальный Gola: 2 шт (по одному на каждый открытый торец)
+        if visible_module_count > 0 and modules:
+            avg_height_m = sum((m.height / 1000) * max(m.quantity, 1) for m in modules
+                               if m.type in ("lower_base", "upper_base", "penal")) / max(visible_module_count, 1)
+            q.gola_vertical_m = avg_height_m * 2  # 2 открытых торца
+            q.gola_vertical_pcs = 2  # всегда 2 штуки (левый + правый торец)
+
+        # Штуки по 3 метра
+        q.gola_horizontal_pcs = math.ceil(q.gola_horizontal_m / 3) if q.gola_horizontal_m > 0 else 0
+
+        # LED: 70% от длины горизонтального Gola
+        q.led_strip_m      = q.gola_horizontal_m * 0.7
+        q.led_power_supply = max(1, math.ceil(q.led_strip_m / 10)) if q.led_strip_m > 0 else 0
+        q.led_sensor       = 1 if q.led_strip_m > 0 else 0
+
+    # ── Эргономика / рекомендации ──
+    if is_kitchen:
+        # Ящики: если AI не нашёл — рекомендуем
+        if q.drawers_count == 0:
+            q.drawers_count = 2           # минимум 2 ящика на кухню
+            q.drawers_internal_count = 1   # один внутренний для приборов
+            q.drawer_system = "Tandembox"
+            q.suggestions.append(
+                "🍴 Рекомендация: добавить 2 ящика Tandembox — "
+                "один стандартный, один с внутренним для столовых приборов"
+            )
+
+        # Лоток для приборов
+        q.cutlery_tray_count = 1
+        # Бутылочница: если есть узкий модуль (≤200мм)
         q.bottle_holder_count = 1 if any(m.width <= 200 for m in modules) else 0
-        q.has_sink = True  # предполагаем что мойка есть
+        # Мойка — предполагаем что есть
+        q.has_sink = True
         if q.has_sink:
             q.drying_rack_count = 1
+            q.suggestions.append(
+                "💧 Рекомендация: сушка для посуды Alba в модуль 900мм"
+            )
+
+        # Зоны хранения
+        has_upper = any(m.type == "upper_base" for m in modules)
+        has_lower = any(m.type == "lower_base" for m in modules)
+        if has_upper:
+            q.suggestions.append(
+                "📦 Верхние базы: посуда, чашки, специи, лёгкие продукты"
+            )
+        if has_lower:
+            q.suggestions.append(
+                "📦 Нижние базы: кастрюли, сковородки, бытовая химия, мойка"
+            )
+
+    if is_wardrobe:
+        q.suggestions.append(
+            "👔 Рекомендация: штанга для одежды + полки для обуви в нижней зоне"
+        )
+        # Штанга
+        for m in modules:
+            if m.type == "penal" and m.width >= 600:
+                q.suggestions.append(
+                    f"👕 Штанга прямоугольная в пенал {m.width}мм — {m.quantity} шт."
+                )
 
     return q
 
@@ -191,19 +328,27 @@ def fill_template_for_room(
     Returns:
         Список кортежей: (категория, наименование, цвет/поставщик, цена, количество)
     """
-    q = calculate_quantities(modules, room_name)
+    q = calculate_quantities(modules, room_name, materials)
     items = []
+
+    room_lower = room_name.lower()
+    is_kitchen = any(kw in room_lower for kw in ["кухн", "остров", "гарнитур", "kitchen"])
 
     # Определяем материал ЛДСП из AI-распознанных
     ldsp_material = "EGGER однотон"
     ldsp_price = 6000
+    is_texture = False
     for mat in materials:
         mat_upper = mat.upper()
-        if "ТЕКСТУР" in mat_upper or "H1" in mat_upper:
-            ldsp_material = "EGGER текстура"
-            ldsp_price = 6650
-            q.ldsp_material = "текстура"
+        # Текстура = древесный декор: H1xxx, H3xxx, либо явно указано
+        if any(kw in mat_upper for kw in ["ТЕКСТУР", "ДРЕВЕСН", "WOOD", "ДУБ", "ОРЕХ", "ЯСЕНЬ"]):
+            is_texture = True
             break
+        # H1/H3 префиксы EGGER = древесные декоры
+        if any(mat_upper.startswith(p) for p in ["H1", "H3"]):
+            is_texture = True
+            break
+    # ST9, ST36 и т.д. — это финиш, а не текстура. U, W префиксы = однотон.
 
     # ── 1. ЛДСП ──
     if q.ldsp_sheets > 0:
@@ -213,10 +358,13 @@ def fill_template_for_room(
     # ── 2. Кромка ──
     if q.edge_08_m > 0:
         items.append(("КРОМКА", "EGGER 0,8*19", f"{q.edge_08_m:.0f} м.п. × 34₽",
-                      34, math.ceil(q.edge_08_m)))
+                      34, q.edge_08_m))
     if q.edge_04_m > 10:  # только если значимое количество
         items.append(("КРОМКА", "EGGER 0,4*19", f"{q.edge_04_m:.0f} м.п. × 17.5₽",
-                      17.5, math.ceil(q.edge_04_m)))
+                      17.5, q.edge_04_m))
+    if q.edge_2_m > 0:
+        items.append(("КРОМКА", "EGGER 2*19", f"{q.edge_2_m:.0f} м.п. × 60₽",
+                      60, q.edge_2_m))
 
     # ── 3. ХДФ ──
     if q.hdf_sheets > 0:
@@ -225,7 +373,6 @@ def fill_template_for_room(
 
     # ── 4. МДФ / Фасады ──
     if q.facades_area_m2 > 0:
-        # Определяем тип фасада
         facade_price = 5729  # ПВХ I категория
         facade_name = "ФАСАДЫ ПВХ 16мм"
         for mat in materials:
@@ -257,12 +404,18 @@ def fill_template_for_room(
         items.append(("ЯЩИКИ", f"Ящик {q.drawer_system}",
                       f"{q.drawers_count} шт × {dp}₽",
                       dp, q.drawers_count))
+    if q.drawers_internal_count > 0:
+        items.append(("ЯЩИКИ", f"Ящик внутренний {q.drawer_system}",
+                      f"{q.drawers_internal_count} шт × 9000₽",
+                      9000, q.drawers_internal_count))
 
     # ── 7. Gola ──
-    if q.gola_horizontal_m > 0:
-        gola_m = math.ceil(q.gola_horizontal_m / 3) * 3  # кратно 3м
+    if q.gola_horizontal_pcs > 0:
         items.append(("GOLA", "GOLA профиль горизонтальный 3 м (C,L) черный",
-                      f"{gola_m / 3:.0f} шт × 3550₽", 3550, gola_m / 3))
+                      f"{q.gola_horizontal_pcs} шт × 3550₽", 3550, q.gola_horizontal_pcs))
+    if q.gola_vertical_pcs > 0:
+        items.append(("GOLA", "GOLA профиль вертикальный боковой 3 м",
+                      f"{q.gola_vertical_pcs} шт × 1835₽", 1835, q.gola_vertical_pcs))
 
     # ── 8. LED ──
     if q.led_strip_m > 0:

@@ -12,7 +12,6 @@ import logging
 import math
 import re
 import copy
-import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -24,7 +23,6 @@ from app.services.quantity_calc import (
     MaterialQuantities,
     calculate_quantities,
     fill_template_for_room,
-    detect_material_properties,
 )
 
 logger = logging.getLogger(__name__)
@@ -102,33 +100,6 @@ ROW_MAPPING: List[Tuple[List[str], str, str, float]] = [
 ]
 
 
-def _load_row_mapping(config_path: Optional[str] = None) -> List[Tuple[List[str], str, str, float]]:
-    """
-    Загрузить маппинг строк из JSON-конфига.
-    Если конфиг не найден — используется хардкод ROW_MAPPING.
-    
-    Args:
-        config_path: путь к JSON-файлу (по умолчанию templates/row_mapping.json)
-    """
-    if config_path is None:
-        config_path = str(Path(__file__).parent.parent.parent / "templates" / "row_mapping.json")
-    
-    if Path(config_path).exists():
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            mappings = [
-                (item["keywords"], item["field"], item["unit"], item["multiplier"])
-                for item in data["mappings"]
-            ]
-            logger.info(f"📋 Загружен маппинг из {config_path}: {len(mappings)} строк (v{data.get('version', '?')})")
-            return mappings
-        except (json.JSONDecodeError, KeyError, FileNotFoundError) as e:
-            logger.warning(f"⚠️ Ошибка загрузки маппинга из JSON: {e}. Использую хардкод.")
-    
-    return ROW_MAPPING
-
-
 def _find_row_for_material(ws, keywords: List[str]) -> Optional[int]:
     """
     Найти номер строки в листе по ключевым словам в колонках A (Наименование)
@@ -147,51 +118,6 @@ def _find_row_for_material(ws, keywords: List[str]) -> Optional[int]:
     return None
 
 
-def _find_row_for_material_fuzzy(
-    ws, keywords: List[str], threshold: float = 0.80
-) -> Optional[int]:
-    """
-    Найти строку с нечётким совпадением (fuzzy).
-    Используется как fallback, если точный поиск не дал результата.
-    
-    Сравнивает запрос с объединённым текстом A+B через SequenceMatcher.
-    """
-    from difflib import SequenceMatcher
-
-    query = " ".join(keywords).lower()
-    best_row, best_score = None, 0.0
-
-    for row in range(1, ws.max_row + 1):
-        cell_a = str(ws.cell(row=row, column=1).value or "")
-        cell_b = str(ws.cell(row=row, column=2).value or "")
-        combined = f"{cell_a} | {cell_b}".lower()
-
-        if not cell_a and not cell_b:
-            continue
-
-        score = SequenceMatcher(None, query, combined).ratio()
-        if score > best_score:
-            best_score, best_row = score, row
-
-    if best_score >= threshold and best_row:
-        logger.info(
-            f"🎯 Fuzzy match: «{query[:60]}...» → R{best_row} (score={best_score:.2f})"
-        )
-        return best_row
-
-    return None
-
-
-def _find_row_smart(ws, keywords: List[str]) -> Optional[int]:
-    """
-    Умный поиск строки: точный → нечёткий.
-    """
-    row = _find_row_for_material(ws, keywords)
-    if row:
-        return row
-    return _find_row_for_material_fuzzy(ws, keywords, threshold=0.75)
-
-
 def _build_quantity_map(
     q: MaterialQuantities,
     materials: List[str],
@@ -205,9 +131,17 @@ def _build_quantity_map(
     """
     m = {}
 
-    # Определяем свойства материала (единая функция)
-    mat_props = detect_material_properties(materials)
-    is_texture = mat_props["surface"] == "texture"
+    # Определяем тип материала ЛДСП
+    is_texture = False
+    for mat in materials:
+        mat_upper = mat.upper()
+        # Текстура = древесный декор (H1/H3 префиксы EGGER) или явное указание
+        if any(kw in mat_upper for kw in ["ТЕКСТУР", "ДРЕВЕСН", "WOOD", "ДУБ", "ОРЕХ", "ЯСЕНЬ"]):
+            is_texture = True
+            break
+        if any(mat_upper.startswith(p) for p in ["H1", "H3"]):
+            is_texture = True
+            break
 
     # ЛДСП
     if is_texture:
@@ -323,17 +257,12 @@ def fill_template_from_pipeline(
     template_ws = wb["Рассчет"]
     rooms_with_modules = [r for r in pipeline_result.rooms if r.modules]
 
-    # Загружаем маппинг (из JSON или хардкод)
-    row_mapping = _load_row_mapping()
-
     if not rooms_with_modules:
         logger.warning("⚠️ Нет помещений с модулями для заполнения")
         wb.save(output_path)
         return output_path
 
     # Для каждого помещения создаём копию листа-шаблона
-    all_unfilled = []  # собираем незаполненные строки со всех помещений
-
     for i, room in enumerate(rooms_with_modules):
         sheet_name = _clean_sheet_name(room.room_name)[:31]
 
@@ -352,11 +281,10 @@ def fill_template_from_pipeline(
 
         # Заполняем колонку E (Количество) в найденных строках
         filled_rows = []
-        unfilled_here = []
-        for keywords, field, unit, multiplier in row_mapping:
+        for keywords, field, unit, multiplier in ROW_MAPPING:
             value = qty_map.get(field)
             if value is not None and value > 0:
-                row_num = _find_row_smart(new_ws, keywords)
+                row_num = _find_row_for_material(new_ws, keywords)
                 if row_num:
                     final_value = value * multiplier
                     # Записываем ТОЛЬКО в колонку E (5)
@@ -368,24 +296,12 @@ def fill_template_from_pipeline(
                         f"{final_value} {unit}"
                     )
                 else:
-                    unfilled_here.append((keywords, field, value, unit, multiplier))
-                    logger.warning(
-                        f"  {sheet_name}: ⚠ не найдена строка для {keywords[0]} "
-                        f"(ожидалось {value * multiplier} {unit})"
+                    logger.debug(
+                        f"  {sheet_name}: ⚠ не найдена строка для {keywords}"
                     )
-
-        # Сохраняем незаполненные для сводного отчёта
-        for keywords, field, value, unit, multiplier in unfilled_here:
-            all_unfilled.append({
-                "room": sheet_name,
-                "material": " + ".join(keywords[:2]),
-                "expected_value": f"{value * multiplier} {unit}",
-                "field": field,
-            })
 
         logger.info(
             f"✅ {sheet_name}: заполнено {len(filled_rows)} строк, "
-            f"пропущено {len(unfilled_here)}, "
             f"модулей={len(room.modules)}, "
             f"ЛДСП={q.ldsp_sheets} листов, "
             f"кромка={q.edge_08_m:.0f}+{q.edge_04_m:.0f} м"
@@ -398,14 +314,6 @@ def fill_template_from_pipeline(
     # ── Сводный лист ──
     if "СВОДКА" in [ws.title for ws in wb.worksheets]:
         _update_summary(wb, pipeline_result, rooms_with_modules)
-
-    # ── Лист «⚠ Проблемы» если есть незаполненные строки ──
-    if all_unfilled:
-        _write_problems_sheet(wb, all_unfilled)
-        logger.warning(f"⚠️  {len(all_unfilled)} строк не найдены в шаблоне — см. лист «⚠ Проблемы»")
-
-    # ── Лист «✅ Контроль качества» ──
-    _add_quality_sheet(wb, pipeline_result)
 
     # Сохраняем
     wb.save(output_path)
@@ -467,182 +375,6 @@ def _add_suggestions_section(ws, q: MaterialQuantities):
         ws.merge_cells(f"A{row}:F{row}")
         cell = ws.cell(row=row, column=1, value=s)
         cell.font = suggest_font
-
-
-def _write_problems_sheet(wb: Workbook, items: List[dict]):
-    """
-    Создать/обновить лист «⚠ Проблемы» с незаполненными позициями.
-    
-    Оператор видит все строки, которые не удалось найти в шаблоне,
-    и может внести их вручную или добавить недостающие строки в шаблон.
-    """
-    from openpyxl.styles import Font, PatternFill, Alignment
-
-    sheet_name = "⚠ Проблемы"
-    if sheet_name in [ws.title for ws in wb.worksheets]:
-        ws = wb[sheet_name]
-    else:
-        ws = wb.create_sheet(sheet_name)
-
-    # Стили
-    header_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-    header_font = Font(name="Arial", size=10, bold=True, color="9C0006")
-    normal_font = Font(name="Arial", size=9)
-
-    # Заголовки
-    headers = ["Помещение", "Материал (не найдена строка в шаблоне)",
-               "Ожидаемое значение", "Действие оператора"]
-    widths = [18, 55, 22, 45]
-
-    for col, (h, w) in enumerate(zip(headers, widths), 1):
-        cell = ws.cell(row=1, column=col, value=h)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(wrap_text=True)
-        ws.column_dimensions[chr(64 + col)].width = w
-
-    for i, item in enumerate(items, 2):
-        ws.cell(row=i, column=1, value=item["room"]).font = normal_font
-        ws.cell(row=i, column=2, value=item["material"]).font = normal_font
-        ws.cell(row=i, column=3, value=item["expected_value"]).font = normal_font
-        ws.cell(row=i, column=4,
-                value="Внести вручную ИЛИ добавить строку в шаблон «Рассчет»").font = normal_font
-
-    logger.info(f"📋 Лист «⚠ Проблемы»: {len(items)} незаполненных позиций")
-
-
-def _add_quality_sheet(wb: Workbook, pipeline_result: PipelineResult):
-    """
-    Добавить лист «✅ Контроль качества» со сводкой по всем помещениям.
-    
-    Оператор видит: какие помещения требуют проверки, какие ОК.
-    """
-    from openpyxl.styles import Font, PatternFill, Alignment
-
-    sheet_name = "✅ Контроль качества"
-    if sheet_name in [ws.title for ws in wb.worksheets]:
-        ws = wb[sheet_name]
-        # Очищаем старые данные
-        for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
-            for cell in row:
-                cell.value = None
-    else:
-        ws = wb.create_sheet(sheet_name)
-
-    # Стили
-    header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
-    header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
-    good_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-    warn_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
-    bad_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-
-    # Заголовки
-    headers = ["Помещение", "Стр.", "Модулей", "Уверенность",
-               "Quality", "Флаги", "Рекомендация"]
-    widths = [22, 6, 10, 14, 10, 45, 30]
-
-    for col, (h, w) in enumerate(zip(headers, widths), 1):
-        cell = ws.cell(row=1, column=col, value=h)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(wrap_text=True)
-        ws.column_dimensions[chr(64 + col)].width = w
-
-    rooms = pipeline_result.rooms if pipeline_result else []
-
-    for i, room in enumerate(rooms, 2):
-        ws.cell(row=i, column=1, value=room.room_name)
-        ws.cell(row=i, column=2, value=room.page)
-        ws.cell(row=i, column=3, value=len(room.modules))
-        ws.cell(row=i, column=4, value=room.confidence)
-        ws.cell(row=i, column=5, value=f"{room.quality_score:.0%}")
-        ws.cell(row=i, column=6, value="; ".join(room.quality_flags))
-
-        # Рекомендация + цвет строки
-        if room.quality_score < 0.5:
-            recommendation = "🔴 ПЕРЕПРОВЕРИТЬ ВРУЧНУЮ"
-            row_fill = bad_fill
-        elif room.quality_score < 0.8:
-            recommendation = "🟡 Желательно проверить"
-            row_fill = warn_fill
-        else:
-            recommendation = "🟢 ОК"
-            row_fill = good_fill
-
-        ws.cell(row=i, column=7, value=recommendation)
-
-        # Подсветка строки
-        for col in range(1, 8):
-            ws.cell(row=i, column=col).fill = row_fill
-            ws.cell(row=i, column=col).font = Font(name="Arial", size=9)
-
-    # Итого
-    summary_row = len(rooms) + 3
-    total_modules = sum(len(r.modules) for r in rooms)
-    avg_quality = (sum(r.quality_score for r in rooms) / max(len(rooms), 1))
-    ws.merge_cells(f"A{summary_row}:G{summary_row}")
-    cell = ws.cell(row=summary_row, column=1,
-                   value=f"ИТОГО: {len(rooms)} помещений, {total_modules} модулей, "
-                         f"среднее качество: {avg_quality:.0%}")
-    cell.font = Font(name="Arial", size=10, bold=True)
-
-    logger.info(f"📋 Лист «✅ Контроль качества»: {len(rooms)} помещений")
-
-
-def validate_template(template_path: str) -> dict:
-    """
-    Проверить шаблон ДО заполнения: все ли ожидаемые строки присутствуют.
-    
-    Запускать при смене шаблона или добавлении новых материалов.
-    
-    Returns:
-        {"valid": bool, "missing": [...], "found_count": int, "total_expected": int}
-    """
-    from openpyxl import load_workbook
-
-    wb = load_workbook(template_path)
-
-    if "Рассчет" not in [ws.title for ws in wb.worksheets]:
-        return {"valid": False, "missing": [], "found_count": 0,
-                "total_expected": len(ROW_MAPPING),
-                "error": "Нет листа «Рассчет»"}
-
-    ws = wb["Рассчет"]
-    missing = []
-    found = 0
-    fuzzy_found = 0
-
-    for keywords, field, unit, multiplier in ROW_MAPPING:
-        row = _find_row_for_material(ws, keywords)
-        if row:
-            found += 1
-        else:
-            # Пробуем нечёткий поиск
-            fuzzy_row = _find_row_for_material_fuzzy(ws, keywords, threshold=0.75)
-            if fuzzy_row:
-                fuzzy_found += 1
-                logger.info(
-                    f"🔍 Fuzzy match при валидации: «{' + '.join(keywords[:2])}» → R{fuzzy_row}"
-                )
-            else:
-                missing.append(" + ".join(keywords[:2]))
-
-    result = {
-        "valid": len(missing) == 0,
-        "missing": missing,
-        "found_exact": found,
-        "found_fuzzy": fuzzy_found,
-        "total_expected": len(ROW_MAPPING),
-    }
-
-    if missing:
-        logger.warning(f"⚠️ Валидация шаблона: НЕ найдены {len(missing)} строк:")
-        for m in missing:
-            logger.warning(f"   - {m}")
-    else:
-        logger.info(f"✅ Шаблон валиден: {found} точных + {fuzzy_found} нечётких")
-
-    return result
 
 
 # ═══════════════════════════════════════════════════════════════════

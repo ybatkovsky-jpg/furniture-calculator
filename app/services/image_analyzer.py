@@ -60,104 +60,111 @@ class RecognitionResult:
 
 
 # ================================================================
-# ВАЛИДАЦИЯ РАЗМЕРОВ
-# ================================================================
-
-# Реалистичные диапазоны размеров мебельных модулей (мм)
-DIMENSION_LIMITS = {
-    "width":  (150, 2400),   # мин/макс ширина модуля
-    "depth":  (200, 1200),   # мин/макс глубина
-    "height": (300, 2800),   # мин/макс высота
-    "quantity": (1, 30),     # мин/макс количество одинаковых модулей
-}
-
-
-def _validate_module(module: RecognizedModule) -> tuple:
-    """
-    Проверить реалистичность размеров модуля.
-    Возвращает (валиден: bool, причина: str).
-    """
-    w, d, h, qty = module.width, module.depth, module.height, module.quantity
-
-    if w < DIMENSION_LIMITS["width"][0] or w > DIMENSION_LIMITS["width"][1]:
-        return False, f"width={w} вне [{DIMENSION_LIMITS['width'][0]}..{DIMENSION_LIMITS['width'][1]}] мм"
-    if d < DIMENSION_LIMITS["depth"][0] or d > DIMENSION_LIMITS["depth"][1]:
-        return False, f"depth={d} вне [{DIMENSION_LIMITS['depth'][0]}..{DIMENSION_LIMITS['depth'][1]}] мм"
-    if h < DIMENSION_LIMITS["height"][0] or h > DIMENSION_LIMITS["height"][1]:
-        return False, f"height={h} вне [{DIMENSION_LIMITS['height'][0]}..{DIMENSION_LIMITS['height'][1]}] мм"
-    if qty < DIMENSION_LIMITS["quantity"][0] or qty > DIMENSION_LIMITS["quantity"][1]:
-        return False, f"quantity={qty} вне [{DIMENSION_LIMITS['quantity'][0]}..{DIMENSION_LIMITS['quantity'][1]}]"
-
-    # Угловой модуль должен быть квадратным
-    if module.is_corner and w != d:
-        return False, f"угловой модуль не квадратный: {w}×{d}"
-
-    # Высота должна соответствовать типу
-    if module.type == "lower_base" and h > 1000:
-        return False, f"нижняя база слишком высокая: {h} мм (ожидается ≤1000)"
-    if module.type == "upper_base" and h > 1200:
-        return False, f"верхняя база слишком высокая: {h} мм (ожидается ≤1200)"
-    if module.type == "penal" and h < 1500:
-        return False, f"пенал слишком низкий: {h} мм (ожидается ≥1500)"
-
-    return True, ""
-
-
-# ================================================================
 # ПРОМПТЫ
 # ================================================================
 
-# Унифицированный промпт с few-shot примерами (основной для всех моделей)
-UNIFIED_PROMPT = """Ты — парсер мебельных чертежей. Извлеки ВСЕ модули в JSON. Никакого текста вне JSON.
+# GLM-4.6V: используем его суперсилу — object detection с bounding boxes
+GLM46V_PROMPT = """Ты — парсер мебельных чертежей. Твоя единственная задача — выдать JSON с модулями. НЕ рассуждай, НЕ объясняй, НЕ пиши текст.
+
+ОБЯЗАТЕЛЬНЫЙ ФОРМАТ ОТВЕТА:
+```json
+{
+  "zone_type": "kitchen",
+  "materials": ["EGGER H1379", "EMDIWAY Platinum"],
+  "modules": [
+    {
+      "type": "lower_base",
+      "width": 600,
+      "depth": 560,
+      "height": 820,
+      "quantity": 3,
+      "has_glass": false,
+      "facades": {"count": 1, "type": "doors"},
+      "drawers": {"count": 0},
+      "shelves": 0,
+      "is_corner": false
+    }
+  ],
+  "confidence": "high",
+  "notes": ""
+}
+```
 
 ТИПЫ МОДУЛЕЙ:
-- lower_base: напольный (высота 700-900мм, глубина 500-600мм)
-- upper_base: навесной (высота 600-1000мм, глубина 280-350мм)
-- penal: высокий шкаф от пола (высота 1800-2500мм)
-- corner: угловой, КВАДРАТНЫЙ (ширина=глубина, 600×600 или 900×900). ОДИН модуль!
-
-ПРИМЕР 1 — прямая кухня:
-{"zone_type":"kitchen","materials":["EGGER H1379"],"modules":[{"type":"lower_base","width":600,"depth":560,"height":820,"quantity":3,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":0},"shelves":1,"is_corner":false},{"type":"upper_base","width":600,"depth":320,"height":720,"quantity":2,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":0},"shelves":1,"is_corner":false}],"confidence":"high","notes":""}
-
-ПРИМЕР 2 — угловая кухня:
-{"zone_type":"kitchen","materials":["EGGER H1379","МДФ"],"modules":[{"type":"corner","width":900,"depth":900,"height":820,"quantity":1,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":0},"shelves":0,"is_corner":true},{"type":"lower_base","width":600,"depth":560,"height":820,"quantity":2,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":1},"shelves":1,"is_corner":false}],"confidence":"high","notes":""}
+- lower_base: напольный, высота ~820-850мм, глубина ~560мм
+- upper_base: навесной, высота ~700-920мм, глубина ~320мм  
+- penal: высокий от пола, ~2000-2400мм
+- corner: УГЛОВОЙ квадратный (600×600, 900×900). ОДИН модуль, НЕ два!
 
 ПРАВИЛА:
-- Размеры ТОЛЬКО в мм, целые числа
-- УГЛОВОЙ модуль — ВСЕГДА width=depth, is_corner=true
-- Если на чертеже указано ×3 — quantity=3
-- Если размеров нет — стандарт: низ 560×820, верх 320×720, пенал 560×2100
-- JSON в двойных кавычках, без trailing commas
-- confidence: high (чёткие размеры) / medium (часть размеров неясна) / low (только контуры)"""
+- Размеры только в мм (целые числа)
+- ВСЕ ключи JSON в двойных кавычках
+- НИКАКОГО текста до или после JSON
+- ОТВЕТ НАЧИНАЕТСЯ С ```json И ЗАКАНЧИВАЕТСЯ ```"""
 
 
-# Детальный промпт для повторной попытки при low confidence
-DETAILED_PROMPT = """Ты — эксперт по чтению мебельных чертежей. На изображении ЧЕРТЁЖ — изучи его ВНИМАТЕЛЬНО.
+# Qwen3-VL: используем пространственное мышление (SpatialBench 13.5)
+QWEN3_VL_PROMPT = """Ты — ведущий конструктор-технолог премиальной мебельной фабрики.
+Твоя задача — проанализировать чертёж/фото и извлечь ВСЕ модули мебели в JSON.
 
-ШАГ 1. Перечисли ВСЕ размеры, которые ты ВИДИШЬ на чертеже (даже если неуверен):
-- Каждое число с единицей измерения (мм, cm, м)
-- Каждую размерную линию (стрелки, засечки)
+ВАЖНЫЕ ПРАВИЛА:
+1. Ищи ПРЯМОУГОЛЬНИКИ с размерами (ширина × глубина × высота) или (Ш × Г × В)
+2. Определяй ТИП модуля по его расположению и размерам:
+   - lower_base (нижняя база): стоит на полу, высота ~820-850мм
+   - upper_base (верхняя база): навесной, высота ~700-920мм
+   - penal (пенал): высокий от пола, высота ~2000-2400мм
+   - corner (угловой): расположен в углу, часто квадратный (600×600, 900×900)
 
-ШАГ 2. Для КАЖДОГО обнаруженного размера — определи, к какому модулю он относится.
+3. УГЛОВЫЕ МОДУЛИ: если видишь квадратный модуль в углу (600×600, 900×900) — это ОДИН corner.
 
-ШАГ 3. Выдай JSON с модулями.
+4. СТАНДАРТНЫЕ РАЗМЕРЫ (используй если не указано):
+   - Глубина нижних баз: 560мм, верхних: 320мм
+   - Высота нижних: 820мм, верхних: 720мм, пеналов: 2100мм
 
-Типы модулей:
-- lower_base: напольный, высота 700-900мм, глубина 500-600мм
-- upper_base: навесной, глубина 280-350мм
-- penal: высокий от пола, 1800-2500мм
-- corner: КВАДРАТНЫЙ угловой, width=depth
+5. ОПРЕДЕЛИ ЗОНУ: kitchen / wardrobe / bathroom / hallway
 
-Если размер не указан — НЕ додумывай, используй стандарт:
-- Нижние: 560×820, верхние: 320×720, пеналы: 560×2100
+ФОРМАТ ОТВЕТА — ТОЛЬКО JSON, БЕЗ markdown:
+{
+  "zone_type": "kitchen",
+  "materials": ["EGGER H1379"],
+  "modules": [
+    {
+      "type": "lower_base",
+      "width": 600, "depth": 560, "height": 820,
+      "quantity": 1, "has_glass": false,
+      "facades": {"count": 1, "type": "doors"},
+      "drawers": {"count": 0}, "shelves": 0,
+      "is_corner": false
+    }
+  ],
+  "confidence": "high",
+  "notes": ""
+}"""
 
-Формат — ТОЛЬКО JSON с полями: zone_type, materials, modules (type, width, depth, height, quantity, has_glass, facades, drawers, shelves, is_corner), confidence, notes."""
 
+# Gemini: запасной промпт
+GEMINI_PROMPT = """Ты — эксперт по распознаванию мебельных чертежей кухонной мебели. ВНИМАТЕЛЬНО анализируй изображение и выдели все модули.
 
-# Сохраняем старые промпты для обратной совместимости
-GLM46V_PROMPT = UNIFIED_PROMPT
-QWEN3_VL_PROMPT = UNIFIED_PROMPT
-GEMINI_PROMPT = UNIFIED_PROMPT
+ПРАВИЛА:
+- Ищи ПРЯМОУГОЛЬНЫЕ модули с размерами
+- УГЛОВЫЕ модули: КВАДРАТНЫЕ (600x600, 900x900) в УГЛУ — это ОДИН модуль, не два!
+- Типы: lower_base (низ, ~820мм), upper_base (верх, ~720мм), penal (~2100мм), corner (угол)
+- Стандартные размеры: глубина нижних 560мм, верхних 320мм
+
+Формат ответа — ТОЛЬКО JSON:
+{
+  "modules": [
+    {
+      "type": "lower_base|upper_base|penal|corner",
+      "width": 600, "depth": 560, "height": 820,
+      "quantity": 1, "has_glass": false,
+      "facades": {"count": 2, "type": "doors"},
+      "drawers": {"count": 0}, "shelves": 1
+    }
+  ],
+  "confidence": "high|medium|low",
+  "notes": ""
+}"""
 
 
 # ================================================================
@@ -214,11 +221,7 @@ class GeminiImageAnalyzer:
     ) -> RecognitionResult:
         """
         Распознать модули мебели на чертеже.
-        
-        Стратегия:
-        1. Основная модель → первичный результат
-        2. Если confidence low → повтор с DETAILED_PROMPT
-        3. Если всё ещё low → ансамбль с fallback-моделью + кросс-валидация
+        Пробует модели по цепочке: GLM-4.6V → Qwen3-VL → Gemini.
         """
         # Строим цепочку: основная модель + fallback
         models_to_try = [(self.primary_model, self._detect_provider(self.primary_model))]
@@ -227,8 +230,6 @@ class GeminiImageAnalyzer:
                 models_to_try.append((model, provider))
 
         last_error = None
-
-        # ── Шаг 1: Основная модель ──
         for attempt, (model, provider) in enumerate(models_to_try[:max_retries]):
             try:
                 logger.info(f"Попытка #{attempt + 1}: {model} ({provider})")
@@ -241,30 +242,6 @@ class GeminiImageAnalyzer:
                         f"✅ Успех: model={model}, modules={len(result.modules)}, "
                         f"confidence={result.confidence}, zone={result.zone_type}"
                     )
-
-                    # ── Шаг 2: Low confidence → детальный промпт ──
-                    if result.confidence == "low":
-                        logger.info("🔄 Low confidence — пробуем детальный промпт...")
-                        detail_result = await self._try_analyze_with_prompt(
-                            image_path, model, provider, DETAILED_PROMPT
-                        )
-                        if detail_result.modules and len(detail_result.modules) > 0:
-                            # Выбираем результат с бóльшим числом модулей
-                            if len(detail_result.modules) >= len(result.modules):
-                                result = detail_result
-                                result.model_used = f"{model} (detailed)"
-                                logger.info(
-                                    f"✅ Детальный промпт: {len(result.modules)} модулей"
-                                )
-                            else:
-                                logger.info("Оставлен результат основного промпта (больше модулей)")
-
-                    # ── Шаг 3: Ансамбль — вторая модель для кросс-валидации ──
-                    if result.confidence in ("low", "medium") and len(models_to_try) > 1:
-                        result = await self._ensemble_validate(
-                            result, image_path, model, models_to_try
-                        )
-
                     return result
                 else:
                     logger.warning(f"Модель {model} вернула пустой результат")
@@ -273,7 +250,7 @@ class GeminiImageAnalyzer:
                 last_error = e
                 logger.error(
                     f"Ошибка {model}: {type(e).__name__}: {e}",
-                    exc_info=(attempt == 0)
+                    exc_info=(attempt == 0)  # полный traceback только для первой ошибки
                 )
                 if attempt < min(len(models_to_try), max_retries) - 1:
                     delay = 2 * (attempt + 1)
@@ -305,14 +282,6 @@ class GeminiImageAnalyzer:
         # 1. Загружаем и оптимизируем изображение
         image = Image.open(image_path)
         logger.info(f"Изображение: {image.size}, mode={image.mode}")
-
-        # 1a. Повышаем контраст — цифры на чертеже читаются лучше
-        from PIL import ImageEnhance, ImageFilter
-        enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(1.3)  # +30% контраст
-
-        # 1b. Лёгкое повышение резкости — границы размерных линий чётче
-        image = image.filter(ImageFilter.SHARPEN)
 
         # Уменьшаем если больше 2048px (GLM-4.6V оптимально)
         max_size = 2048
@@ -363,7 +332,6 @@ class GeminiImageAnalyzer:
             "temperature": 0.1,
             "max_tokens": 8000,              # GLM-4.6V нужно место под reasoning + JSON
             "reasoning_effort": "medium",     # medium = быстрее, но всё ещё думает
-            "response_format": {"type": "json_object"},  # гарантирует валидный JSON
         }
 
         # 5. Определяем URL эндпоинта
@@ -401,172 +369,6 @@ class GeminiImageAnalyzer:
         result = self._postprocess_results(result)
 
         return result
-
-    # -----------------------------------------------------------
-    # АНСАМБЛЬ И ПОВТОРНЫЕ ПОПЫТКИ
-    # -----------------------------------------------------------
-
-    async def _try_analyze_with_prompt(
-        self,
-        image_path: str | Path,
-        model: str,
-        provider: str,
-        prompt_override: str,
-    ) -> RecognitionResult:
-        """
-        Одна попытка распознавания с ПЕРЕОПРЕДЕЛЁННЫМ промптом.
-        Используется для повторной попытки с детальным промптом.
-        """
-        client = await self._get_client()
-
-        # Загружаем и оптимизируем изображение (та же логика)
-        image = Image.open(image_path)
-        from PIL import ImageEnhance, ImageFilter
-        enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(1.3)
-        image = image.filter(ImageFilter.SHARPEN)
-
-        max_size = 2048
-        if image.width > max_size or image.height > max_size:
-            ratio = min(max_size / image.width, max_size / image.height)
-            image = image.resize(
-                (int(image.width * ratio), int(image.height * ratio)),
-                Image.Resampling.LANCZOS
-            )
-
-        buffer = io.BytesIO()
-        image.save(buffer, format='JPEG', quality=85)
-        image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt_override},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
-            ]
-        }]
-
-        headers = {
-            "Authorization": f"Bearer {self._get_api_key(provider)}",
-            "Content-Type": "application/json",
-        }
-        if provider == "openrouter":
-            headers["HTTP-Referer"] = "https://pro-mebel.ru"
-            headers["X-Title"] = "PRO Furniture Calculator"
-
-        body = {
-            "model": model,
-            "messages": messages,
-            "temperature": 0.1,
-            "max_tokens": 8000,
-            "reasoning_effort": "medium",
-            "response_format": {"type": "json_object"},
-        }
-
-        url = self._get_api_url(provider, model)
-        response = await client.post(url, headers=headers, json=body)
-        response.raise_for_status()
-        response_data = response.json()
-
-        msg = response_data["choices"][0]["message"]
-        response_text = msg.get("content", "") or msg.get("reasoning_content", "") or ""
-        if not response_text:
-            raise ValueError(f"Empty response from {model}")
-
-        cleaned_text = self._extract_json(response_text)
-        if not cleaned_text or cleaned_text in ('{}', ''):
-            raise ValueError(f"No JSON in response: {response_text[:200]}")
-
-        result_data = json.loads(cleaned_text)
-        result = self._parse_result(result_data)
-        result = self._postprocess_results(result)
-        result.model_used = f"{model} (custom prompt)"
-        return result
-
-    async def _ensemble_validate(
-        self,
-        primary_result: RecognitionResult,
-        image_path: str | Path,
-        primary_model: str,
-        models_to_try: list,
-    ) -> RecognitionResult:
-        """
-        Кросс-валидация второй моделью (ансамбль).
-        
-        Запрашивает fallback-модель, сравнивает результаты.
-        Если модели сошлись — повышает confidence.
-        Если разошлись — добавляет предупреждение.
-        """
-        # Выбираем fallback-модель (не основную)
-        fallback = None
-        for m, p in models_to_try:
-            if m != primary_model:
-                fallback = (m, p)
-                break
-
-        if not fallback:
-            logger.info("Нет fallback-модели для ансамбля")
-            return primary_result
-
-        fallback_model, fallback_provider = fallback
-        logger.info(f"🎯 Ансамбль: {fallback_model} для кросс-валидации...")
-
-        try:
-            second_result = await self._try_analyze(image_path, fallback_model, fallback_provider)
-        except Exception as e:
-            logger.warning(f"Ансамбль: ошибка fallback-модели: {e}")
-            return primary_result
-
-        if not second_result.modules:
-            logger.info("Ансамбль: fallback не нашёл модулей — оставляем primary")
-            return primary_result
-
-        # Сравниваем модули по типу и размерам (допуск ±50мм по ширине, ±20мм по глубине)
-        primary_modules = primary_result.modules
-        second_modules = second_result.modules
-
-        matched_primary = set()
-        matched_second = set()
-
-        for i, m1 in enumerate(primary_modules):
-            for j, m2 in enumerate(second_modules):
-                if j in matched_second:
-                    continue
-                if (m1.type == m2.type
-                        and abs(m1.width - m2.width) <= 50
-                        and abs(m1.depth - m2.depth) <= 20):
-                    matched_primary.add(i)
-                    matched_second.add(j)
-                    break
-
-        overlap = len(matched_primary) / max(len(primary_modules), 1)
-        logger.info(
-            f"🎯 Ансамбль: primary={len(primary_modules)}, "
-            f"fallback={len(second_modules)}, overlap={overlap:.0%}"
-        )
-
-        if overlap >= 0.7:
-            primary_result.confidence = "high"
-            primary_result.notes = (primary_result.notes or "") + " | Ансамбль: высокая сходимость ✓"
-            logger.info("🎯 Ансамбль: высокая сходимость → confidence=high")
-        elif overlap >= 0.4:
-            primary_result.confidence = "medium"
-            primary_result.notes = (primary_result.notes or "") + " | Ансамбль: средняя сходимость"
-            # Добавляем модули из fallback, которых нет в primary
-            for j, m2 in enumerate(second_modules):
-                if j not in matched_second:
-                    primary_modules.append(m2)
-                    logger.info(f"  + добавлен модуль из fallback: {m2.type} {m2.width}×{m2.depth}×{m2.height}")
-        else:
-            primary_result.confidence = "low"
-            primary_result.notes = (primary_result.notes or "") + " | ⚠ Ансамбль: модели расходятся — нужна проверка оператора"
-            # Добавляем все fallback-модули как дополнительные
-            for j, m2 in enumerate(second_modules):
-                if j not in matched_second:
-                    primary_modules.append(m2)
-
-        primary_result.model_used = f"{primary_result.model_used} + {fallback_model} (ensemble)"
-        return primary_result
 
     # -----------------------------------------------------------
     # ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
@@ -713,11 +515,6 @@ class GeminiImageAnalyzer:
                     is_corner=is_corner,
                     bbox=bbox,
                 )
-                # Валидация размеров
-                is_valid, reason = _validate_module(module)
-                if not is_valid:
-                    logger.warning(f"⚠️  Пропущен модуль: {reason}, data={module_data}")
-                    continue
                 modules.append(module)
             except (KeyError, ValueError, TypeError) as e:
                 logger.warning(f"Parse error for module: {e}, data={module_data}")

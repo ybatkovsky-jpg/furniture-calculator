@@ -288,10 +288,30 @@ class FullPipeline:
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (module-level)
 # ================================================================
 
+# Маппинг: zone_type → «в + винительный падеж» для комбинированных названий
+ROOM_CONTEXT = {
+    "Кухня": "в кухню",
+    "Гостиная": "в гостиную",
+    "Спальня": "в спальню",
+    "Детская": "в детскую",
+    "Прихожая": "в прихожую",
+    "Ванная": "в ванную",
+    "Гардеробная": "в гардеробную",
+    "Санузел": "в санузел",
+    "Кабинет": "в кабинет",
+    "Балкон": "на балкон",
+    "Столовая": "в столовую",
+    "Постирочная": "в постирочную",
+}
+
+# Мебель, которая САМА говорит за себя (не добавляем комнату)
+SELF_DESCRIPTIVE = {"Кухонный гарнитур", "Остров", "Кухонный гарнитур (угловой)"}
+
+
 def _generate_room_name(recog_result, page_num: int = 0) -> str:
     """
-    Сгенерировать название листа по составу модулей (на русском).
-    Описывает МЕБЕЛЬ, а не комнату.
+    Сгенерировать название листа: «{мебель} в {комнату}».
+    Например: «Тумба в гостиную», «Шкаф в спальню», «Кухонный гарнитур».
     """
     if not recog_result or not recog_result.modules:
         return f"Стр.{page_num + 1}" if page_num > 0 else "Без модулей"
@@ -299,7 +319,7 @@ def _generate_room_name(recog_result, page_num: int = 0) -> str:
     modules = recog_result.modules
     page_suffix = f" (стр.{page_num + 1})" if page_num > 0 else ""
 
-    # Считаем типы модулей
+    # Считаем типы
     type_counts = {}
     for m in modules:
         t = m.type
@@ -311,44 +331,46 @@ def _generate_room_name(recog_result, page_num: int = 0) -> str:
     penal = type_counts.get("penal", 0)
     corner = type_counts.get("corner", 0)
 
-    # Один модуль
+    # Комната из zone_type (переведённая)
+    zone_ru = _translate_zone_type(recog_result.zone_type) if recog_result.zone_type else ""
+
+    # Определяем мебель
     if total == 1:
         m = modules[0]
         if m.type == "penal":
-            name = "Шкаф-пенал"
+            furniture = "Шкаф"
         elif m.type == "lower_base":
-            name = "Тумба" if m.height < 400 else "Нижняя база"
+            furniture = "Тумба" if m.height < 400 else "Нижняя база"
         elif m.type == "upper_base":
-            name = "Верхняя база"
+            furniture = "Верхняя база"
         elif m.type == "corner":
-            name = "Угловой модуль"
+            furniture = "Угловой модуль"
         else:
-            name = "Модуль"
-        return name + page_suffix
+            furniture = "Модуль"
+    elif lower + upper >= total * 0.6 and zone_ru in ("Кухня", "Кухня-гостиная", ""):
+        # Кухонный гарнитур — только для кухни
+        furniture = "Кухонный гарнитур (угловой)" if corner > 0 else "Кухонный гарнитур"
+    elif penal >= total * 0.5:
+        furniture = "Шкаф" if penal == 1 else "Шкафы"
+    elif lower >= total * 0.5:
+        # Все короткие → тумбы/столешницы
+        all_short = all(m.height < 400 for m in modules if m.type == "lower_base")
+        furniture = "Тумба" if (lower <= 3 or all_short) else "Нижние базы"
+    elif upper >= total * 0.5:
+        furniture = "Верхние базы"
+    else:
+        furniture = ""
 
-    # Кухонный гарнитур
-    if lower + upper >= total * 0.6:
-        name = "Кухонный гарнитур (угловой)" if corner > 0 else "Кухонный гарнитур"
-        return name + page_suffix
+    # Собираем итоговое имя
+    if not furniture:
+        name = zone_ru if zone_ru else "Мебель"
+    elif furniture in SELF_DESCRIPTIVE:
+        name = furniture
+    elif zone_ru and zone_ru in ROOM_CONTEXT:
+        name = f"{furniture} {ROOM_CONTEXT[zone_ru]}"
+    else:
+        name = furniture
 
-    # Шкафы/пеналы
-    if penal >= total * 0.5:
-        name = "Шкаф-пенал" if penal == 1 else "Шкафы и пеналы"
-        return name + page_suffix
-
-    # Только нижние базы
-    if lower >= total * 0.5:
-        name = "Тумба" if lower <= 2 else "Нижние базы"
-        return name + page_suffix
-
-    # Только верхние
-    if upper >= total * 0.5:
-        name = "Верхние базы"
-        return name + page_suffix
-
-    # Смешанный состав
-    zone = _translate_zone_type(recog_result.zone_type) if recog_result.zone_type else ""
-    name = zone if zone else "Мебель"
     return name + page_suffix
 
 

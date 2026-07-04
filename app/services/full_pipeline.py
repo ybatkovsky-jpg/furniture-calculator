@@ -183,13 +183,12 @@ class FullPipeline:
                 Path(tmp_path).unlink(missing_ok=True)
 
                 if recog_result.modules:
-                    # Находим или создаём спецификацию комнаты
-                    room_name = _translate_zone_type(recog_result.zone_type) if recog_result.zone_type else f"Страница {page_num + 1}"
-
-                    # Пытаемся найти имя комнаты из OCR
+                    # Приоритет: OCR-имя > сгенерированное по модулям > zone_type
                     ocr_room = self._find_room_for_page(ocr_result, page_num)
                     if ocr_room:
                         room_name = _fix_ocr_name(ocr_room.name)
+                    else:
+                        room_name = _generate_room_name(recog_result, page_num)
 
                     if page_num not in room_specs:
                         room_specs[page_num] = RoomSpec(
@@ -260,13 +259,75 @@ class FullPipeline:
     def _find_room_for_page(
         self, ocr_result: PDFParseResult, page_num: int
     ) -> Optional[ParsedRoom]:
-        """Найти описание комнаты для страницы из OCR."""
-        # Пока простая эвристика: ищем page=N в тексте комнат
+        """Найти OCR-комнату для страницы: точный match page=N."""
         import re
         for room in ocr_result.rooms:
             if f"page={page_num}" in room.raw_text:
                 return room
         return None
+
+def _generate_room_name(recog_result, page_num: int = 0) -> str:
+    """
+    Сгенерировать название листа по составу модулей (на русском).
+    Описывает МЕБЕЛЬ, а не комнату.
+    """
+    if not recog_result or not recog_result.modules:
+        return f"Стр.{page_num + 1}" if page_num > 0 else "Без модулей"
+
+    modules = recog_result.modules
+    page_suffix = f" (стр.{page_num + 1})" if page_num > 0 else ""
+
+    # Считаем типы модулей
+    type_counts = {}
+    for m in modules:
+        t = m.type
+        type_counts[t] = type_counts.get(t, 0) + (m.quantity or 1)
+
+    total = sum(type_counts.values())
+    lower = type_counts.get("lower_base", 0)
+    upper = type_counts.get("upper_base", 0)
+    penal = type_counts.get("penal", 0)
+    corner = type_counts.get("corner", 0)
+
+    # Один модуль
+    if total == 1:
+        m = modules[0]
+        if m.type == "penal":
+            name = "Шкаф-пенал"
+        elif m.type == "lower_base":
+            name = "Тумба" if m.height < 400 else "Нижняя база"
+        elif m.type == "upper_base":
+            name = "Верхняя база"
+        elif m.type == "corner":
+            name = "Угловой модуль"
+        else:
+            name = "Модуль"
+        return name + page_suffix
+
+    # Кухонный гарнитур
+    if lower + upper >= total * 0.6:
+        name = "Кухонный гарнитур (угловой)" if corner > 0 else "Кухонный гарнитур"
+        return name + page_suffix
+
+    # Шкафы/пеналы
+    if penal >= total * 0.5:
+        name = "Шкаф-пенал" if penal == 1 else "Шкафы и пеналы"
+        return name + page_suffix
+
+    # Только нижние базы
+    if lower >= total * 0.5:
+        name = "Тумба" if lower <= 2 else "Нижние базы"
+        return name + page_suffix
+
+    # Только верхние
+    if upper >= total * 0.5:
+        name = "Верхние базы"
+        return name + page_suffix
+
+    # Смешанный состав
+    zone = _translate_zone_type(recog_result.zone_type) if recog_result.zone_type else ""
+    name = zone if zone else "Мебель"
+    return name + page_suffix
 
     def _extract_address(self, ocr_result: PDFParseResult) -> str:
         """Извлечь адрес из таблиц OCR."""

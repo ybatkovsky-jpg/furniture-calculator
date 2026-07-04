@@ -24,6 +24,12 @@ from app.services.quantity_calc import (
     calculate_quantities,
     fill_template_for_room,
 )
+from app.services.project_spec import (
+    ProjectSpec,
+    load_project_spec,
+    apply_spec_to_quantities,
+    print_spec_summary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +237,7 @@ def fill_template_from_pipeline(
     pipeline_result: PipelineResult,
     template_path: str,
     output_path: str,
+    project_spec: Optional[ProjectSpec] = None,
 ) -> str:
     """
     Главная функция: заполнить шаблон на основе результатов конвейера.
@@ -238,12 +245,14 @@ def fill_template_from_pipeline(
     Для каждого помещения с модулями:
     1. Копируется лист-шаблон «Рассчет»
     2. Рассчитываются количества
-    3. Заполняется колонка E (Количество)
+    3. Применяется спецификация проекта (project_spec.yaml)
+    4. Заполняется колонка E (Количество)
 
     Args:
         pipeline_result: результат FullPipeline.process()
         template_path: путь к файлу-шаблону (Таблица для расчетов пустая.xlsx)
         output_path: путь для сохранения заполненного файла
+        project_spec: загруженная спецификация проекта (опционально)
 
     Returns:
         путь к созданному файлу
@@ -275,6 +284,10 @@ def fill_template_from_pipeline(
 
         # Рассчитываем количества
         q = calculate_quantities(room.modules, room.room_name, room.materials)
+
+        # Применяем спецификацию проекта (добавляет позиции, которые AI не видит)
+        if project_spec:
+            apply_spec_to_quantities(project_spec, q, room.room_name)
 
         # Строим мапу quantities
         qty_map = _build_quantity_map(q, room.materials, room.room_name)
@@ -407,15 +420,17 @@ async def run_pipeline_and_fill_template(
     template_path: str,
     output_path: str = "Расчет_заполненный.xlsx",
     max_pages: int = 20,
+    spec_path: str = None,
 ) -> str:
     """
-    Запустить полный цикл: PDF → AI-конвейер → заполнение шаблона.
+    Запустить полный цикл: PDF → AI-конвейер → спецификация → заполнение шаблона.
 
     Args:
         pdf_path: путь к PDF с чертежами
         template_path: путь к файлу-шаблону Excel
         output_path: путь для сохранения результата
         max_pages: максимальное число страниц для Vision-анализа
+        spec_path: путь к project_spec.yaml (опционально)
 
     Returns:
         путь к заполненному Excel-файлу
@@ -424,6 +439,13 @@ async def run_pipeline_and_fill_template(
 
     print(f"🚀 Запуск конвейера: {Path(pdf_path).name}")
     print(f"   Макс. страниц для анализа: {max_pages}")
+
+    # Шаг 0: Загрузка спецификации проекта
+    project_spec = None
+    if spec_path:
+        print(f"   Спецификация: {Path(spec_path).name}")
+        project_spec = load_project_spec(spec_path)
+        print_spec_summary(project_spec)
     print()
 
     # Шаг 1: AI-конвейер
@@ -442,6 +464,7 @@ async def run_pipeline_and_fill_template(
         pipeline_result=result,
         template_path=template_path,
         output_path=output_path,
+        project_spec=project_spec,
     )
 
     rooms_filled = len([r for r in result.rooms if r.modules])

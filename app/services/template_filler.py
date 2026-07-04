@@ -315,10 +315,31 @@ def fill_template_from_pipeline(
     if "СВОДКА" in [ws.title for ws in wb.worksheets]:
         _update_summary(wb, pipeline_result, rooms_with_modules)
 
+    # ── Удаляем служебные листы шаблона ──
+    _remove_template_sheets(wb)
+
     # Сохраняем
     wb.save(output_path)
     logger.info(f"💾 Сохранено: {output_path}")
     return output_path
+
+
+def _remove_template_sheets(wb: Workbook):
+    """
+    Удалить служебные листы шаблона из финального файла:
+    — «Рассчет» (образец, с которого копировали)
+    — «РАСЧЕТ ЗЕРКАЛ» / «РАСЧЕТ СТЕКОЛ» (неактуальные данные)
+    """
+    TO_REMOVE = {"Рассчет", "РАСЧЕТ ЗЕРКАЛ", "РАСЧЕТ СТЕКОЛ", "РАСЧЁТ ЗЕРКАЛ", "РАСЧЁТ СТЕКОЛ"}
+
+    removed = []
+    for name in list(wb.sheetnames):
+        if name in TO_REMOVE:
+            del wb[name]
+            removed.append(name)
+
+    if removed:
+        logger.info(f"🗑️  Удалены служебные листы: {', '.join(removed)}")
 
 
 def _clean_sheet_name(name: str) -> str:

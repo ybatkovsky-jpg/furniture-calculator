@@ -212,25 +212,23 @@ def apply_spec_to_quantities(
             if not is_kitchen:
                 continue
 
-        # Применяем к quantities
+        # Применяем к quantities — ВСЕГДА добавляем, оператор явно указал
         if "петли" in item.name.lower() and "холодильник" in item.name.lower():
-            if materials_qty.hinges_count == 0:
-                materials_qty.hinges_count += int(item.count)
-                added += 1
+            materials_qty.hinges_count += int(item.count)
+            added += 1
         elif "внутренний" in item.name.lower() and "ящик" in item.name.lower():
-            if materials_qty.drawers_internal_count == 0:
-                materials_qty.drawers_internal_count += int(item.count)
-                added += 1
-        elif "ящик" in item.name.lower():
+            materials_qty.drawers_internal_count += int(item.count)
+            added += 1
+        elif "ящик" in item.name.lower() and "alphalux" in item.name.lower():
             materials_qty.drawers_count += int(item.count)
             added += 1
         elif "led" in item.name.lower() or "подсветк" in item.name.lower():
-            materials_qty.led_strip_m += 5.0  # бухта 5м
+            if "бухта" in item.name.lower() or "5м" in item.name.lower():
+                materials_qty.led_strip_m += 5.0
             materials_qty.led_power_supply += 1
             materials_qty.led_sensor += 1
             added += 1
         elif "направляющие" in item.name.lower():
-            # Добавляем как доп. фурнитуру — не меняем основные счётчики
             added += 1
         elif "бутылочниц" in item.name.lower():
             materials_qty.bottle_holder_count += int(item.count)
@@ -242,7 +240,7 @@ def apply_spec_to_quantities(
             materials_qty.cutlery_tray_count += int(item.count)
             added += 1
         elif "цоколь" in item.name.lower():
-            added += 1  # Учтено в accessory items
+            added += 1
         elif "gola" in item.name.lower():
             if "горизонт" in item.name.lower() and "g" not in item.name.lower():
                 materials_qty.gola_horizontal_pcs += int(item.count)
@@ -253,8 +251,14 @@ def apply_spec_to_quantities(
                 materials_qty.gola_horizontal_pcs += int(item.count)
             added += 1
         elif "батарейк" in item.name.lower():
-            added += 1  # Информационная позиция
+            added += 1
         elif "гигиенический" in item.name.lower() or "поддон" in item.name.lower():
+            added += 1
+        elif "блок питания" in item.name.lower():
+            materials_qty.led_power_supply += int(item.count)
+            added += 1
+        elif "датчик" in item.name.lower():
+            materials_qty.led_sensor += int(item.count)
             added += 1
 
     if added > 0:

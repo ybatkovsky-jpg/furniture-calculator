@@ -401,7 +401,8 @@ def print_result(result: PipelineResult):
     print()
 
     for i, room in enumerate(result.rooms, 1):
-        print(f"{i}. 🏠 {room.room_name} (стр. {room.page})")
+        page_info = "" if "(стр." in room.room_name else f" (стр. {room.page})"
+        print(f"{i}. 🏠 {room.room_name}{page_info}")
         if room.materials:
             print(f"   🎨 Материалы: {', '.join(room.materials[:5])}")
         if room.notes:

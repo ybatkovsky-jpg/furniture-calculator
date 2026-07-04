@@ -24,6 +24,75 @@ from app.services.image_analyzer import GeminiImageAnalyzer, RecognitionResult
 logger = logging.getLogger(__name__)
 
 
+# Маппинг английских zone_type → русские названия помещений
+ZONE_TYPE_RU = {
+    "kitchen": "Кухня",
+    "living_room": "Гостиная",
+    "bedroom": "Спальня",
+    "wardrobe": "Гардеробная",
+    "bathroom": "Ванная",
+    "hallway": "Прихожая",
+    "kids_room": "Детская",
+    "office": "Кабинет",
+    "laundry": "Постирочная",
+    "balcony": "Балкон",
+    "dining_room": "Столовая",
+}
+
+# Замена латинских букв на кириллицу (частые ошибки OCR)
+LATIN_TO_CYRILLIC = str.maketrans({
+    'c': 'с', 'C': 'С',   # латинская c → русская с
+    'e': 'е', 'E': 'Е',   # латинская e → русская е
+    'o': 'о', 'O': 'О',   # латинская o → русская о
+    'a': 'а', 'A': 'А',   # латинская a → русская а
+    'p': 'р', 'P': 'Р',   # латинская p → русская р
+    'x': 'х', 'X': 'Х',   # латинская x → русская х
+    'y': 'у', 'Y': 'У',   # латинская y → русская у
+    't': 'т', 'T': 'Т',   # латинская t → русская т
+    'k': 'к', 'K': 'К',   # латинская k → русская к
+    'm': 'м', 'M': 'М',   # латинская m → русская м
+    'n': 'н',             # латинская n → русская н (осторожно: 'N' не трогаем)
+})
+
+
+def _translate_zone_type(zone_type: str) -> str:
+    """Перевести английский zone_type в русское название."""
+    if not zone_type:
+        return zone_type
+    key = zone_type.lower().replace(" ", "_")
+    return ZONE_TYPE_RU.get(key, zone_type)
+
+
+def _fix_ocr_name(name: str) -> str:
+    """
+    Исправить латинские буквы в кириллическом тексте (ошибки OCR).
+    Также чинит явные опечатки.
+    """
+    if not name:
+        return name
+    # Если имя уже на русском (содержит кириллицу) — фиксим латинские вкрапления
+    has_cyrillic = any('а' <= ch <= 'я' or 'А' <= ch <= 'Я' for ch in name)
+    if has_cyrillic:
+        name = name.translate(LATIN_TO_CYRILLIC)
+    
+    # Явные исправления опечаток OCR
+    TYPO_FIXES = {
+        "Оctров": "Остров",
+        "Остров": "Остров",
+        "Остров": "Остров",
+        "Подветкой": "подсветкой",
+    }
+    for wrong, right in TYPO_FIXES.items():
+        if wrong in name:
+            name = name.replace(wrong, right)
+    
+    # Капитализация первой буквы
+    if name and name[0].islower():
+        name = name[0].upper() + name[1:]
+    
+    return name
+
+
 @dataclass
 class RoomSpec:
     """Спецификация одного помещения."""
@@ -115,12 +184,12 @@ class FullPipeline:
 
                 if recog_result.modules:
                     # Находим или создаём спецификацию комнаты
-                    room_name = recog_result.zone_type or f"Страница {page_num + 1}"
+                    room_name = _translate_zone_type(recog_result.zone_type) if recog_result.zone_type else f"Страница {page_num + 1}"
 
                     # Пытаемся найти имя комнаты из OCR
                     ocr_room = self._find_room_for_page(ocr_result, page_num)
                     if ocr_room:
-                        room_name = ocr_room.name
+                        room_name = _fix_ocr_name(ocr_room.name)
 
                     if page_num not in room_specs:
                         room_specs[page_num] = RoomSpec(
@@ -153,13 +222,14 @@ class FullPipeline:
             name_clean = ocr_room.name.lower().rstrip(':')
             if not ocr_room.name or name_clean in SKIP_NAMES:
                 continue
+            fixed_name = _fix_ocr_name(ocr_room.name)
             already = any(
-                ocr_room.name.lower() in r.room_name.lower()
+                fixed_name.lower() in r.room_name.lower()
                 for r in result.rooms
             )
             if not already:
                 result.rooms.append(RoomSpec(
-                    room_name=ocr_room.name,
+                    room_name=_fix_ocr_name(ocr_room.name),
                     materials=ocr_room.materials,
                     notes=ocr_room.notes,
                 ))

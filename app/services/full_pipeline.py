@@ -266,6 +266,28 @@ class FullPipeline:
                 return room
         return None
 
+    def _extract_address(self, ocr_result: PDFParseResult) -> str:
+        """Извлечь адрес из таблиц OCR."""
+        for table in ocr_result.tables:
+            for row in table.rows:
+                for cell in row:
+                    if "Рокоссовского" in cell or "Хабаровск" in cell:
+                        return cell.strip()
+        return ""
+
+    def _extract_designer(self, ocr_result: PDFParseResult) -> str:
+        """Извлечь имя дизайнера из таблиц."""
+        for table in ocr_result.tables:
+            for row in table.rows:
+                if row and "Курманова" in str(row):
+                    return str(row).strip()
+        return ""
+
+
+# ================================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (module-level)
+# ================================================================
+
 def _generate_room_name(recog_result, page_num: int = 0) -> str:
     """
     Сгенерировать название листа по составу модулей (на русском).
@@ -328,23 +350,6 @@ def _generate_room_name(recog_result, page_num: int = 0) -> str:
     zone = _translate_zone_type(recog_result.zone_type) if recog_result.zone_type else ""
     name = zone if zone else "Мебель"
     return name + page_suffix
-
-    def _extract_address(self, ocr_result: PDFParseResult) -> str:
-        """Извлечь адрес из таблиц OCR."""
-        for table in ocr_result.tables:
-            for row in table.rows:
-                for cell in row:
-                    if "Рокоссовского" in cell or "Хабаровск" in cell:
-                        return cell.strip()
-        return ""
-
-    def _extract_designer(self, ocr_result: PDFParseResult) -> str:
-        """Извлечь имя дизайнера из таблиц."""
-        for table in ocr_result.tables:
-            for row in table.rows:
-                if row and "Курманова" in str(row):
-                    return str(row).strip()
-        return ""
 
 
 # ================================================================

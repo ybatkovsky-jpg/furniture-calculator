@@ -348,8 +348,8 @@ class GLMOCRParser:
         # - 600*560*840
         # - размеры 600 560 840
         size_patterns = [
-            re.compile(r'(\d{2,4})\s*[×xX\*]\s*(\d{2,4})\s*[×xX\*]\s*(\d{2,4})'),
-            re.compile(r'(\d{2,4})\s+[×xX\*]\s+(\d{2,4})'),  # Ш×Г
+            re.compile(r'(\d{2,4})\s*[×xX\*хХ]\s*(\d{2,4})\s*[×xX\*хХ]\s*(\d{2,4})'),
+            re.compile(r'(\d{2,4})\s+[×xX\*хХ]\s+(\d{2,4})'),  # Ш×Г
         ]
 
         # Ищем по строкам
@@ -437,7 +437,7 @@ class GLMOCRParser:
         """Извлечь все размеры из Markdown."""
         clean = re.sub(r'<[^>]+>', '', md)
         patterns = [
-            r'\d{2,4}\s*[×xX\*]\s*\d{2,4}(\s*[×xX\*]\s*\d{2,4})?',
+            r'\d{2,4}\s*[×xX\*хХ]\s*\d{2,4}(\s*[×xX\*хХ]\s*\d{2,4})?',
             r'\d{2,4}\s*мм',
         ]
         found = []

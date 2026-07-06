@@ -23,6 +23,7 @@ from app.services.quantity_calc import (
     MaterialQuantities,
     calculate_quantities,
     fill_template_for_room,
+    detect_material_properties,
 )
 from app.services.project_spec import (
     ProjectSpec,
@@ -39,8 +40,28 @@ logger = logging.getLogger(__name__)
 
 # (искомые_слова_в_наименовании, поле_в_MaterialQuantities, единица_измерения, множитель)
 # множитель применяется к значению из MaterialQuantities перед записью в ячейку
-ROW_MAPPING: List[Tuple[List[str], str, str, float]] = [
-    # ── ЛДСП ──
+# Загружается из templates/row_mapping.json, fallback — хардкод
+import json as _json_mod
+_row_config_path = Path(__file__).parent.parent.parent / "templates" / "row_mapping.json"
+if _row_config_path.exists():
+    try:
+        with open(_row_config_path, "r", encoding="utf-8") as _f:
+            _data = _json_mod.load(_f)
+        ROW_MAPPING: List[Tuple[List[str], str, str, float]] = [
+            (item["keywords"], item["field"], item.get("unit", ""), item.get("multiplier", 1.0))
+            for item in _data.get("mappings", [])
+        ]
+        logger.info(f"📋 ROW_MAPPING из JSON: {len(ROW_MAPPING)} строк")
+    except Exception as _e:
+        logger.warning(f"Ошибка загрузки row_mapping.json: {_e} — fallback на хардкод")
+        ROW_MAPPING = _get_default_mapping()
+else:
+    ROW_MAPPING = _get_default_mapping()
+
+
+def _get_default_mapping() -> List[Tuple[List[str], str, str, float]]:
+    """Хардкод-маппинг как fallback (синхронизирован с row_mapping.json)."""
+    return [
     (["EGGER ЛДСП", "однотон"], "ldsp_sheets_plain", "листов", 1.0),
     (["EGGER ЛДСП", "текстура"], "ldsp_sheets_texture", "листов", 1.0),
     (["EGGER ЛМДФ", "древесн"], "mdf_sheets", "листов", 1.0),
@@ -103,15 +124,16 @@ ROW_MAPPING: List[Tuple[List[str], str, str, float]] = [
 
     # ── Стекло ──
     # Зеркало и стекло будут на отдельном листе «РАСЧЕТ ЗЕРКАЛ»
-]
+    ]
 
 
 def _find_row_for_material(ws, keywords: List[str]) -> Optional[int]:
     """
     Найти номер строки в листе по ключевым словам в колонках A (Наименование)
-    и B (Цвет). Ищет совпадение в объединённом тексте A + " | " + B.
+    и B (Цвет). Ищет точное совпадение, затем нечёткое (fuzzy).
     Все keywords должны содержаться в этом тексте.
     """
+    # 1. Точный поиск
     for row in range(1, ws.max_row + 1):
         cell_a = str(ws.cell(row=row, column=1).value or "")
         cell_b = str(ws.cell(row=row, column=2).value or "")
@@ -121,6 +143,41 @@ def _find_row_for_material(ws, keywords: List[str]) -> Optional[int]:
         # Все ключевые слова должны присутствовать (регистронезависимо)
         if all(kw.lower() in combined.lower() for kw in keywords):
             return row
+
+    # 2. Нечёткий поиск (fallback)
+    return _find_row_for_material_fuzzy(ws, keywords)
+
+
+def _find_row_for_material_fuzzy(
+    ws, keywords: List[str], threshold: float = 0.75
+) -> Optional[int]:
+    """
+    Fallback: нечёткий поиск через SequenceMatcher.
+    Используется когда точный поиск не дал результата.
+    """
+    from difflib import SequenceMatcher
+
+    query = " ".join(keywords).lower()
+    best_row, best_score = None, 0.0
+
+    for row in range(1, ws.max_row + 1):
+        cell_a = str(ws.cell(row=row, column=1).value or "")
+        cell_b = str(ws.cell(row=row, column=2).value or "")
+        combined = f"{cell_a} | {cell_b}".lower()
+
+        if not cell_a and not cell_b:
+            continue
+
+        score = SequenceMatcher(None, query, combined).ratio()
+        if score > best_score:
+            best_score, best_row = score, row
+
+    if best_score >= threshold and best_row:
+        logger.info(
+            f"🎯 Fuzzy match: «{query[:60]}...» → R{best_row} (score={best_score:.2f})"
+        )
+        return best_row
+
     return None
 
 
@@ -137,17 +194,9 @@ def _build_quantity_map(
     """
     m = {}
 
-    # Определяем тип материала ЛДСП
-    is_texture = False
-    for mat in materials:
-        mat_upper = mat.upper()
-        # Текстура = древесный декор (H1/H3 префиксы EGGER) или явное указание
-        if any(kw in mat_upper for kw in ["ТЕКСТУР", "ДРЕВЕСН", "WOOD", "ДУБ", "ОРЕХ", "ЯСЕНЬ"]):
-            is_texture = True
-            break
-        if any(mat_upper.startswith(p) for p in ["H1", "H3"]):
-            is_texture = True
-            break
+    # Определяем свойства материала через ЕДИНУЮ функцию
+    mat_props = detect_material_properties(materials)
+    is_texture = mat_props["surface"] == "texture"
 
     # ЛДСП
     if is_texture:
@@ -157,9 +206,7 @@ def _build_quantity_map(
 
     # МДФ — только для крашеных/лакокраска фасадов (ПВХ и EMDIWAY — готовые, МДФ включён)
     if q.mdf_sheets > 0:
-        materials_upper = " ".join(materials).upper()
-        # МДФ-листы нужны только если фасады крашеные (Лакокраска/МАТОВЫЙ/ГЛЯНЕЦ)
-        is_painted = any(kw in materials_upper for kw in ["ЛАКОКРАСКА", "МАТОВЫЙ", "ГЛЯНЕЦ", "КРАШЕН"])
+        is_painted = mat_props["facade_type"] in ("paint_matte", "paint_gloss")
         if is_painted:
             m["mdf_sheets"] = q.mdf_sheets
 
@@ -177,15 +224,14 @@ def _build_quantity_map(
 
     # Фасады
     if q.facades_area_m2 > 0:
-        materials_upper = " ".join(materials).upper()
-        if "EMDIWAY" in materials_upper:
-            if "TITAN" in materials_upper:
-                m["facades_m2_emdiway_titan"] = round(q.facades_area_m2, 1)
-            else:
-                m["facades_m2_emdiway"] = round(q.facades_area_m2, 1)
-        elif "ЛАКОКРАСКА" in materials_upper or "МАТОВ" in materials_upper:
+        ft = mat_props["facade_type"]
+        if ft == "emdiway_titan":
+            m["facades_m2_emdiway_titan"] = round(q.facades_area_m2, 1)
+        elif ft == "emdiway":
+            m["facades_m2_emdiway"] = round(q.facades_area_m2, 1)
+        elif ft == "paint_matte":
             m["facades_m2_paint_matte"] = round(q.facades_area_m2, 1)
-        elif "ГЛЯНЕЦ" in materials_upper:
+        elif ft == "paint_gloss":
             m["facades_m2_paint_gloss"] = round(q.facades_area_m2, 1)
         else:
             m["facades_m2_pvh_s"] = round(q.facades_area_m2, 1)
@@ -272,6 +318,8 @@ def fill_template_from_pipeline(
         return output_path
 
     # Для каждого помещения создаём копию листа-шаблона
+    unfilled_items = []  # собираем позиции, для которых не нашлась строка
+
     for i, room in enumerate(rooms_with_modules):
         sheet_name = _clean_sheet_name(room.room_name)[:31]
 
@@ -309,6 +357,13 @@ def fill_template_from_pipeline(
                         f"{final_value} {unit}"
                     )
                 else:
+                    # Строка не найдена — собираем для отчёта
+                    unfilled_items.append({
+                        "room": sheet_name,
+                        "material": " + ".join(keywords[:2]),
+                        "expected_value": f"{value * multiplier} {unit}",
+                        "field": field,
+                    })
                     logger.debug(
                         f"  {sheet_name}: ⚠ не найдена строка для {keywords}"
                     )
@@ -330,6 +385,13 @@ def fill_template_from_pipeline(
 
     # ── Удаляем служебные листы шаблона ──
     _remove_template_sheets(wb)
+
+    # ── Отчёт о незаполненных строках ──
+    if unfilled_items:
+        _add_problems_sheet(wb, unfilled_items)
+
+    # ── Контроль качества ──
+    _add_quality_sheet(wb, pipeline_result)
 
     # Сохраняем
     wb.save(output_path)
@@ -353,6 +415,151 @@ def _remove_template_sheets(wb: Workbook):
 
     if removed:
         logger.info(f"🗑️  Удалены служебные листы: {', '.join(removed)}")
+
+
+def _add_quality_sheet(wb: Workbook, pipeline_result: PipelineResult):
+    """
+    Добавить лист «✅ Контроль качества» с оценкой каждого помещения.
+
+    Содержит:
+    - Название помещения, страница
+    - Количество модулей, уверенность AI
+    - Quality Score (0..1), флаги
+    - Рекомендация оператору (🔴🟡🟢)
+    """
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    sheet_name = "✅ Контроль качества"
+
+    # Удаляем старый лист если есть (при повторном запуске)
+    if sheet_name in [ws.title for ws in wb.worksheets]:
+        del wb[sheet_name]
+
+    ws = wb.create_sheet(sheet_name, 0)  # вставляем первым листом
+
+    # Стили
+    header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    yellow_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+
+    # Заголовки
+    headers = [
+        ("A", "Помещение", 30),
+        ("B", "Стр.", 6),
+        ("C", "Модулей", 10),
+        ("D", "Уверенность AI", 14),
+        ("E", "Quality Score", 13),
+        ("F", "Флаги", 45),
+        ("G", "Рекомендация", 25),
+    ]
+    for col_letter, title, width in headers:
+        cell = ws[f"{col_letter}1"]
+        cell.value = title
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[col_letter].width = width
+
+    # Данные по каждому помещению
+    for i, room in enumerate(pipeline_result.rooms, start=2):
+        ws.cell(row=i, column=1, value=room.room_name)
+        ws.cell(row=i, column=2, value=room.page if room.page else "")
+        ws.cell(row=i, column=3, value=len(room.modules))
+        ws.cell(row=i, column=4, value=room.confidence or "—")
+
+        # Quality Score с цветовой индикацией
+        score_cell = ws.cell(row=i, column=5)
+        score_cell.value = room.quality_score
+        score_cell.number_format = "0%"
+        score_cell.alignment = Alignment(horizontal="center")
+
+        # Флаги
+        ws.cell(row=i, column=6, value="; ".join(room.quality_flags) if room.quality_flags else "—")
+
+        # Рекомендация
+        if room.quality_score < 0.5:
+            recommendation = "🔴 ПЕРЕПРОВЕРИТЬ"
+            row_fill = red_fill
+        elif room.quality_score < 0.8:
+            recommendation = "🟡 Проверить"
+            row_fill = yellow_fill
+        else:
+            recommendation = "🟢 ОК"
+            row_fill = green_fill
+
+        ws.cell(row=i, column=7, value=recommendation)
+
+        # Подсветка всей строки
+        for col in range(1, 8):
+            ws.cell(row=i, column=col).fill = row_fill
+
+    # Итоговая строка
+    total_row = len(pipeline_result.rooms) + 2
+    avg_score = (
+        sum(r.quality_score for r in pipeline_result.rooms) / max(len(pipeline_result.rooms), 1)
+    )
+    ws.cell(row=total_row, column=1, value="ИТОГО").font = Font(bold=True)
+    ws.cell(row=total_row, column=3, value=sum(len(r.modules) for r in pipeline_result.rooms))
+    score_cell = ws.cell(row=total_row, column=5, value=avg_score)
+    score_cell.number_format = "0%"
+    score_cell.font = Font(bold=True)
+
+    logger.info(f"📊 Лист «Контроль качества»: {len(pipeline_result.rooms)} помещений, средний score={avg_score:.0%}")
+
+
+def _add_problems_sheet(wb: Workbook, unfilled_items: list):
+    """
+    Добавить лист «⚠ Проблемы» с незаполненными позициями.
+
+    Содержит строки, для которых не нашлось соответствия в шаблоне.
+    Оператор должен внести эти позиции вручную или добавить строку в шаблон.
+    """
+    from openpyxl.styles import Font, PatternFill
+
+    sheet_name = "⚠ Проблемы"
+
+    # Удаляем старый если есть
+    if sheet_name in [ws.title for ws in wb.worksheets]:
+        del wb[sheet_name]
+
+    # Вставляем в начало
+    idx = min(2, len(wb.sheetnames))
+    ws = wb.create_sheet(sheet_name, idx)
+
+    # Стили
+    header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="C00000", end_color="C00000", fill_type="solid")
+    warn_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+
+    # Заголовки
+    ws["A1"] = "Помещение"
+    ws["B1"] = "Материал (не найдена строка в шаблоне)"
+    ws["C1"] = "Ожидаемое значение"
+    ws["D1"] = "Действие оператора"
+
+    for col in range(1, 5):
+        cell = ws.cell(row=1, column=col)
+        cell.font = header_font
+        cell.fill = header_fill
+
+    ws.column_dimensions["A"].width = 25
+    ws.column_dimensions["B"].width = 45
+    ws.column_dimensions["C"].width = 20
+    ws.column_dimensions["D"].width = 35
+
+    # Данные
+    for i, item in enumerate(unfilled_items, start=2):
+        ws.cell(row=i, column=1, value=item["room"])
+        ws.cell(row=i, column=2, value=item["material"])
+        ws.cell(row=i, column=3, value=item["expected_value"])
+        ws.cell(row=i, column=4, value="Внести вручную или добавить строку в шаблон")
+
+        for col in range(1, 5):
+            ws.cell(row=i, column=col).fill = warn_fill
+
+    logger.warning(f"⚠️ Незаполненных позиций: {len(unfilled_items)} — см. лист «⚠ Проблемы»")
 
 
 def _clean_sheet_name(name: str) -> str:

@@ -12,8 +12,11 @@
 """
 
 import math
+import logging
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 from app.services.full_pipeline import PipelineResult, RoomSpec
 from app.services.image_analyzer import RecognizedModule
@@ -95,7 +98,79 @@ class MaterialQuantities:
     warnings: List[str] = field(default_factory=list)
 
 
-def calculate_quantities(modules: List[RecognizedModule], room_name: str = "", materials: List[str] = None) -> MaterialQuantities:
+def detect_material_properties(materials: List[str]) -> dict:
+    """
+    Единая точка определения свойств материала.
+
+    Используется ВЕЗДЕ, где нужно понять: текстура или однотон,
+    какой бренд, какой тип фасадов, есть ли стекло.
+
+    Returns:
+        {"surface": "plain"|"texture",
+         "brand": "EGGER"|"EXTRAVERT"|"LAMARTY"|"ТОМЛЕСДРЕВ"|"unknown",
+         "facade_type": "pvh"|"emdiway"|"emdiway_titan"|"paint_matte"|"paint_gloss"|"unknown",
+         "has_glass": bool}
+    """
+    result = {
+        "surface": "plain",
+        "brand": "unknown",
+        "facade_type": "unknown",
+        "has_glass": False,
+    }
+
+    if not materials:
+        return result
+
+    materials_upper = " ".join(m.upper() for m in materials)
+
+    # ── Бренд ЛДСП ──
+    for brand in ["EGGER", "EXTRAVERT", "LAMARTY"]:
+        if brand in materials_upper:
+            result["brand"] = brand
+            break
+    if "ТОМЛЕСДРЕВ" in materials_upper:
+        result["brand"] = "ТОМЛЕСДРЕВ"
+
+    # ── Текстура vs однотон ──
+    TEXTURE_KEYWORDS = ["ТЕКСТУР", "ДРЕВЕСН", "WOOD", "ДУБ", "ОРЕХ", "ЯСЕНЬ"]
+    if any(kw in materials_upper for kw in TEXTURE_KEYWORDS):
+        result["surface"] = "texture"
+    elif any(
+        word.startswith(p)
+        for m in materials
+        for word in m.upper().replace("-", " ").replace("_", " ").split()
+        for p in ["H1", "H3"]
+    ):
+        # H1xxx/H3xxx — древесные декоры EGGER (ищем как отдельные слова)
+        result["surface"] = "texture"
+
+    # ── Тип фасада ──
+    if "EMDIWAY" in materials_upper:
+        result["facade_type"] = "emdiway_titan" if "TITAN" in materials_upper else "emdiway"
+    elif any(kw in materials_upper for kw in ["ЛАКОКРАСКА", "МАТОВЫЙ", "МАТОВ"]):
+        result["facade_type"] = "paint_matte"
+    elif "ГЛЯНЕЦ" in materials_upper or "ГЛЯНЦ" in materials_upper:
+        result["facade_type"] = "paint_gloss"
+    elif "ПВХ" in materials_upper:
+        result["facade_type"] = "pvh"
+
+    # ── Стекло ──
+    result["has_glass"] = any(
+        kw in materials_upper for kw in ["СТЕКЛО", "ЗЕРКАЛО", "GLASS", "MIRROR", "ВИТРИН"]
+    )
+
+    return result
+
+
+def calculate_quantities(
+    modules: List[RecognizedModule],
+    room_name: str = "",
+    materials: List[str] = None,
+    *,
+    auto_accessories: bool = True,   # авто-сушка, лоток, бутылочница
+    auto_drawers: bool = True,       # авто-ящики если AI не нашёл
+    auto_led: bool = True,           # авто-подсветка для кухни
+) -> MaterialQuantities:
     """
     Рассчитать количества материалов для списка модулей.
 
@@ -113,15 +188,10 @@ def calculate_quantities(modules: List[RecognizedModule], room_name: str = "", m
     is_kitchen = any(kw in room_lower for kw in ["кухн", "остров", "гарнитур", "kitchen"])
     is_wardrobe = any(kw in room_lower for kw in ["гардероб", "шкаф", "wardrobe", "прием", "приём"])
 
-    # Определяем тип материала ЛДСП
-    for mat in materials:
-        mat_upper = mat.upper()
-        if any(kw in mat_upper for kw in ["ТЕКСТУР", "ДРЕВЕСН", "WOOD", "ДУБ", "ОРЕХ", "ЯСЕНЬ"]):
-            q.ldsp_material = "текстура"
-            break
-        if any(mat_upper.startswith(p) for p in ["H1", "H3"]):
-            q.ldsp_material = "текстура"
-            break
+    # Определяем свойства материала (единая функция)
+    mat_props = detect_material_properties(materials)
+    if mat_props["surface"] == "texture":
+        q.ldsp_material = "текстура"
 
     total_hdf_area = 0.0  # Суммируем площадь, делим в конце
     total_back_area = 0.0
@@ -223,6 +293,38 @@ def calculate_quantities(modules: List[RecognizedModule], room_name: str = "", m
         if module.type in ("lower_base", "upper_base", "penal"):
             visible_module_count += qty
 
+    # ── УЧЁТ СМЕЖНЫХ СТЕНОК ──
+    # Соседние модули одного типа и глубины делят боковину
+    # Экономия: одна боковина (depth × height) на каждый стык
+    # Группируем модули по (type, depth) и считаем максимальное число стыков
+    adjacency_groups: Dict[str, List[RecognizedModule]] = {}
+    for m in modules:
+        key = f"{m.type}_{m.depth}"
+        adjacency_groups.setdefault(key, []).append(m)
+
+    shared_sides_saved = 0
+    shared_area_saved_m2 = 0.0
+    for key, mods in adjacency_groups.items():
+        n = sum(max(m.quantity, 1) for m in mods)
+        if n >= 2:
+            # Для N модулей подряд — максимум (N-1) смежных стыков
+            # Берём среднюю высоту группы
+            avg_h = sum(m.height * max(m.quantity, 1) for m in mods) / max(n, 1)
+            avg_d = mods[0].depth / 1000  # глубина в метрах
+            potential_joints = n - 1
+            # Консервативно: учитываем 70% потенциальных стыков
+            actual_joints = int(potential_joints * 0.7)
+            area_per_joint = avg_d * (avg_h / 1000)  # м²
+            shared_sides_saved += actual_joints
+            shared_area_saved_m2 += actual_joints * area_per_joint
+
+    if shared_area_saved_m2 > 0:
+        q.ldsp_area_m2 -= shared_area_saved_m2
+        logger.info(
+            f"Учтено смежных стенок: {shared_sides_saved} стыков, "
+            f"экономия {shared_area_saved_m2:.2f} м² ЛДСП"
+        )
+
     # ── ИТОГОВЫЕ РАСЧЁТЫ ──
 
     # ЛДСП: листы с запасом на раскрой
@@ -262,15 +364,16 @@ def calculate_quantities(modules: List[RecognizedModule], room_name: str = "", m
         # Штуки по 3 метра
         q.gola_horizontal_pcs = math.ceil(q.gola_horizontal_m / 3) if q.gola_horizontal_m > 0 else 0
 
-        # LED: 70% от длины горизонтального Gola
-        q.led_strip_m      = q.gola_horizontal_m * 0.7
-        q.led_power_supply = max(1, math.ceil(q.led_strip_m / 10)) if q.led_strip_m > 0 else 0
-        q.led_sensor       = 1 if q.led_strip_m > 0 else 0
+        # LED: 70% от длины горизонтального Gola (если включена авто-подсветка)
+        if auto_led:
+            q.led_strip_m      = q.gola_horizontal_m * 0.7
+            q.led_power_supply = max(1, math.ceil(q.led_strip_m / 10)) if q.led_strip_m > 0 else 0
+            q.led_sensor       = 1 if q.led_strip_m > 0 else 0
 
     # ── Эргономика / рекомендации ──
     if is_kitchen:
-        # Ящики: если AI не нашёл — рекомендуем
-        if q.drawers_count == 0:
+        # Ящики: если AI не нашёл — рекомендуем (если включены авто-ящики)
+        if auto_drawers and q.drawers_count == 0:
             q.drawers_count = 2           # минимум 2 ящика на кухню
             q.drawers_internal_count = 1   # один внутренний для приборов
             q.drawer_system = "Tandembox"
@@ -279,17 +382,19 @@ def calculate_quantities(modules: List[RecognizedModule], room_name: str = "", m
                 "один стандартный, один с внутренним для столовых приборов"
             )
 
-        # Лоток для приборов
-        q.cutlery_tray_count = 1
-        # Бутылочница: если есть узкий модуль (≤200мм)
-        q.bottle_holder_count = 1 if any(m.width <= 200 for m in modules) else 0
-        # Мойка — предполагаем что есть
-        q.has_sink = True
-        if q.has_sink:
-            q.drying_rack_count = 1
-            q.suggestions.append(
-                "💧 Рекомендация: сушка для посуды Alba в модуль 900мм"
-            )
+        # Авто-аксессуары (если включены)
+        if auto_accessories:
+            # Лоток для приборов
+            q.cutlery_tray_count = 1
+            # Бутылочница: если есть узкий модуль (≤200мм)
+            q.bottle_holder_count = 1 if any(m.width <= 200 for m in modules) else 0
+            # Мойка — предполагаем что есть
+            q.has_sink = True
+            if q.has_sink:
+                q.drying_rack_count = 1
+                q.suggestions.append(
+                    "💧 Рекомендация: сушка для посуды Alba в модуль 900мм"
+                )
 
         # Зоны хранения
         has_upper = any(m.type == "upper_base" for m in modules)
@@ -334,21 +439,11 @@ def fill_template_for_room(
     room_lower = room_name.lower()
     is_kitchen = any(kw in room_lower for kw in ["кухн", "остров", "гарнитур", "kitchen"])
 
-    # Определяем материал ЛДСП из AI-распознанных
-    ldsp_material = "EGGER однотон"
-    ldsp_price = 6000
-    is_texture = False
-    for mat in materials:
-        mat_upper = mat.upper()
-        # Текстура = древесный декор: H1xxx, H3xxx, либо явно указано
-        if any(kw in mat_upper for kw in ["ТЕКСТУР", "ДРЕВЕСН", "WOOD", "ДУБ", "ОРЕХ", "ЯСЕНЬ"]):
-            is_texture = True
-            break
-        # H1/H3 префиксы EGGER = древесные декоры
-        if any(mat_upper.startswith(p) for p in ["H1", "H3"]):
-            is_texture = True
-            break
-    # ST9, ST36 и т.д. — это финиш, а не текстура. U, W префиксы = однотон.
+    # Определяем материал через единую функцию
+    mat_props = detect_material_properties(materials)
+    is_texture = mat_props["surface"] == "texture"
+    ldsp_material = "EGGER текстура" if is_texture else "EGGER однотон"
+    ldsp_price = 7200 if is_texture else 6000
 
     # ── 1. ЛДСП ──
     if q.ldsp_sheets > 0:
@@ -373,18 +468,18 @@ def fill_template_for_room(
 
     # ── 4. МДФ / Фасады ──
     if q.facades_area_m2 > 0:
-        facade_price = 5729  # ПВХ I категория
-        facade_name = "ФАСАДЫ ПВХ 16мм"
-        for mat in materials:
-            mat_upper = mat.upper()
-            if "EMDIWAY" in mat_upper:
-                facade_price = 9800
-                facade_name = "EMDIWAY однотонный"
-                break
-            elif "ЛАКОКРАСКА" in mat_upper or "МАТОВ" in mat_upper:
-                facade_price = 10450
-                facade_name = "Лакокраска матовая"
-                break
+        # Определяем тип фасада через единую функцию
+        FACADE_PRICES = {
+            "emdiway": ("EMDIWAY однотонный", 9800),
+            "emdiway_titan": ("EMDIWAY Titan", 11200),
+            "paint_matte": ("Лакокраска матовая", 10450),
+            "paint_gloss": ("Лакокраска глянец", 11500),
+            "pvh": ("ФАСАДЫ ПВХ 16мм", 5729),
+        }
+        facade_name, facade_price = FACADE_PRICES.get(
+            mat_props["facade_type"],
+            ("ФАСАДЫ ПВХ 16мм", 5729)
+        )
 
         items.append(("ФАСАДЫ", facade_name,
                       f"{q.facades_area_m2:.1f} м² × {facade_price}₽",

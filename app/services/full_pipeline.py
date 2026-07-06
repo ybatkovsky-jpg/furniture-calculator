@@ -102,6 +102,8 @@ class RoomSpec:
     materials: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
     confidence: str = ""
+    quality_score: float = 0.0        # 0..1, чем выше тем лучше
+    quality_flags: List[str] = field(default_factory=list)  # предупреждения
 
 
 @dataclass
@@ -232,6 +234,43 @@ class FullPipeline:
                     materials=ocr_room.materials,
                     notes=ocr_room.notes,
                 ))
+
+        # ── Quality Score + Кросс-валидация OCR ↔ Vision ──
+        for room in result.rooms:
+            # 1. Расчёт оценки качества
+            _calculate_quality(room)
+
+            # 2. Кросс-валидация: сравниваем OCR-размеры и Vision-модули
+            if room.modules:
+                ocr_room = self._find_room_for_page(ocr_result, room.page - 1)
+                if ocr_room and ocr_room.dimensions:
+                    ocr_dim_count = len(ocr_room.dimensions)
+                    vision_mod_count = len(room.modules)
+                    diff = abs(ocr_dim_count - vision_mod_count)
+
+                    if diff >= 3:
+                        room.quality_score = max(0, room.quality_score - 0.2)
+                        room.quality_flags.append(
+                            f"⚠ Расхождение OCR/Vision: OCR={ocr_dim_count} размеров, "
+                            f"Vision={vision_mod_count} модулей"
+                        )
+                        logger.warning(
+                            f"{room.room_name}: OCR={ocr_dim_count} размеров, "
+                            f"Vision={vision_mod_count} модулей — проверьте!"
+                        )
+                    elif diff >= 1:
+                        room.quality_score = max(0, room.quality_score - 0.1)
+                        room.quality_flags.append(
+                            f"Небольшое расхождение OCR/Vision: OCR={ocr_dim_count}, Vision={vision_mod_count}"
+                        )
+
+        # Сводка качества
+        low_quality = [r for r in result.rooms if r.quality_score < 0.5]
+        if low_quality:
+            logger.warning(
+                f"⚠️ Помещений с низким качеством (<0.5): {len(low_quality)} — "
+                f"{[r.room_name for r in low_quality]}"
+            )
 
         result.success = len(result.rooms) > 0
         logger.info(
@@ -458,6 +497,73 @@ def _generate_room_name(recog_result, page_num: int = 0) -> str:
         name = furniture
 
     return name + page_suffix
+
+
+def _calculate_quality(room: RoomSpec) -> float:
+    """
+    Рассчитать оценку качества распознавания для помещения.
+    
+    Учитывает:
+    - confidence от AI
+    - количество модулей (слишком мало — подозрительно)
+    - разнообразие размеров (все одного размера — возможно дубликат)
+    - наличие модулей вообще
+    
+    Returns: 0.0 (полный брак) .. 1.0 (идеально)
+    """
+    score = 1.0
+    flags = []
+
+    # Confidence влияет наиболее сильно
+    if room.confidence == "low":
+        score -= 0.4
+        flags.append("Низкая уверенность AI")
+    elif room.confidence == "medium":
+        score -= 0.2
+        flags.append("Средняя уверенность AI")
+
+    # Нет модулей — критично
+    if not room.modules:
+        score -= 0.5
+        flags.append("Модули не найдены")
+        room.quality_score = max(0, score)
+        room.quality_flags = flags
+        return room.quality_score
+
+    # Подозрительно мало модулей для кухни
+    room_lower = room.room_name.lower()
+    is_kitchen = any(kw in room_lower for kw in ["кухн", "гарнитур", "остров"])
+    if is_kitchen and len(room.modules) < 2:
+        score -= 0.2
+        flags.append("Слишком мало модулей для кухни")
+    elif is_kitchen and len(room.modules) < 4:
+        score -= 0.1
+        flags.append("Мало модулей для кухни (ожидается ≥4)")
+
+    # Для гардеробной/шкафа тоже проверяем
+    is_wardrobe = any(kw in room_lower for kw in ["гардероб", "шкаф", "прихож"])
+    if is_wardrobe and len(room.modules) < 1:
+        score -= 0.15
+        flags.append("Модули не найдены для шкафа/гардеробной")
+
+    # Все модули одинакового размера — подозрительно (возможно дубликат)
+    if len(room.modules) >= 3:
+        unique_sizes = set(
+            (m.width, m.depth, m.height) for m in room.modules
+        )
+        if len(unique_sizes) == 1:
+            score -= 0.15
+            flags.append("Все модули одного размера — возможно дубликат")
+
+    # Проверка: есть ли модули с нулевыми размерами (не должны были пройти валидацию)
+    zero_sized = [m for m in room.modules if m.width <= 0 or m.depth <= 0 or m.height <= 0]
+    if zero_sized:
+        score -= 0.3
+        flags.append(f"Найдены модули с нулевыми размерами: {len(zero_sized)} шт.")
+
+    room.quality_score = max(0, min(1, score))
+    room.quality_flags = flags
+    return room.quality_score
 
 
 # ================================================================

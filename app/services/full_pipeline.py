@@ -163,29 +163,28 @@ class FullPipeline:
 
         logger.info(f"🖼️  Шаг 2/3: Рендеринг + анализ {len(pages_to_analyze)} страниц...")
 
-        # ── Шаг 3: Рендеринг + Vision для каждой страницы ──
+        # ── Шаг 3: ПАРАЛЛЕЛЬНЫЙ рендеринг + Vision ──
         room_specs: Dict[int, RoomSpec] = {}
 
-        for i, page_num in enumerate(pages_to_analyze):
-            logger.info(f"  Стр. {page_num + 1}/{result.total_pages} ({i + 1}/{len(pages_to_analyze)})...")
+        # Обрабатываем страницы параллельно батчами по 3
+        BATCH_SIZE = 3
+        for batch_start in range(0, len(pages_to_analyze), BATCH_SIZE):
+            batch = pages_to_analyze[batch_start:batch_start + BATCH_SIZE]
+            tasks = [self._process_page(path, page_num, ocr_result, result.total_pages)
+                     for page_num in batch]
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            try:
-                # 3a. Рендерим страницу
-                jpeg_bytes = render_page(path, page_num)
+            for page_num, recog_result_or_error in zip(batch, batch_results):
+                if isinstance(recog_result_or_error, Exception):
+                    logger.error(f"    ❌ Стр. {page_num + 1}: {recog_result_or_error}")
+                    result.errors.append(f"Стр. {page_num + 1}: {recog_result_or_error}")
+                    continue
 
-                # 3b. Сохраняем во временный файл
-                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                    tmp.write(jpeg_bytes)
-                    tmp_path = tmp.name
-
-                # 3c. Vision-распознавание
-                recog_result = await self.vision.analyze_drawing(tmp_path)
-
-                # 3d. Удаляем временный файл
-                Path(tmp_path).unlink(missing_ok=True)
+                recog_result = recog_result_or_error
+                if recog_result is None:
+                    continue
 
                 if recog_result.modules:
-                    # Приоритет: OCR-имя > сгенерированное по модулям > zone_type
                     ocr_room = self._find_room_for_page(ocr_result, page_num)
                     if ocr_room:
                         room_name = _fix_ocr_name(ocr_room.name)
@@ -204,15 +203,11 @@ class FullPipeline:
                     spec.confidence = recog_result.confidence
 
                     logger.info(
-                        f"    ✅ {recog_result.zone_type or '?'}: "
+                        f"    ✅ Стр.{page_num + 1} {recog_result.zone_type or '?'}: "
                         f"{len(recog_result.modules)} модулей"
                     )
                 else:
-                    logger.info(f"    ⏭️  Модули не найдены")
-
-            except Exception as e:
-                logger.error(f"    ❌ Ошибка стр. {page_num + 1}: {e}")
-                result.errors.append(f"Стр. {page_num + 1}: {e}")
+                    logger.info(f"    ⏭️  Стр.{page_num + 1}: модули не найдены")
 
         # ── Сборка результата ──
         result.rooms = sorted(room_specs.values(), key=lambda r: r.page)
@@ -282,6 +277,35 @@ class FullPipeline:
     # -----------------------------------------------------------
     # ВСПОМОГАТЕЛЬНЫЕ
     # -----------------------------------------------------------
+
+    async def _process_page(
+        self,
+        pdf_path: Path,
+        page_num: int,
+        ocr_result: PDFParseResult,
+        total_pages: int,
+    ):
+        """
+        Обработать одну страницу: рендеринг → Vision → результат.
+        Выполняется параллельно с другими страницами.
+        """
+        logger.info(f"  ▶ Стр. {page_num + 1}/{total_pages}...")
+
+        # Рендерим страницу
+        jpeg_bytes = render_page(pdf_path, page_num)
+
+        # Сохраняем во временный файл
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+            tmp.write(jpeg_bytes)
+            tmp_path = tmp.name
+
+        try:
+            # Vision-распознавание
+            recog_result = await self.vision.analyze_drawing(tmp_path)
+            return recog_result
+        finally:
+            # Удаляем временный файл
+            Path(tmp_path).unlink(missing_ok=True)
 
     # Индикаторы: страница содержит чертёж (размеры, масштаб, виды)
     DRAWING_INDICATORS = [

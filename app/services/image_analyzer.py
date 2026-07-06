@@ -252,11 +252,11 @@ class GeminiImageAnalyzer:
                     f"confidence={result1.confidence}"
                 )
 
-                # Высокая уверенность → сразу возвращаем
-                if result1.confidence == "high" and len(result1.modules) >= 2:
+                # Высокая/средняя уверенность → сразу возвращаем (без ансамбля)
+                if result1.confidence in ("high", "medium") and len(result1.modules) >= 2:
                     return result1
 
-                # Средняя/низкая уверенность → АНСАМБЛЬ (вторая модель)
+                # Только низкая уверенность → АНСАМБЛЬ (вторая модель)
                 if len(models_to_try) > 1:
                     logger.info("🔄 Ансамбль: запрос второй модели для кросс-валидации...")
                     fallback_model, fallback_provider = models_to_try[1]
@@ -339,8 +339,8 @@ class GeminiImageAnalyzer:
         # 1b. Лёгкое повышение резкости — границы модулей и текст
         image = image.filter(ImageFilter.SHARPEN)
 
-        # 1c. Уменьшаем если больше 2048px (оптимально для Vision API)
-        max_size = 2048
+        # 1c. Уменьшаем если больше 1536px (быстрее передача, качество достаточное)
+        max_size = 1536
         if image.width > max_size or image.height > max_size:
             ratio = min(max_size / image.width, max_size / image.height)
             image = image.resize(

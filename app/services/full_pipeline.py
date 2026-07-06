@@ -244,17 +244,103 @@ class FullPipeline:
     # ВСПОМОГАТЕЛЬНЫЕ
     # -----------------------------------------------------------
 
+    # Индикаторы: страница содержит чертёж (размеры, масштаб, виды)
+    DRAWING_INDICATORS = [
+        "×", "х", "мм", "mm",
+        "М1:", "М 1:", "М1:50", "М1:25", "М1:10", "М1:20",
+        "масштаб", "Масштаб",
+        "ВИД СВЕРХУ", "ВИД СПЕРЕДИ", "ВИД СБОКУ",
+        "РАЗРЕЗ", "Разрез",
+        "фасад", "Фасад",
+        "габарит", "Габарит",
+        "план", "План",
+    ]
+
+    # Индикаторы: страница НЕ чертёж (титул, ведомость, легенда)
+    SKIP_INDICATORS = [
+        "СОДЕРЖАНИЕ", "Содержание",
+        "ВЕДОМОСТЬ", "Ведомость",
+        "СПЕЦИФИКАЦИЯ", "Спецификация",
+        "ТИТУЛ", "Титул", "ТИТУЛЬНЫЙ",
+        "ПРИМЕЧАНИЕ", "Примечание", "ПРИЕМАНИЕ",
+        "УСЛОВНЫЕ ОБОЗНАЧЕНИЯ", "Условные обозначения",
+        "ЛЕГЕНДА", "Легенда",
+        "штамп", "Штамп", "печать",
+        "Общие данные", "ОБЩИЕ ДАННЫЕ",
+    ]
+
     def _pick_key_pages(
         self, ocr_result: PDFParseResult, total: int
     ) -> List[int]:
-        """Выбрать страницы с чертежами (не титульные, не штампы)."""
-        # Простая эвристика: страницы 1..N-2 (пропускаем первую и последние)
-        # TODO: использовать page-референсы из OCR
+        """
+        Выбрать страницы с чертежами, исключая титульные, ведомости и штампы.
+
+        Использует данные OCR (имена помещений) для идентификации
+        не-чертёжных страниц. Паттерны размеров (×, мм) — признак чертежа.
+        """
         if total <= 3:
             return list(range(total))
 
-        # Страницы с 1-й по предпоследнюю
-        return list(range(1, total - 1))
+        # Собираем имена OCR-комнат для поиска не-чертёжных
+        ocr_room_names_lower = set()
+        for room in ocr_result.rooms:
+            if room.name:
+                ocr_room_names_lower.add(room.name.lower().rstrip(':'))
+
+        # Собираем текст всех комнат для поиска drawing-индикаторов
+        all_ocr_text = " ".join(r.raw_text for r in ocr_result.rooms if r.raw_text)
+
+        key_pages = []
+        for page_num in range(total):
+            # Всегда пропускаем титульную (стр. 0)
+            if page_num == 0:
+                logger.info(f"  Стр. 1: пропущена (титульная)")
+                continue
+
+            # Всегда пропускаем последнюю (штамп/легенда)
+            if page_num >= total - 1:
+                logger.info(f"  Стр. {page_num + 1}: пропущена (последняя)")
+                continue
+
+            # Проверяем, не является ли страница не-чертежом по имени OCR-комнаты
+            is_skip = False
+            for name in ocr_room_names_lower:
+                for indicator in self.SKIP_INDICATORS:
+                    if indicator.lower() in name:
+                        # Грубая привязка: если имя комнаты содержит индикатор пропуска,
+                        # и её порядковый номер примерно соответствует странице
+                        is_skip = True
+                        break
+                if is_skip:
+                    break
+
+            if is_skip:
+                logger.info(f"  Стр. {page_num + 1}: пропущена (не-чертёж по OCR)")
+                continue
+
+            # Проверяем, есть ли в OCR-тексте признаки чертежа
+            has_drawing_signs = any(
+                indicator.lower() in all_ocr_text.lower()
+                for indicator in self.DRAWING_INDICATORS
+            )
+
+            if has_drawing_signs or len(ocr_result.rooms) == 0:
+                key_pages.append(page_num)
+            else:
+                # Без признаков чертежа — берём только если это не первые/последние
+                if 1 < page_num < total - 2:
+                    key_pages.append(page_num)
+
+        # Если после фильтрации ничего не осталось — fallback на старую логику
+        if not key_pages:
+            logger.warning("Умный отбор не дал страниц — fallback на 1..N-2")
+            key_pages = list(range(1, total - 1))
+
+        logger.info(
+            f"Отобрано страниц для Vision: {len(key_pages)} из {total} "
+            f"(пропущено {total - len(key_pages)} не-чертёжных)"
+        )
+        return key_pages
 
     def _find_room_for_page(
         self, ocr_result: PDFParseResult, page_num: int

@@ -51,6 +51,28 @@
     {"keywords": ["Сушка для посуды Alba, в модуль на 900мм"], "field": "drying_rack", "unit": "шт", "multiplier": 1.0},
     {"keywords": ["Выдвижная корзина 2-х уровн.(150) Flora BOYARD круглый пруток"], "field": "bottle_holder_150", "unit": "шт", "multiplier": 1.0},
     {"keywords": ["Выдвижная корзина 2-х уровн.(200) Flora BOYARD круглый пруток"], "field": "bottle_holder_200", "unit": "шт", "multiplier": 1.0},
-    {"keywords": ["Лоток для столовых приборов"], "field": "cutlery_tray", "unit": "шт", "multiplier": 1.0}
+    {"keywords": ["Лоток для столовых приборов"], "field": "cutlery_tray", "unit": "шт", "multiplier": 1.0},
+
+    {"keywords": ["Столешница", "постформинг"], "field": "countertop_length_m", "unit": "м", "multiplier": 1.0},
+    {"keywords": ["Столешница", "искусственный камень"], "field": "countertop_length_m", "unit": "м", "multiplier": 1.0},
+
+    {"keywords": ["Конфирмат", "7×50"], "field": "confirmat_count", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Регулируемая опора"], "field": "adjustable_feet", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Настенный подвес"], "field": "wall_mounts", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Цоколь ПВХ", "Rehau"], "field": "plinth_strips", "unit": "шт", "multiplier": 1.0},
+
+    {"keywords": ["Штанга круглая", "D25"], "field": "rods_round", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Штанга прямоугольная", "антискользящая"], "field": "rods_rectangular", "unit": "шт", "multiplier": 1.0},
+
+    {"keywords": ["Ручка накладная"], "field": "handles_count", "unit": "шт", "multiplier": 1.0},
+
+    {"keywords": ["Плёнка ПВХ", "IVEGO"], "field": "pvc_film_m2", "unit": "м²", "multiplier": 1.0},
+
+    {"keywords": ["Кромка МДФ", "1*22"], "field": "edge_mdf_1mm_m", "unit": "м.п.", "multiplier": 1.0},
+    {"keywords": ["EVO 1*22"], "field": "edge_mdf_1mm_m", "unit": "м.п.", "multiplier": 1.0},
+    {"keywords": ["AGT 1*22"], "field": "edge_mdf_1mm_m", "unit": "м.п.", "multiplier": 1.0},
+    {"keywords": ["EMDIWEY"], "field": "edge_mdf_1mm_m", "unit": "м.п.", "multiplier": 1.0},
+    {"keywords": ["ETERNO", "1*22"], "field": "edge_mdf_1mm_m", "unit": "м.п.", "multiplier": 1.0},
+    {"keywords": ["SM`ART", "1*23"], "field": "edge_mdf_1mm_m", "unit": "м.п.", "multiplier": 1.0}
   ]
 }

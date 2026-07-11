@@ -184,6 +184,89 @@ def _parse_section(spec: ProjectSpec, data: dict, room: str):
                 notes=room,
             ))
 
+    # ── НОВЫЕ КАТЕГОРИИ (v2.0) ──
+
+    # Столешница
+    countertop = data.get("countertop")
+    if isinstance(countertop, dict):
+        spec.items.append(SpecItem(
+            name=f"Столешница {countertop.get('material', 'постформинг')} 38мм",
+            count=countertop.get("length_m", 1),
+            unit="м",
+            category="Столешница",
+            notes=f"Длина: {countertop.get('length_m', '?')}м, Глубина: {countertop.get('depth_mm', 640)}мм ({room})",
+        ))
+
+    # Крепёж
+    fasteners = data.get("fasteners")
+    if isinstance(fasteners, dict):
+        if fasteners.get("confirmats", 0) > 0:
+            spec.items.append(SpecItem(
+                name="Конфирмат 7×50",
+                count=fasteners["confirmats"],
+                unit="шт",
+                category="Крепёж",
+                notes=room,
+            ))
+        if fasteners.get("adjustable_feet", 0) > 0:
+            spec.items.append(SpecItem(
+                name="Регулируемая опора",
+                count=fasteners["adjustable_feet"],
+                unit="шт",
+                category="Крепёж",
+                notes=room,
+            ))
+        if fasteners.get("wall_mounts", 0) > 0:
+            spec.items.append(SpecItem(
+                name="Настенный подвес",
+                count=fasteners["wall_mounts"],
+                unit="шт",
+                category="Крепёж",
+                notes=room,
+            ))
+
+    # Ручки
+    handles = data.get("handles")
+    if isinstance(handles, dict) and handles.get("count", 0) > 0:
+        spec.items.append(SpecItem(
+            name=f"Ручка накладная {handles.get('model', '')}",
+            count=handles["count"],
+            unit="шт",
+            category="Ручки",
+            notes=room,
+        ))
+
+    # Подъёмники
+    lifts = data.get("lifts")
+    if isinstance(lifts, dict) and lifts.get("count", 0) > 0:
+        spec.items.append(SpecItem(
+            name=f"Подъёмник {lifts.get('type', 'DTC Top Stay')}",
+            count=lifts["count"],
+            unit="шт",
+            category="Подъёмники",
+            notes=room,
+        ))
+
+    # Штанги
+    rods = data.get("rods")
+    if isinstance(rods, dict):
+        if rods.get("round_count", 0) > 0:
+            spec.items.append(SpecItem(
+                name="Штанга круглая D25",
+                count=rods["round_count"],
+                unit="шт",
+                category="Штанги",
+                notes=room,
+            ))
+        if rods.get("rectangular_count", 0) > 0:
+            spec.items.append(SpecItem(
+                name="Штанга прямоугольная антискользящая 3000мм",
+                count=rods["rectangular_count"],
+                unit="шт",
+                category="Штанги",
+                notes=room,
+            ))
+
 
 def apply_spec_to_quantities(
     spec: Optional[ProjectSpec],
@@ -260,6 +343,29 @@ def apply_spec_to_quantities(
         elif "датчик" in item.name.lower():
             materials_qty.led_sensor += int(item.count)
             added += 1
+        elif "конфирмат" in item.name.lower():
+            materials_qty.confirmat_count += int(item.count)
+            added += 1
+        elif "регулируемая опора" in item.name.lower():
+            materials_qty.adjustable_feet += int(item.count)
+            added += 1
+        elif "настенный подвес" in item.name.lower():
+            materials_qty.wall_mounts += int(item.count)
+            added += 1
+        elif "ручка" in item.name.lower():
+            materials_qty.handles_count += int(item.count)
+            added += 1
+        elif "столешница" in item.name.lower():
+            materials_qty.countertop_length_m += float(item.count)
+            added += 1
+        elif "штанга" in item.name.lower() and "прямоуголь" in item.name.lower():
+            materials_qty.rods_rectangular_count += int(item.count)
+            added += 1
+        elif "штанга" in item.name.lower() and "кругл" in item.name.lower():
+            materials_qty.rods_round_count += int(item.count)
+            added += 1
+        elif "подъёмник" in item.name.lower():
+            added += 1  # подъёмники добавляются через hardware_calc
 
     if added > 0:
         logger.info(f"📋 Спецификация: +{added} позиций для «{room_name}»")

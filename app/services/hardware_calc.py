@@ -1,13 +1,16 @@
 """
-Расчёт фурнитуры (петли, ящики, направляющие).
+Расчёт фурнитуры (петли, ящики, направляющие, подъёмники, штанги).
 
 Правила расчёта петель (ЧАСТЬ 10):
-- высота < 900 мм → 2 петли
-- 900-1200 мм → 3 петли
-- 1200-1600 мм → 4 петли
-- > 1600 мм → 5 петель
+- Таблица высота×вес (Blum/Hettich)
+- ≤900мм: 2 петли (3 для >18кг)
+- ≤1600мм: 2-4 петли по весу
+- ≤2200мм: 3-5 петель по весу
+- ≤2700мм: 3-5 петель по весу
 
 Ящики: по бренду, типу, глубине направляющей = глубина_модуля - 50 мм
+Подъёмники: BLUM HF (складной), BLUM HK-XS (поворотный), DTC Top Stay
+Штанги: круглая D25, прямоугольная антискользящая
 """
 
 from typing import Dict, List, Optional
@@ -162,4 +165,126 @@ def calculate_hardware_for_modules(
     # Общая стоимость
     result.total_cost = round(hinges_data["cost"] + drawers_data["cost"], 2)
 
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ПОДЪЁМНИКИ ДЛЯ ВЕРХНИХ БАЗ
+# ═══════════════════════════════════════════════════════════════════
+
+# Цены подъёмников (₽/шт)
+LIFT_PRICES = {
+    "blum_hf": 14000,        # BLUM HF складной (премиум)
+    "blum_hk_xs": 3500,      # BLUM HK-XS поворотный (средний)
+    "dtc_top_stay": 2500,    # DTC Top Stay (эконом)
+}
+
+LIFT_NAMES = {
+    "blum_hf": "BLUM HF складной подъёмник",
+    "blum_hk_xs": "BLUM HK-XS поворотный подъёмник",
+    "dtc_top_stay": "DTC Top Stay подъёмник",
+}
+
+
+def calculate_lifts(
+    upper_module_count: int,
+    lift_type: str = "dtc_top_stay",
+    has_glass_facades: bool = False,
+) -> Dict:
+    """
+    Рассчитать подъёмники для верхних баз.
+
+    Правила:
+    - По 1 подъёмнику на каждую верхнюю базу с горизонтальным открытием
+    - Если фасады стеклянные/тяжёлые → премиум (BLUM HF)
+    - Если фасады МДФ → средний (BLUM HK-XS)
+    - Если фасады ЛДСП → эконом (DTC Top Stay)
+
+    Args:
+        upper_module_count: количество верхних баз
+        lift_type: "blum_hf" | "blum_hk_xs" | "dtc_top_stay"
+        has_glass_facades: есть ли стеклянные фасады
+    
+    Returns:
+        {"count": шт, "type": тип, "name": название, "price_per": цена, "total_cost": стоимость}
+    """
+    # Автовыбор типа подъёмника
+    if lift_type == "auto":
+        if has_glass_facades:
+            lift_type = "blum_hf"
+        else:
+            lift_type = "dtc_top_stay"  # эконом по умолчанию
+    
+    price_per = LIFT_PRICES.get(lift_type, LIFT_PRICES["dtc_top_stay"])
+    name = LIFT_NAMES.get(lift_type, LIFT_NAMES["dtc_top_stay"])
+    
+    return {
+        "count": upper_module_count,
+        "type": lift_type,
+        "name": name,
+        "price_per": price_per,
+        "total_cost": round(upper_module_count * price_per, 2),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ШТАНГИ ДЛЯ ГАРДЕРОБНЫХ / ПЕНАЛОВ
+# ═══════════════════════════════════════════════════════════════════
+
+ROD_PRICES = {
+    "round_d25": 407,              # Штанга круглая D25 (₽/шт)
+    "round_holder": 17,            # Держатель круглой штанги (₽/шт)
+    "rectangular_3000": 1700,      # Штанга прямоугольная 3000мм (₽/шт)
+    "rectangular_holder": 180,     # Держатель прямоугольной штанги (₽/шт)
+}
+
+
+def calculate_rods(
+    modules: List[Dict],
+) -> Dict:
+    """
+    Рассчитать штанги для гардеробных и пеналов.
+
+    Правила:
+    - Пенал с шириной ≥600мм → 1 прямоугольная штанга
+    - Каждая штанга = 1 шт. + 2 держателя
+    - Нижняя/верхняя база ≥600мм в гардеробной → 1 круглая штанга
+
+    Returns:
+        {
+            "round_count": шт,
+            "round_holders": шт,
+            "rectangular_count": шт,
+            "rectangular_holders": шт,
+            "total_cost": стоимость
+        }
+    """
+    round_count = 0
+    rectangular_count = 0
+    
+    for m in modules:
+        module_type = m.get("type", "")
+        width = m.get("width", 0)
+        qty = max(m.get("quantity", 1), 1)
+        
+        if module_type == "penal" and width >= 600:
+            rectangular_count += 1 * qty
+        elif module_type in ("lower_base", "upper_base") and width >= 600:
+            round_count += 1 * qty
+    
+    result = {
+        "round_count": round_count,
+        "round_holders": round_count * 2,
+        "rectangular_count": rectangular_count,
+        "rectangular_holders": rectangular_count * 2,
+    }
+    
+    result["total_cost"] = round(
+        round_count * ROD_PRICES["round_d25"] +
+        result["round_holders"] * ROD_PRICES["round_holder"] +
+        rectangular_count * ROD_PRICES["rectangular_3000"] +
+        result["rectangular_holders"] * ROD_PRICES["rectangular_holder"],
+        2
+    )
+    
     return result

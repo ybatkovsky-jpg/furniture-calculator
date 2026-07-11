@@ -527,16 +527,20 @@ def _calculate_quality(room: RoomSpec) -> float:
     """
     Рассчитать оценку качества распознавания для помещения.
     
-    Учитывает:
+    Версия 2.0 — расширенный чек-лист по промпту v4.0:
     - confidence от AI
-    - количество модулей (слишком мало — подозрительно)
-    - разнообразие размеров (все одного размера — возможно дубликат)
-    - наличие модулей вообще
+    - количество модулей
+    - разнообразие размеров
+    - наличие модулей
+    - типы модулей и их соответствие помещению
+    - проверка на угловые модули
+    - проверка на пеналы в кухне
     
     Returns: 0.0 (полный брак) .. 1.0 (идеально)
     """
     score = 1.0
     flags = []
+    room_lower = room.room_name.lower()
 
     # Confidence влияет наиболее сильно
     if room.confidence == "low":
@@ -554,36 +558,71 @@ def _calculate_quality(room: RoomSpec) -> float:
         room.quality_flags = flags
         return room.quality_score
 
-    # Подозрительно мало модулей для кухни
-    room_lower = room.room_name.lower()
+    # ── Чек-лист валидации (из промпта v4.0) ──
+
+    # 1. Все детали из чертежа учтены? — косвенно: смотрим на количество модулей
     is_kitchen = any(kw in room_lower for kw in ["кухн", "гарнитур", "остров"])
+    is_wardrobe = any(kw in room_lower for kw in ["гардероб", "шкаф", "прихож"])
+
     if is_kitchen and len(room.modules) < 2:
         score -= 0.2
-        flags.append("Слишком мало модулей для кухни")
+        flags.append("⚠ Слишком мало модулей для кухни (ожидается ≥4)")
     elif is_kitchen and len(room.modules) < 4:
         score -= 0.1
-        flags.append("Мало модулей для кухни (ожидается ≥4)")
+        flags.append("⚠ Мало модулей для кухни (ожидается ≥4)")
 
-    # Для гардеробной/шкафа тоже проверяем
-    is_wardrobe = any(kw in room_lower for kw in ["гардероб", "шкаф", "прихож"])
     if is_wardrobe and len(room.modules) < 1:
         score -= 0.15
-        flags.append("Модули не найдены для шкафа/гардеробной")
+        flags.append("⚠ Модули не найдены для шкафа/гардеробной")
 
-    # Все модули одинакового размера — подозрительно (возможно дубликат)
+    # 2. Кромка правильно распределена? — проверяем типы модулей
+    module_types = set(m.type for m in room.modules)
+    if "corner" in module_types:
+        corners = [m for m in room.modules if m.type == "corner"]
+        non_square = [c for c in corners if c.width != c.depth]
+        if non_square:
+            score -= 0.15
+            flags.append(f"⚠ Найдены неквадратные угловые модули: {len(non_square)} шт.")
+
+    # 3. Все модули одного размера — подозрительно (возможно дубликат)
     if len(room.modules) >= 3:
-        unique_sizes = set(
-            (m.width, m.depth, m.height) for m in room.modules
-        )
+        unique_sizes = set((m.width, m.depth, m.height) for m in room.modules)
         if len(unique_sizes) == 1:
             score -= 0.15
-            flags.append("Все модули одного размера — возможно дубликат")
+            flags.append("⚠ Все модули одного размера — возможно дубликат")
 
-    # Проверка: есть ли модули с нулевыми размерами (не должны были пройти валидацию)
+    # 4. Проверка: есть ли модули с нулевыми размерами
     zero_sized = [m for m in room.modules if m.width <= 0 or m.depth <= 0 or m.height <= 0]
     if zero_sized:
         score -= 0.3
-        flags.append(f"Найдены модули с нулевыми размерами: {len(zero_sized)} шт.")
+        flags.append(f"⚠ Найдены модули с нулевыми размерами: {len(zero_sized)} шт.")
+
+    # 5. Проверка на пеналы в кухне (должны быть высокими)
+    penals = [m for m in room.modules if m.type == "penal"]
+    if penals:
+        short_penals = [p for p in penals if p.height < 1500]
+        if short_penals:
+            score -= 0.1
+            flags.append(f"⚠ Подозрительно низкие пеналы (<1500мм): {len(short_penals)} шт.")
+
+    # 6. Проверка на верхние базы в кухне (глубина должна быть 280-350мм)
+    upper_bases = [m for m in room.modules if m.type == "upper_base"]
+    if upper_bases:
+        wrong_depth = [u for u in upper_bases if u.depth > 400]
+        if wrong_depth:
+            score -= 0.1
+            flags.append(f"⚠ Подозрительная глубина верхних баз (>400мм): {len(wrong_depth)} шт.")
+
+    # 7. Проверка материалов: если заявлены EMDIWAY/фасады — должен быть фасадный материал
+    if room.materials:
+        has_facade_material = any(
+            kw in " ".join(room.materials).upper()
+            for kw in ["EMDIWAY", "ФАСАД", "МДФ", "IVEGO", "ЛАКОКРАСКА", "ПВХ"]
+        )
+        has_facades = any(m.facades and m.facades.get("count", 0) > 0 for m in room.modules)
+        if has_facade_material and not has_facades:
+            score -= 0.05
+            flags.append("⚠ Заявлен фасадный материал, но фасады не обнаружены")
 
     room.quality_score = max(0, min(1, score))
     room.quality_flags = flags

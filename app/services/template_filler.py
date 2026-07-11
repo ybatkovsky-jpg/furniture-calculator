@@ -124,6 +124,24 @@ def _get_default_mapping() -> List[Tuple[List[str], str, str, float]]:
 
     # ── Стекло ──
     # Зеркало и стекло будут на отдельном листе «РАСЧЕТ ЗЕРКАЛ»
+
+    # ── НОВЫЕ ПОЗИЦИИ (v2.0) ──
+    (["Столешница", "постформинг"], "countertop_length_m", "м", 1.0),
+    (["Столешница", "искусственный камень"], "countertop_length_m", "м", 1.0),
+    (["Конфирмат", "7×50"], "confirmat_count", "шт", 1.0),
+    (["Регулируемая опора"], "adjustable_feet", "шт", 1.0),
+    (["Настенный подвес"], "wall_mounts", "шт", 1.0),
+    (["Цоколь ПВХ", "Rehau"], "plinth_strips", "шт", 1.0),
+    (["Штанга круглая", "D25"], "rods_round", "шт", 1.0),
+    (["Штанга прямоугольная", "антискользящая"], "rods_rectangular", "шт", 1.0),
+    (["Ручка накладная"], "handles_count", "шт", 1.0),
+    (["Плёнка ПВХ", "IVEGO"], "pvc_film_m2", "м²", 1.0),
+    (["Кромка МДФ", "1*22"], "edge_mdf_1mm_m", "м.п.", 1.0),
+    (["EVO 1*22"], "edge_mdf_1mm_m", "м.п.", 1.0),
+    (["AGT 1*22"], "edge_mdf_1mm_m", "м.п.", 1.0),
+    (["EMDIWEY"], "edge_mdf_1mm_m", "м.п.", 1.0),
+    (["ETERNO", "1*22"], "edge_mdf_1mm_m", "м.п.", 1.0),
+    (["SM`ART", "1*23"], "edge_mdf_1mm_m", "м.п.", 1.0),
     ]
 
 
@@ -198,11 +216,25 @@ def _build_quantity_map(
     mat_props = detect_material_properties(materials)
     is_texture = mat_props["surface"] == "texture"
 
-    # ЛДСП
-    if is_texture:
-        m["ldsp_sheets_texture"] = q.ldsp_sheets
-    else:
-        m["ldsp_sheets_plain"] = q.ldsp_sheets
+    # ЛДСП — распределяем по бренду и текстуре
+    if q.ldsp_sheets > 0:
+        brand = q.ldsp_brand or mat_props.get("brand", "EGGER")
+        if is_texture:
+            if brand == "EXTRAVERT":
+                m["ldsp_sheets_texture_extravert"] = q.ldsp_sheets
+            elif brand == "LAMARTY":
+                m["ldsp_sheets_texture_lamarty"] = q.ldsp_sheets
+            else:
+                m["ldsp_sheets_texture"] = q.ldsp_sheets
+        else:
+            if brand == "EXTRAVERT":
+                m["ldsp_sheets_plain_extravert"] = q.ldsp_sheets
+            elif brand == "LAMARTY":
+                m["ldsp_sheets_plain_lamarty"] = q.ldsp_sheets
+            elif brand == "ТОМЛЕСДРЕВ":
+                m["ldsp_sheets_tomlesdrev"] = q.ldsp_sheets
+            else:
+                m["ldsp_sheets_plain"] = q.ldsp_sheets
 
     # МДФ — только для крашеных/лакокраска фасадов (ПВХ и EMDIWAY — готовые, МДФ включён)
     if q.mdf_sheets > 0:
@@ -275,6 +307,44 @@ def _build_quantity_map(
         m["bottle_holder_150"] = q.bottle_holder_count
     if q.cutlery_tray_count > 0:
         m["cutlery_tray"] = q.cutlery_tray_count
+
+    # ── НОВЫЕ ПОЛЯ (v2.0) ──
+
+    # Столешница
+    if q.countertop_length_m > 0:
+        m["countertop_length_m"] = round(q.countertop_length_m, 1)
+
+    # Крепёж
+    if q.confirmat_count > 0:
+        m["confirmat_count"] = q.confirmat_count
+    if q.adjustable_feet > 0:
+        m["adjustable_feet"] = q.adjustable_feet
+    if q.wall_mounts > 0:
+        m["wall_mounts"] = q.wall_mounts
+    if q.plinth_strips > 0:
+        m["plinth_strips"] = q.plinth_strips
+
+    # Штанги
+    if q.rods_round_count > 0:
+        m["rods_round"] = q.rods_round_count
+    if q.rods_rectangular_count > 0:
+        m["rods_rectangular"] = q.rods_rectangular_count
+
+    # Ручки
+    if q.handles_count > 0:
+        m["handles_count"] = q.handles_count
+
+    # Плёнка ПВХ
+    if q.pvc_film_m2 > 0:
+        m["pvc_film_m2"] = round(q.pvc_film_m2, 1)
+
+    # Кромка МДФ
+    if q.edge_mdf_1mm_m > 0:
+        m["edge_mdf_1mm_m"] = q.edge_mdf_1mm_m
+
+    # Бренд ЛДСП (для выбора правильного размера листа)
+    if q.ldsp_brand:
+        m["ldsp_brand"] = q.ldsp_brand
 
     return m
 

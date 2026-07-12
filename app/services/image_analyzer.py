@@ -443,21 +443,14 @@ class GeminiImageAnalyzer:
     """
     Анализатор изображений чертежей через Vision LLM.
 
-    Провайдеры (по порядку):
-    1. Z.ai GLM-5V-Turbo — основной, быстрый, дешёвый
-    2. RouterAI.ru GLM-4.6V — быстрый fallback (через ru-агрегатор)
-    3. RouterAI.ru Qwen3-VL-32B — ансамбль / кросс-валидация (SpatialBench SOTA)
-    4. RouterAI.ru Gemini 2.5 Flash Lite — последний рубеж
+    Провайдеры:
+    1. RouterAI.ru Qwen3-VL-235B — основной (bbox + типы модулей)
+    2. Z.ai GLM-5V-Turbo — fallback (быстрый, дешёвый)
     """
 
-    FALLBACK_CHAIN = [
-        # Быстрый fallback — GLM-4.6V через RouterAI.ru (30₽/1M вход)
-        ("z-ai/glm-4.6v", "routerai"),
-        # Qwen3-VL-32B — лучший spatial reasoning, открытая модель (10₽/1M вход)
-        ("qwen/qwen3-vl-32b-instruct", "routerai"),
-        # Gemini 2.5 Flash Lite — последний рубеж (10₽/1M вход)
-        ("google/gemini-2.5-flash-lite", "routerai"),
-    ]
+    # Конфигурация моделей (см. config/models.yaml)
+    PRIMARY_MODEL = "qwen/qwen3-vl-235b-a22b-thinking"
+    FALLBACK_MODEL = "glm-5v-turbo"
 
     def __init__(self):
         """Инициализация HTTP клиента."""
@@ -495,99 +488,41 @@ class GeminiImageAnalyzer:
     async def analyze_drawing(
         self,
         image_path: str | Path,
-        max_retries: int = 4
+        model: Optional[str] = None,
     ) -> RecognitionResult:
         """
-        Распознать модули мебели на чертеже.
-        
-        Стратегия:
-        1. Основная модель → если high confidence и >0 модулей → готово
-        2. Если medium/low confidence → запрос второй модели (ансамбль)
-        3. Сравнение: высокая сходимость → confidence ↑
-        4. Если основная не дала модулей → цепочка fallback
+        Простой модульный анализ (одна модель, без ансамбля и цепочек).
+
+        Используется как fallback, если analyze_page() не дал модулей.
+        По умолчанию — FALLBACK_MODEL (glm-5v-turbo через Z.ai).
         """
-        # Строим цепочку: основная модель + fallback
-        models_to_try = [(self.primary_model, self._detect_provider(self.primary_model))]
-        for model, provider in self.FALLBACK_CHAIN:
-            if model != self.primary_model:
-                models_to_try.append((model, provider))
+        model = model or self.FALLBACK_MODEL
+        provider = self._detect_provider(model)
 
-        last_error = None
+        logger.info(f"🔄 Fallback: {model} ({provider})")
 
-        # ── Попытка 1: основная модель ──
         try:
-            logger.info(f"🎯 Основная модель: {self.primary_model}")
-            result1 = await self._try_analyze(image_path, self.primary_model,
-                                              self._detect_provider(self.primary_model))
-            result1.model_used = self.primary_model
+            result = await self._try_analyze(image_path, model, provider)
+            result.model_used = model
 
-            if result1.modules:
+            if result.modules:
                 logger.info(
-                    f"✅ Primary: {len(result1.modules)} modules, "
-                    f"confidence={result1.confidence}"
+                    f"✅ Fallback: {len(result.modules)} modules, "
+                    f"confidence={result.confidence}"
                 )
-
-                # Высокая/средняя уверенность → сразу возвращаем (без ансамбля)
-                if result1.confidence in ("high", "medium") and len(result1.modules) >= 2:
-                    return result1
-
-                # Только низкая уверенность → АНСАМБЛЬ (вторая модель)
-                if len(models_to_try) > 1:
-                    logger.info("🔄 Ансамбль: запрос второй модели для кросс-валидации...")
-                    fallback_model, fallback_provider = models_to_try[1]
-                    try:
-                        result2 = await self._try_analyze(image_path, fallback_model, fallback_provider)
-                        result2.model_used = fallback_model
-
-                        if result2.modules:
-                            result1 = self._ensemble_merge(result1, result2)
-                            logger.info(
-                                f"🎯 Ансамбль: confidence={result1.confidence}, "
-                                f"modules={len(result1.modules)}"
-                            )
-                    except Exception as e:
-                        logger.warning(f"Ансамбль не удался: {e}")
-
-                return result1
             else:
-                logger.warning(f"Основная модель вернула пустой результат")
+                logger.warning(f"Fallback {model} вернул пустой результат")
+
+            return result
 
         except Exception as e:
-            last_error = e
-            logger.error(f"Ошибка основной модели: {type(e).__name__}: {e}")
-
-        # ── Попытки 2+: fallback-цепочка (если основная не дала модулей) ──
-        for attempt, (model, provider) in enumerate(models_to_try[1:max_retries], start=2):
-            try:
-                logger.info(f"Попытка #{attempt}: {model} ({provider})")
-                result = await self._try_analyze(image_path, model, provider)
-
-                if result.modules and len(result.modules) > 0:
-                    result.model_used = model
-                    logger.info(
-                        f"✅ Fallback success: model={model}, modules={len(result.modules)}, "
-                        f"confidence={result.confidence}"
-                    )
-                    return result
-                else:
-                    logger.warning(f"Модель {model} вернула пустой результат")
-
-            except Exception as e:
-                last_error = e
-                logger.error(f"Ошибка {model}: {type(e).__name__}: {e}")
-                if attempt < min(len(models_to_try), max_retries):
-                    delay = 2 * (attempt - 1)
-                    logger.info(f"Ожидание {delay}с...")
-                    time.sleep(delay)
-
-        logger.error(f"Все попытки не удались. Последняя ошибка: {last_error}")
-        return RecognitionResult(
-            modules=[],
-            confidence="low",
-            notes=f"Не удалось распознать после {max_retries} попыток. "
-                  f"Попробуйте другой ракурс или введите модули вручную.",
-            model_used=None,
-        )
+            logger.error(f"Fallback {model} error: {type(e).__name__}: {e}")
+            return RecognitionResult(
+                modules=[],
+                confidence="low",
+                notes=f"Fallback не удался: {e}",
+                model_used=model,
+            )
 
     # -----------------------------------------------------------
     # ФАСАДНЫЙ МЕТОД — основной с 2026-07 (Qwen3-VL-235B-Thinking)
@@ -1354,87 +1289,6 @@ class GeminiImageAnalyzer:
             materials_mentioned=result.materials_mentioned,
         )
 
-    def _ensemble_merge(
-        self,
-        result1: RecognitionResult,
-        result2: RecognitionResult,
-    ) -> RecognitionResult:
-        """
-        Сравнить результаты двух моделей и объединить.
-
-        Логика:
-        - Сравниваем модули по типу и близости размеров (width ±50мм, depth ±20мм)
-        - Совпадение ≥70% → confidence "high"
-        - Совпадение 40-70% → confidence "medium"
-        - Совпадение <40% → confidence "low", добавляем предупреждение
-        - Модули из result2, которых нет в result1 — добавляем с пометкой
-        """
-        mods1 = result1.modules
-        mods2 = result2.modules
-
-        if not mods2:
-            return result1
-
-        # Ищем совпадения
-        matched_2 = set()  # индексы модулей из result2, которые совпали
-        new_from_2 = []    # модули из result2, которых нет в result1
-
-        for i2, m2 in enumerate(mods2):
-            found = False
-            for m1 in mods1:
-                if (m1.type == m2.type
-                    and abs(m1.width - m2.width) <= 50
-                    and abs(m1.depth - m2.depth) <= 20):
-                    found = True
-                    break
-            if found:
-                matched_2.add(i2)
-            else:
-                new_from_2.append(m2)
-
-        # Считаем overlap (относительно result1)
-        match_count = len(matched_2)
-        overlap = match_count / max(len(mods1), 1)
-
-        # Определяем confidence и заметки
-        if overlap >= 0.7:
-            new_confidence = "high"
-            ensemble_note = f" [Ансамбль: сходимость {overlap:.0%} — высокая]"
-        elif overlap >= 0.4:
-            new_confidence = "medium"
-            ensemble_note = f" [Ансамбль: сходимость {overlap:.0%} — средняя]"
-        else:
-            new_confidence = "low"
-            ensemble_note = f" [Ансамбль: модели расходятся ({overlap:.0%}) — нужна проверка!]"
-
-        # Добавляем модули из второй модели, которых нет в первой
-        if new_from_2:
-            logger.info(
-                f"Ансамбль: +{len(new_from_2)} модулей из второй модели: "
-                f"{[f'{m.type} {m.width}×{m.depth}×{m.height}' for m in new_from_2]}"
-            )
-            result1.modules.extend(new_from_2)
-            ensemble_note += f" +{len(new_from_2)} доп. модулей от {result2.model_used}"
-
-        result1.confidence = new_confidence
-        result1.notes = (result1.notes or "") + ensemble_note
-
-        # Материалы: объединяем без дубликатов
-        combined_materials = list(dict.fromkeys(
-            result1.materials_mentioned + result2.materials_mentioned
-        ))
-        result1.materials_mentioned = combined_materials
-
-        # Zone_type: если у result1 нет — берём из result2
-        if not result1.zone_type and result2.zone_type:
-            result1.zone_type = result2.zone_type
-
-        return result1
-
-
-# ================================================================
-# КОНВЕРТЕР: Фасады → RecognizedModule (для quantity_calc)
-# ================================================================
 
 def facades_to_modules(
     facades: List[FacadeData],

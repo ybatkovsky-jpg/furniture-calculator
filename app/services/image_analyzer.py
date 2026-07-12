@@ -230,6 +230,107 @@ SCALE_PX_PROMPT = """Ты — конструктор-технолог мебел
 
 
 # ================================================================
+# ЕДИНЫЙ ПРОМПТ v2 (2026-07-12)
+# Объединяет bbox-проценты + типы модулей + материалы в одном запросе.
+# Модель читает ОДНО число (total_width_mm) с размерной линии,
+# Python вычисляет точные мм через scale_calc.
+# ================================================================
+
+UNIFIED_PROMPT_V2 = """Ты — конструктор-технолог мебельной фабрики. Проанализируй чертёж корпусной мебели и верни структурированный JSON.
+
+===== ЗАДАЧА 1: РАЗМЕРНАЯ ЛИНИЯ (total_width_mm) =====
+Найди на чертеже размерную линию над рядом нижних шкафов. Это горизонтальная линия со СТРЕЛКАМИ на концах (← →) и одним числом. Она охватывает ВСЕ нижние модули от левого края до правого.
+
+ПРОВЕРЬ СЕБЯ:
+- Число должно быть >1000мм и <8000мм
+- Если число <1000 — это размер отдельного шкафа, ищи линию над ВСЕМ рядом
+- Если видишь несколько размерных линий — бери ту, что ДЛИННЕЕ всех
+- Типичные значения: 1800, 2400, 3000, 3600, 4200
+- Если размерная линия не читается — укажи total_width_mm=0
+
+===== ЗАДАЧА 2: BBOX ФАСАДОВ (facades) =====
+Для КАЖДОГО видимого фасада (дверцы) укажи:
+- zone: "lower" | "upper" | "penal"
+- bbox_x_pct: позиция ЛЕВОГО края в % от ширины ИЗОБРАЖЕНИЯ (0-100)
+- bbox_w_pct: ШИРИНА фасада в % от ширины ИЗОБРАЖЕНИЯ (0-100)
+- is_corner: true ТОЛЬКО для углового фасада (обычно шире остальных)
+
+ВАЖНО для bbox:
+- Оценивай проценты с точностью до 1% (не округляй до 5% или 10%)
+- Сумма bbox_w_pct всех НИЖНИХ фасадов ≈ их реальной доле на изображении
+- Пеналы НЕ включай в сумму нижних (они отдельно, с краю)
+- Планки-заполнители (40-80мм) НЕ учитывай — это не фасады
+
+===== ЗАДАЧА 3: МОДУЛИ (modules) =====
+Сгруппируй фасады в модули. ОДИН физический корпус = ОДИН модуль.
+
+ТИПЫ МОДУЛЕЙ:
+- lower_base: на полу, H=700-900, D=500-600
+- upper_base: навесной, H=600-1000, D=280-350
+- penal: высокий шкаф H=1800-2800, всегда С КРАЮ
+- corner: УГЛОВОЙ, ВСЕГДА квадратный width=depth
+
+УСЛОВНЫЕ ОБОЗНАЧЕНИЯ:
+★ Пунктирный треугольник на дверце = направление открывания. Это одна дверца.
+★ Горизонтальная линия внутри нижней базы = ящики. Укажи drawers.count.
+★ Вертикальная линия ТОЛЬКО в зоне фасада = стык двух дверей. facades.count=2, ОДИН модуль.
+★ Вертикальная линия через ВЕСЬ корпус до пола = граница РАЗНЫХ модулей.
+★ Штриховка/сетка на фасаде = стекло → has_glass=true.
+
+ЗАЩИТА ОТ ОШИБОК (если размер не читается — бери СТАНДАРТ):
+| Параметр          | Мин   | Макс  | Стандарт |
+|-------------------|-------|-------|----------|
+| Ширина модуля     | 250   | 1200  | 600      |
+| Глубина lower     | 500   | 600   | 560      |
+| Глубина upper     | 280   | 350   | 320      |
+| Высота lower_base | 700   | 900   | 820      |
+| Высота upper_base | 600   | 1000  | 720      |
+| Высота penal      | 1800  | 2800  | 2500     |
+| total_width_mm    | 1200  | 6000  | 0=не найден |
+| Модуль уже 150мм  | —     | —     | Это дверца, не модуль |
+| Угловой W≠D       | —     | —     | Это НЕ угловой → lower_base |
+
+===== ПРИМЕР 1: прямая кухня (3 нижних + 2 верхних) =====
+{"zone_type":"Кухня","materials":["EGGER H1379"],"total_width_mm":3000,
+ "facades":[
+   {"zone":"lower","bbox_x_pct":5,"bbox_w_pct":20,"is_corner":false},
+   {"zone":"lower","bbox_x_pct":25,"bbox_w_pct":20,"is_corner":false},
+   {"zone":"lower","bbox_x_pct":45,"bbox_w_pct":20,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":5,"bbox_w_pct":20,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":25,"bbox_w_pct":20,"is_corner":false}
+ ],
+ "modules":[
+   {"type":"lower_base","width":600,"depth":560,"height":820,"quantity":3,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":0},"shelves":1,"is_corner":false},
+   {"type":"upper_base","width":600,"depth":320,"height":720,"quantity":2,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":0},"shelves":1,"is_corner":false}
+ ],
+ "confidence":"high","notes":""}
+
+===== ПРИМЕР 2: угловая кухня с пеналом =====
+{"zone_type":"Кухня","materials":["EGGER H3158","МДФ матовый"],"total_width_mm":3300,
+ "facades":[
+   {"zone":"lower","bbox_x_pct":3,"bbox_w_pct":27,"is_corner":true},
+   {"zone":"lower","bbox_x_pct":30,"bbox_w_pct":18,"is_corner":false},
+   {"zone":"lower","bbox_x_pct":48,"bbox_w_pct":18,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":30,"bbox_w_pct":18,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":48,"bbox_w_pct":18,"is_corner":false},
+   {"zone":"penal","bbox_x_pct":70,"bbox_w_pct":18,"is_corner":false}
+ ],
+ "modules":[
+   {"type":"corner","width":900,"depth":900,"height":820,"quantity":1,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":0},"shelves":0,"is_corner":true},
+   {"type":"lower_base","width":600,"depth":560,"height":820,"quantity":2,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":1},"shelves":1,"is_corner":false},
+   {"type":"upper_base","width":600,"depth":320,"height":720,"quantity":2,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":0},"shelves":1,"is_corner":false},
+   {"type":"penal","width":600,"depth":560,"height":2500,"quantity":1,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":0},"shelves":0,"is_corner":false}
+ ],
+ "confidence":"high","notes":""}
+
+ОПРЕДЕЛИ ЗОНУ (строго одно из): Кухня, Гостиная, Спальня, Детская, Прихожая, Ванная, Гардеробная, Кабинет, Балкон, Столовая, Постирочная.
+
+Верни ТОЛЬКО валидный JSON с полями: zone_type, materials, total_width_mm, facades, modules, confidence, notes.
+
+confidence: "high" если размерная линия прочитана; "medium" если часть размеров оценена; "low" если много предположений или чертёж нестандартный."""
+
+
+# ================================================================
 # ВАЛИДАЦИЯ РАЗМЕРОВ
 # ================================================================
 
@@ -688,8 +789,11 @@ class GeminiImageAnalyzer:
             )
 
             if total_width_mm <= 0:
-                logger.warning("Габарит не найден — используем стандартные размеры")
-                total_width_mm = 3000
+                logger.warning(
+                    "Габарит не найден — масштабный анализ невозможен, "
+                    "переходим к фасадному/модульному методу"
+                )
+                return [], None, []
 
             # Считаем размеры через scale_calc
             facades = calculate_scaled_facades(facades_data, total_width_mm)
@@ -699,6 +803,227 @@ class GeminiImageAnalyzer:
         except Exception as e:
             logger.error(f"Масштабный анализ не удался: {e}")
             return [], None, []
+
+    # -----------------------------------------------------------
+    # ЕДИНЫЙ АНАЛИЗ СТРАНИЦЫ (v2 — основной метод с 2026-07-12)
+    # Один вызов qwen3-vl-235b: bbox + типы модулей + материалы
+    # -----------------------------------------------------------
+
+    async def analyze_page(
+        self,
+        image_path: str | Path,
+    ) -> Tuple[List[RecognizedModule], Optional[str], List[str], str]:
+        """
+        Единый анализ страницы чертежа.
+
+        1. Qwen3-VL-235B с UNIFIED_PROMPT_V2:
+           - bbox фасадов в процентах + total_width_mm с размерной линии
+           - типы модулей, фасады, ящики, стекло, материалы
+        2. Если total_width_mm > 0 → scale_calc → точные мм
+        3. Слияние: точные размеры из bbox + метаданные из modules
+
+        Returns:
+            (modules, zone_type, materials, confidence)
+        """
+        MODEL = "qwen/qwen3-vl-235b-a22b-thinking"
+
+        logger.info(f"🎯 Единый анализ: {MODEL}")
+
+        try:
+            client = await self._get_client()
+
+            # Предобработка изображения
+            image = Image.open(image_path)
+            from PIL import ImageEnhance, ImageFilter
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(1.3)
+            image = image.filter(ImageFilter.SHARPEN)
+            max_size = 1536
+            if image.width > max_size or image.height > max_size:
+                ratio = min(max_size / image.width, max_size / image.height)
+                image = image.resize(
+                    (int(image.width * ratio), int(image.height * ratio)),
+                    Image.Resampling.LANCZOS
+                )
+
+            buffer = io.BytesIO()
+            image.save(buffer, format='JPEG', quality=85)
+            image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": UNIFIED_PROMPT_V2},
+                    {"type": "image_url", "image_url": {
+                        "url": f"data:image/jpeg;base64,{image_base64}"
+                    }}
+                ]
+            }]
+
+            headers = {
+                "Authorization": f"Bearer {self.routerai_key}",
+                "Content-Type": "application/json",
+            }
+
+            body = {
+                "model": MODEL,
+                "messages": messages,
+                "temperature": 0.0,
+                "max_tokens": 8000,
+                "response_format": {"type": "json_object"},
+            }
+
+            url = self._get_api_url("routerai", MODEL)
+            response = await client.post(url, headers=headers, json=body)
+            response.raise_for_status()
+            response_data = response.json()
+
+            msg = response_data["choices"][0]["message"]
+            response_text = msg.get("content", "") or ""
+
+            # Парсим JSON
+            cleaned = self._extract_json(response_text)
+            data = json.loads(cleaned)
+
+            total_width_mm = data.get("total_width_mm", 0)
+            facades_data = data.get("facades", [])
+            modules_data = data.get("modules", [])
+            zone_type = data.get("zone_type")
+            materials = data.get("materials", [])
+            confidence = data.get("confidence", "medium")
+
+            logger.info(
+                f"📐 Единый: габарит={total_width_mm}мм, "
+                f"фасадов={len(facades_data)}, модулей={len(modules_data)}, "
+                f"confidence={confidence}"
+            )
+
+            # Если есть и габарит, и bbox-данные → точные размеры через scale_calc
+            scaled_facades = []
+            if total_width_mm > 0 and facades_data:
+                scaled_facades = calculate_scaled_facades(facades_data, total_width_mm)
+                logger.info(
+                    f"📏 Масштаб: {len(scaled_facades)} фасадов с вычисленными размерами"
+                )
+            elif total_width_mm <= 0:
+                logger.warning("Габарит не найден — используем стандартные размеры из modules")
+
+            # Собираем RecognizedModule
+            modules = self._build_modules(
+                modules_data=modules_data,
+                scaled_facades=scaled_facades,
+                facades_data=facades_data,
+            )
+
+            return modules, zone_type, materials, confidence
+
+        except Exception as e:
+            logger.error(f"Единый анализ не удался: {type(e).__name__}: {e}")
+            return [], None, [], "low"
+
+    def _build_modules(
+        self,
+        modules_data: List[Dict],
+        scaled_facades: List,
+        facades_data: List[Dict],
+    ) -> List[RecognizedModule]:
+        """
+        Собрать RecognizedModule из ответа модели.
+
+        Приоритет размеров:
+        1. bbox-вычисленные (scaled_facades) — самые точные
+        2. Из modules (прямое чтение моделью) — если нет bbox
+        3. Стандартные — если ни один источник не дал валидных размеров
+        """
+        modules = []
+
+        # Индекс bbox-размеров по zone для быстрого поиска
+        scaled_by_zone = {}
+        for sf in scaled_facades:
+            scaled_by_zone.setdefault(sf.zone, []).append(sf)
+
+        # Индекс процентов (если scaled не вычислился)
+        pct_by_zone = {}
+        for fd in facades_data:
+            pct_by_zone.setdefault(fd.get("zone", "lower"), []).append(fd)
+
+        # Стандартные размеры по zone_type (пока кухонные, будет расширено в Этапе 4)
+        DEFAULT_DIMS = {
+            "lower": {"depth": 560, "height": 820},
+            "upper": {"depth": 320, "height": 720},
+            "penal": {"depth": 560, "height": 2500},
+            "corner": {"depth": 900, "height": 820},
+        }
+
+        # Собираем модули из modules_data — берём метаданные, размеры из bbox
+        zone_idx = {"lower": 0, "upper": 0, "penal": 0, "corner": 0}
+
+        for md in modules_data:
+            try:
+                m_type = md.get("type", "lower_base")
+                zone = m_type if m_type in ("corner",) else (
+                    "penal" if m_type == "penal" else
+                    "upper" if m_type == "upper_base" else "lower"
+                )
+
+                # Размеры: приоритет у bbox, иначе из modules, иначе стандарт
+                defaults = DEFAULT_DIMS.get(zone, DEFAULT_DIMS["lower"])
+
+                width = int(md.get("width", 0))
+                depth = int(md.get("depth", 0)) or defaults["depth"]
+                height = int(md.get("height", 0)) or defaults["height"]
+
+                # Если есть bbox-размеры для этой zone — используем их
+                sf_list = scaled_by_zone.get(zone, [])
+                idx = zone_idx.get(zone, 0)
+                if sf_list and idx < len(sf_list):
+                    sf = sf_list[idx]
+                    width = sf.width_mm
+                    if sf.height_mm and sf.height_mm > 0:
+                        height = sf.height_mm
+                    zone_idx[zone] = idx + 1
+                    logger.debug(
+                        f"  {m_type}: bbox {width}×{height} (вместо {md.get('width',0)}×{md.get('height',0)})"
+                    )
+                elif width <= 0:
+                    width = defaults.get("std_w", 600)
+
+                # Валидация
+                if width < 250 or width > 1200:
+                    width = 600
+
+                is_corner = (
+                    m_type == "corner"
+                    or md.get("is_corner", False)
+                    or (m_type == "lower_base" and width == depth and width in (600, 900, 1000))
+                )
+
+                module = RecognizedModule(
+                    type="corner" if is_corner else m_type,
+                    width=width,
+                    depth=depth if not is_corner else width,  # corner: depth=width
+                    height=height,
+                    quantity=md.get("quantity", 1),
+                    has_glass=md.get("has_glass", False),
+                    facades=md.get("facades"),
+                    drawers=md.get("drawers"),
+                    shelves=md.get("shelves", 0),
+                    is_corner=is_corner,
+                )
+
+                # Валидация размеров
+                is_valid, reason = _validate_module(module)
+                if not is_valid:
+                    logger.warning(f"⚠️ Пропущен модуль: {reason}, data={md}")
+                    continue
+
+                modules.append(module)
+
+            except Exception as e:
+                logger.warning(f"Ошибка сборки модуля: {e}, data={md}")
+                continue
+
+        return modules
 
     # -----------------------------------------------------------
     # ОДНА ПОПЫТКА (модульный метод)

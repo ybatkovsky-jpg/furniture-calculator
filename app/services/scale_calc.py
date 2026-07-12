@@ -67,8 +67,8 @@ def calculate_scaled_facades(
 
     total_pct = sum(f.get("bbox_w_pct", 0) for f in lower_facades)
     if total_pct <= 0 or total_width_mm <= 0:
-        logger.warning("Недостаточно данных для масштаба — используем стандартные размеры")
-        scale = 600 / 20  # условно: 600мм = 20%
+        logger.warning("Недостаточно данных для масштаба — масштабный анализ невозможен")
+        return []
     else:
         scale = total_width_mm / total_pct  # мм на 1% ширины изображения
     logger.info(f"Масштаб: {total_width_mm}мм / {total_pct:.1f}% = {scale:.1f} мм/%")

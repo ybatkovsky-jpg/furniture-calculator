@@ -286,11 +286,10 @@ class FullPipeline:
         total_pages: int,
     ):
         """
-        Обработать одну страницу: рендеринг → Масштаб → Фасады → Модули (fallback).
+        Обработать одну страницу: рендеринг → Единый анализ → Fallback.
 
-        1. analyze_facades_scaled (bbox + масштаб = точные мм)
-        2. analyze_facades (фасады со стандартными размерами)
-        3. analyze_drawing (модульный подход)
+        1. analyze_page (Qwen3-VL-235B + unified prompt: bbox + модули + материалы)
+        2. Если 0 модулей → fallback: analyze_drawing (GLM-5V-Turbo)
         """
         logger.info(f"  ▶ Стр. {page_num + 1}/{total_pages}...")
 
@@ -301,42 +300,23 @@ class FullPipeline:
             tmp_path = tmp.name
 
         try:
-            # ── 1. Масштабный фасадный анализ (bbox → точные мм) ──
-            scaled_facades, zone_type, materials = await self.vision.analyze_facades_scaled(tmp_path)
+            # ── 1. Единый анализ (bbox + модули) ──
+            modules, zone_type, materials, confidence = await self.vision.analyze_page(tmp_path)
 
-            if scaled_facades:
-                from app.services.image_analyzer import RecognizedModule
-                modules = _scaled_facades_to_modules(scaled_facades)
+            if modules:
                 logger.info(
-                    f"    ✅ Стр.{page_num + 1} (масштаб): "
-                    f"{len(scaled_facades)} фасадов → {len(modules)} модулей"
+                    f"    ✅ Стр.{page_num + 1} (единый): "
+                    f"{len(modules)} модулей, confidence={confidence}"
                 )
                 return RecognitionResult(
                     modules=modules,
-                    confidence="high",
+                    confidence=confidence,
                     zone_type=zone_type,
                     materials_mentioned=materials or [],
                 )
 
-            # ── 2. Фасадный анализ (стандартные размеры) ──
-            facade_result = await self.vision.analyze_facades(tmp_path)
-            if facade_result.facades:
-                from app.services.image_analyzer import facades_to_modules
-                modules = facades_to_modules(facade_result.facades, zone_type=facade_result.zone_type)
-                logger.info(
-                    f"    ✅ Стр.{page_num + 1} (фасады): "
-                    f"{len(facade_result.facades)} фасадов → {len(modules)} модулей"
-                )
-                return RecognitionResult(
-                    modules=modules,
-                    confidence=facade_result.confidence,
-                    notes=facade_result.notes,
-                    zone_type=facade_result.zone_type,
-                    materials_mentioned=facade_result.materials_mentioned,
-                )
-
-            # ── 3. Модульный анализ (fallback) ──
-            logger.info(f"    ⚠️ Фасады не найдены, пробуем модульный подход...")
+            # ── 2. Fallback: модульный анализ (GLM-5V-Turbo) ──
+            logger.info(f"    ⚠️ Единый анализ не дал модулей, fallback на GLM-5V...")
             return await self.vision.analyze_drawing(tmp_path)
 
         finally:

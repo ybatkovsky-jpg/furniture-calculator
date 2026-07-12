@@ -97,7 +97,7 @@ def _safe_name(name: str) -> str:
 
 def _write_calculation_sheet(ws, room, result: PipelineResult):
     """Заполнить лист расчёта для одного помещения."""
-    items = fill_template_for_room(room.modules, room.room_name, room.materials)
+    items = fill_template_for_room(room.modules, room.room_name, room.materials, zone_type=room.zone_type)
 
     # Заголовок
     ws.merge_cells("A1:F1")
@@ -249,7 +249,7 @@ def _write_summary(ws, result: PipelineResult):
     for room in result.rooms:
         if not room.modules:
             continue
-        q = calculate_quantities(room.modules, room.room_name, room.materials)
+        q = calculate_quantities(room.modules, room.room_name, room.materials, zone_type=room.zone_type)
         total_ldsp += q.ldsp_sheets
         total_edge += q.edge_08_m + q.edge_04_m
 

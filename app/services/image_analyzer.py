@@ -25,6 +25,7 @@ import httpx
 from PIL import Image
 
 from app.services.scale_calc import calculate_scaled_facades, ScaledFacade
+from app.services.furniture_defaults import get_rules
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -848,6 +849,7 @@ class GeminiImageAnalyzer:
                 modules_data=modules_data,
                 scaled_facades=scaled_facades,
                 facades_data=facades_data,
+                zone_type=zone_type,
             )
 
             return modules, zone_type, materials, confidence
@@ -861,6 +863,7 @@ class GeminiImageAnalyzer:
         modules_data: List[Dict],
         scaled_facades: List,
         facades_data: List[Dict],
+        zone_type: Optional[str] = None,
     ) -> List[RecognizedModule]:
         """
         Собрать RecognizedModule из ответа модели.
@@ -868,29 +871,33 @@ class GeminiImageAnalyzer:
         Приоритет размеров:
         1. bbox-вычисленные (scaled_facades) — самые точные
         2. Из modules (прямое чтение моделью) — если нет bbox
-        3. Стандартные — если ни один источник не дал валидных размеров
+        3. Стандартные из FURNITURE_DEFAULTS — если ни один источник не дал размеров
         """
         modules = []
 
-        # Индекс bbox-размеров по zone для быстрого поиска
+        # Правила для этого типа помещения
+        rules = get_rules(zone_type)
+
+        # Индекс bbox-размеров по zone
         scaled_by_zone = {}
         for sf in scaled_facades:
             scaled_by_zone.setdefault(sf.zone, []).append(sf)
 
-        # Индекс процентов (если scaled не вычислился)
-        pct_by_zone = {}
-        for fd in facades_data:
-            pct_by_zone.setdefault(fd.get("zone", "lower"), []).append(fd)
-
-        # Стандартные размеры по zone_type (пока кухонные, будет расширено в Этапе 4)
-        DEFAULT_DIMS = {
-            "lower": {"depth": 560, "height": 820},
-            "upper": {"depth": 320, "height": 720},
-            "penal": {"depth": 560, "height": 2500},
-            "corner": {"depth": 900, "height": 820},
+        # Стандартные размеры из правил
+        default_dims = {
+            "lower":  {"depth": rules.default_depth_lower, "height": rules.default_height_lower},
+            "upper":  {"depth": rules.default_depth_upper, "height": rules.default_height_upper},
+            "penal":  {"depth": rules.default_depth_lower, "height": rules.default_height_penal},
+            "corner": {"depth": 900, "height": rules.default_height_corner},
+            "wardrobe": {"depth": rules.default_depth_wardrobe, "height": rules.default_height_lower},
+            "tall_cabinet": {"depth": rules.default_depth_tall, "height": rules.default_height_lower},
+            "shelf_unit": {"depth": rules.default_depth_shelf, "height": rules.default_height_lower},
+            "vanity": {"depth": rules.default_depth_vanity, "height": rules.default_height_lower},
+            "drawer_unit": {"depth": rules.default_depth_lower, "height": rules.default_height_lower},
+            "open_unit": {"depth": rules.default_depth_shelf, "height": rules.default_height_lower},
         }
 
-        # Собираем модули из modules_data — берём метаданные, размеры из bbox
+        # Собираем модули — метаданные из modules_data, размеры из bbox
         zone_idx = {"lower": 0, "upper": 0, "penal": 0, "corner": 0}
 
         for md in modules_data:
@@ -901,11 +908,12 @@ class GeminiImageAnalyzer:
                     "upper" if m_type == "upper_base" else "lower"
                 )
 
-                # Размеры: приоритет у bbox, иначе из modules, иначе стандарт
-                defaults = DEFAULT_DIMS.get(zone, DEFAULT_DIMS["lower"])
+                # Размеры: приоритет у bbox, иначе из modules, иначе из FURNITURE_DEFAULTS
+                defaults = default_dims.get(m_type, default_dims["lower"])
 
                 width = int(md.get("width", 0))
                 depth = int(md.get("depth", 0)) or defaults["depth"]
+                height = int(md.get("height", 0)) or defaults["height"]
                 height = int(md.get("height", 0)) or defaults["height"]
 
                 # Если есть bbox-размеры для этой zone — используем их

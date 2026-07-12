@@ -401,7 +401,7 @@ def fill_template_from_pipeline(
         _update_title(new_ws, room, pipeline_result)
 
         # Рассчитываем количества
-        q = calculate_quantities(room.modules, room.room_name, room.materials)
+        q = calculate_quantities(room.modules, room.room_name, room.materials, zone_type=room.zone_type)
 
         # Применяем спецификацию проекта (добавляет позиции, которые AI не видит)
         if project_spec:

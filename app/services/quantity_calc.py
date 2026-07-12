@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 from app.services.full_pipeline import PipelineResult, RoomSpec
 from app.services.image_analyzer import RecognizedModule
+from app.services.furniture_defaults import get_rules, FurnitureRules
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -237,6 +238,7 @@ def calculate_quantities(
     room_name: str = "",
     materials: List[str] = None,
     *,
+    zone_type: str = None,           # NEW: тип помещения из AI
     auto_accessories: bool = True,   # авто-сушка, лоток, бутылочница
     auto_drawers: bool = True,       # авто-ящики если AI не нашёл
     auto_led: bool = True,           # авто-подсветка для кухни
@@ -248,20 +250,20 @@ def calculate_quantities(
     """
     Рассчитать количества материалов для списка модулей.
 
-    Версия 2.0 — обновлено по промпту v4.0:
-    - Разные размеры листов по производителю
-    - Учёт пропила 4мм
-    - Кромка МДФ: плёнка/краска → 0, плитный МДФ → 1мм
-    - Запас на кромку 30%
-    - Петли по таблице высота×вес
-    - Ручки, плёнка ПВХ, столешница
+    Версия 3.0 — универсальный расчёт через FURNITURE_DEFAULTS:
+    - Тип помещения (zone_type) управляет всеми эвристиками
+    - Разные стандартные размеры для кухни/шкафа/гардероба/офиса
+    - Раздвижные двери vs распашные (петли только для hinged)
     """
     q = MaterialQuantities()
     materials = materials or []
 
+    # Правила для этого типа помещения
+    rules = get_rules(zone_type)
+
     room_lower = room_name.lower()
-    is_kitchen = any(kw in room_lower for kw in ["кухн", "остров", "гарнитур", "kitchen"])
-    is_wardrobe = any(kw in room_lower for kw in ["гардероб", "шкаф", "wardrobe", "прием", "приём"])
+    is_kitchen = rules.family == "kitchen"
+    is_wardrobe = rules.family == "wardrobe"
 
     # Определяем свойства материала (единая функция)
     mat_props = detect_material_properties(materials)
@@ -490,7 +492,7 @@ def calculate_quantities(
 
     # ХДФ: для кухонь — минус площадь под технику/мойку
     if total_hdf_area > 0:
-        if is_kitchen:
+        if is_kitchen or rules.family == "bathroom":
             # Вычитаем площадь задней стенки за техникой и мойкой (~40%)
             excluded = 0.0
             if has_refrigerator:
@@ -516,8 +518,8 @@ def calculate_quantities(
     # Кромка МДФ: округляем
     q.edge_mdf_1mm_m = math.ceil(q.edge_mdf_1mm_m)
 
-    # ── СТОЛЕШНИЦА (только для кухонь) ──
-    if is_kitchen and lower_modules_width > 0:
+    # ── СТОЛЕШНИЦА (только для кухонь/ванных) ──
+    if rules.auto_countertop and lower_modules_width > 0:
         # Длина = сумма ширин нижних баз + 50мм на стык + 10% на подрезку
         num_joints = max(0, lower_modules_count - 1)
         q.countertop_length_m = (lower_modules_width + num_joints * 0.05) * 1.10
@@ -545,8 +547,8 @@ def calculate_quantities(
     if lower_modules_width > 0:
         q.plinth_strips = math.ceil(lower_modules_width * 1.10 / 4)
 
-    # ── Gola: вертикальные + горизонтальные ──
-    if is_kitchen:
+    # ── Gola: вертикальные + горизонтальные (только для kitchen_family) ──
+    if rules.auto_gola:
         # Горизонтальный Gola: сумма ширин нижних баз
         q.gola_horizontal_m = lower_modules_width
 
@@ -584,7 +586,9 @@ def calculate_quantities(
     if q.gola_horizontal_pcs > 0 or q.gola_vertical_pcs > 0:
         q.handles_count = 0
 
-    # ── Эргономика / рекомендации ──
+    # ── Эргономика / рекомендации (на основе FURNITURE_DEFAULTS) ──
+
+    # Кухня: ящики, сушка, лоток
     if is_kitchen:
         if auto_drawers and q.drawers_count == 0:
             q.drawers_count = 2
@@ -601,9 +605,7 @@ def calculate_quantities(
             q.has_sink = True
             if q.has_sink:
                 q.drying_rack_count = 1
-                q.suggestions.append(
-                    "💧 Рекомендация: сушка для посуды Alba в модуль 900мм"
-                )
+                q.suggestions.append("💧 Рекомендация: сушка для посуды Alba в модуль 900мм")
 
         has_upper = any(m.type == "upper_base" for m in modules)
         has_lower = any(m.type == "lower_base" for m in modules)
@@ -612,12 +614,24 @@ def calculate_quantities(
         if has_lower:
             q.suggestions.append("📦 Нижние базы: кастрюли, сковородки, бытовая химия, мойка")
 
-        # Столешница — рекомендация
         if q.countertop_length_m > 0:
             q.suggestions.append(
                 f"🪚 Столешница: ~{q.countertop_length_m:.1f}м × {q.countertop_depth_mm}мм "
                 f"(постформинг / искусственный камень — уточнить)"
             )
+
+    # Шкафы / гардеробные: штанги
+    if rules.auto_rods:
+        modules_for_rods = [m for m in modules if m.width >= 450]
+        if modules_for_rods:
+            q.rods_round_count = len(modules_for_rods)
+            q.suggestions.append(f"👔 Рекомендация: {len(modules_for_rods)} штанг D25 для одежды")
+
+    # Открытые модули: доп. полки
+    if rules.auto_shelves:
+        open_mods = [m for m in modules if m.type in ("shelf_unit", "open_unit")]
+        if open_mods:
+            q.suggestions.append(f"📚 Рекомендация: проверить количество полок в открытых модулях")
 
     if is_wardrobe:
         q.suggestions.append(
@@ -682,6 +696,8 @@ def fill_template_for_room(
     modules: List[RecognizedModule],
     room_name: str,
     materials: List[str],
+    *,
+    zone_type: str = None,
 ) -> List[Tuple[str, str, str, float, float]]:
     """
     Заполнить позиции шаблона для одного помещения.
@@ -689,11 +705,11 @@ def fill_template_for_room(
     Returns:
         Список кортежей: (категория, наименование, цвет/поставщик, цена, количество)
     """
-    q = calculate_quantities(modules, room_name, materials)
+    q = calculate_quantities(modules, room_name, materials, zone_type=zone_type)
     items = []
 
-    room_lower = room_name.lower()
-    is_kitchen = any(kw in room_lower for kw in ["кухн", "остров", "гарнитур", "kitchen"])
+    rules = get_rules(zone_type)
+    is_kitchen = rules.family == "kitchen"
 
     # Определяем материал через единую функцию
     mat_props = detect_material_properties(materials)

@@ -98,6 +98,7 @@ class RoomSpec:
     """Спецификация одного помещения."""
     room_name: str = ""
     page: int = 0
+    zone_type: Optional[str] = None      # тип помещения из AI
     modules: List = field(default_factory=list)   # RecognizedModule
     materials: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
@@ -195,12 +196,15 @@ class FullPipeline:
                         room_specs[page_num] = RoomSpec(
                             room_name=room_name,
                             page=page_num + 1,
+                            zone_type=recog_result.zone_type,
                         )
 
                     spec = room_specs[page_num]
                     spec.modules.extend(recog_result.modules)
                     spec.materials.extend(recog_result.materials_mentioned)
                     spec.confidence = recog_result.confidence
+                    if recog_result.zone_type and not spec.zone_type:
+                        spec.zone_type = recog_result.zone_type
 
                     logger.info(
                         f"    ✅ Стр.{page_num + 1} {recog_result.zone_type or '?'}: "

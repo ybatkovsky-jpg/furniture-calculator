@@ -133,3 +133,91 @@ def distribute_heights_proportionally(
     Пока не используется, оставлено для будущих улучшений.
     """
     return facades
+
+
+def calculate_scaled_facades_px(
+    facades_data: List[Dict],
+    total_width_mm: float,
+    ref_bbox: List[float],
+    image_width: int = 1536,
+    image_height: int = 1086,
+    lower_height_mm: Optional[int] = None,
+    upper_height_mm: Optional[int] = None,
+    penal_height_mm: Optional[int] = None,
+) -> List[ScaledFacade]:
+    """
+    Вычислить размеры фасадов по ТОЧНЫМ пиксельным координатам bbox.
+
+    Args:
+        facades_data: [{"zone":"lower","bbox":[x1,y1,x2,y2]}, ...]
+        total_width_mm: общий габарит нижних баз в мм
+        ref_bbox: [x1,y1,x2,y2] — пиксельные координаты размерной линии габарита
+        image_width, image_height: размер изображения в пикселях
+        lower/upper/penal_height_mm: высоты по зонам (если None — стандарт)
+
+    Returns:
+        Список ScaledFacade с width_mm и height_mm
+    """
+    # 1. Масштаб по эталонной размерной линии
+    if ref_bbox and len(ref_bbox) == 4 and total_width_mm > 0:
+        ref_width_px = abs(ref_bbox[2] - ref_bbox[0])
+        if ref_width_px > 0:
+            scale = total_width_mm / ref_width_px  # мм на пиксель
+        else:
+            scale = 3000 / 1500  # fallback
+    else:
+        # Без ref_bbox — считаем по всем нижним фасадам
+        lower_items = [f for f in facades_data if f.get("zone") == "lower"]
+        if lower_items:
+            total_px = sum(abs(f["bbox"][2] - f["bbox"][0]) for f in lower_items if len(f.get("bbox", [])) == 4)
+            scale = total_width_mm / total_px if total_px > 0 else 2.0
+        else:
+            scale = 2.0
+
+    logger.info(f"Масштаб (px): {total_width_mm}мм / эталон = {scale:.3f} мм/px")
+
+    # 2. Высоты по зонам
+    heights = {
+        "lower": lower_height_mm or DEFAULT_HEIGHTS["lower"],
+        "upper": upper_height_mm or DEFAULT_HEIGHTS["upper"],
+        "penal": penal_height_mm or DEFAULT_HEIGHTS["penal"],
+    }
+
+    # 3. Вычисляем размеры каждого фасада
+    result = []
+    for f in facades_data:
+        bbox = f.get("bbox", [0, 0, 100, 100])
+        if len(bbox) != 4:
+            continue
+
+        zone = f.get("zone", "lower")
+        px_w = abs(bbox[2] - bbox[0])
+
+        width_mm = round(px_w * scale)
+        height_mm = heights.get(zone, 716)
+
+        # Валидация
+        if width_mm < 200:
+            logger.warning(f"Фасад {zone} px_w={px_w} → {width_mm}мм (узкий) → корректируем до 250мм")
+            width_mm = 250
+        elif width_mm > 1200:
+            logger.warning(f"Фасад {zone} px_w={px_w} → {width_mm}мм (широкий) → корректируем до 1000мм")
+            width_mm = 1000
+
+        result.append(ScaledFacade(
+            zone=zone,
+            width_mm=width_mm,
+            height_mm=height_mm,
+            bbox_x_pct=bbox[0] / image_width * 100,
+            bbox_w_pct=px_w / image_width * 100,
+        ))
+
+    # 4. Проверка
+    lower_result = [r for r in result if r.zone == "lower"]
+    if lower_result:
+        sum_w = sum(r.width_mm for r in lower_result)
+        diff = abs(sum_w - total_width_mm)
+        if diff > 150:
+            logger.warning(f"Расхождение: сумма нижних {sum_w}мм ≠ габарит {total_width_mm}мм (Δ={diff}мм)")
+
+    return result

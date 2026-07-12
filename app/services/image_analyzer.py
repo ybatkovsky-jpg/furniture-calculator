@@ -3,9 +3,9 @@
 
 Провайдеры (в порядке приоритета):
 - Z.ai GLM-5V-Turbo — основной (Vision API с json_object)
-- Z.ai GLM-4.6V — быстрый fallback
-- OpenRouter Qwen3-VL-235B — лучший spatial reasoning (SpatialBench 13.5)
-- OpenRouter Gemini 2.5 Flash — последний рубеж
+- RouterAI.ru GLM-4.6V — быстрый fallback (ru-агрегатор, оплата в ₽)
+- RouterAI.ru Qwen3-VL-32B — ансамбль / кросс-валидация (SpatialBench SOTA)
+- RouterAI.ru Gemini 2.5 Flash Lite — последний рубеж
 
 Все модели используют унифицированный промпт с few-shot примерами.
 Включён response_format: json_object для гарантированного JSON на выходе.
@@ -174,33 +174,38 @@ class GeminiImageAnalyzer:
     Анализатор изображений чертежей через Vision LLM.
 
     Провайдеры (по порядку):
-    1. Z.ai GLM-5V-Turbo — основной, быстрый
-    2. Z.ai GLM-4.6V — быстрый fallback (тот же провайдер)
-    3. OpenRouter Qwen3-VL-235B — лучший spatial reasoning
-    4. OpenRouter Gemini 2.5 Flash — последний рубеж
+    1. Z.ai GLM-5V-Turbo — основной, быстрый, дешёвый
+    2. RouterAI.ru GLM-4.6V — быстрый fallback (через ru-агрегатор)
+    3. RouterAI.ru Qwen3-VL-32B — ансамбль / кросс-валидация (SpatialBench SOTA)
+    4. RouterAI.ru Gemini 2.5 Flash Lite — последний рубеж
     """
 
     FALLBACK_CHAIN = [
-        # Быстрый fallback — та же линейка GLM, другой размер
-        ("glm-4.6v", "zai"),
-        # Qwen3-VL-235B — лучший spatial reasoning (SpatialBench 13.5)
-        ("qwen/qwen3-vl-235b-a22b-instruct", "openrouter"),
-        # Gemini 2.5 Flash — последний рубеж
-        ("google/gemini-2.5-flash", "openrouter"),
+        # Быстрый fallback — GLM-4.6V через RouterAI.ru (30₽/1M вход)
+        ("z-ai/glm-4.6v", "routerai"),
+        # Qwen3-VL-32B — лучший spatial reasoning, открытая модель (10₽/1M вход)
+        ("qwen/qwen3-vl-32b-instruct", "routerai"),
+        # Gemini 2.5 Flash Lite — последний рубеж (10₽/1M вход)
+        ("google/gemini-2.5-flash-lite", "routerai"),
     ]
 
     def __init__(self):
         """Инициализация HTTP клиента."""
         self.zai_key = settings.zai_api_key
         self.openrouter_key = settings.openrouter_api_key
+        self.routerai_key = settings.routerai_api_key
+        self.routerai_url = settings.routerai_api_url
         self.primary_model = settings.vision_model
         self.api_url = settings.vision_api_url
 
         self.client: Optional[httpx.AsyncClient] = None
 
+        providers = ["Z.ai"]
+        if self.routerai_key:
+            providers.append("RouterAI.ru")
         logger.info(
             f"Vision Analyzer: primary={self.primary_model}, "
-            f"url={self.api_url.split('/api')[0] if '/api' in self.api_url else self.api_url}"
+            f"providers={providers}"
         )
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -390,8 +395,8 @@ class GeminiImageAnalyzer:
             "response_format": {"type": "json_object"},  # гарантирует валидный JSON на выходе
         }
 
-        # GLM-модели: reasoning_effort только для них
-        if "glm" in model.lower():
+        # GLM-модели: reasoning_effort только для прямого Z.ai (не через RouterAI)
+        if "glm" in model.lower() and provider == "zai":
             body["reasoning_effort"] = "medium"
 
         # 5. Определяем URL эндпоинта
@@ -436,24 +441,30 @@ class GeminiImageAnalyzer:
 
     def _detect_provider(self, model: str) -> str:
         """Определить провайдера по имени модели."""
-        if "glm" in model.lower():
-            return "zai"
-        if "qwen" in model.lower() or "google" in model.lower():
-            return "openrouter"
+        if "glm" in model.lower() and "z-ai" not in model.lower():
+            return "zai"      # GLM без префикса → Z.ai
+        if "z-ai" in model.lower():
+            return "routerai"  # z-ai/glm-* → RouterAI.ru (агрегатор)
+        if "qwen" in model.lower() or "google" in model.lower() or "gemini" in model.lower():
+            return "routerai"  # Qwen, Gemini → RouterAI.ru
         return "zai"  # по умолчанию
 
     def _get_api_key(self, provider: str) -> str:
         """Получить API ключ для провайдера."""
         if provider == "zai":
-            return self.zai_key or self.openrouter_key or settings.gemini_api_key
+            return self.zai_key or ""
+        elif provider == "routerai":
+            return self.routerai_key or self.zai_key or ""
         elif provider == "openrouter":
-            return self.openrouter_key or self.zai_key or settings.gemini_api_key
-        return self.zai_key or self.openrouter_key or settings.gemini_api_key
+            return self.openrouter_key or self.routerai_key or ""
+        return self.zai_key or self.routerai_key or ""
 
     def _get_api_url(self, provider: str, model: str) -> str:
         """Получить URL эндпоинта."""
         if provider == "zai":
             return "https://api.z.ai/api/paas/v4/chat/completions"
+        elif provider == "routerai":
+            return self.routerai_url  # https://routerai.ru/api/v1/chat/completions
         elif provider == "openrouter":
             return "https://openrouter.ai/api/v1/chat/completions"
         return self.api_url

@@ -16,9 +16,14 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str = Field(default="", description="Токен Telegram-бота")
 
-    # Vision LLM — Z.ai (основной: GLM-4.6V) / OpenRouter (Qwen3-VL)
-    zai_api_key: str = Field(default="", description="Ключ Z.ai API (GLM-4.6V, GLM-OCR)")
-    openrouter_api_key: str = Field(default="", description="Ключ OpenRouter API (Qwen3-VL)")
+    # Vision LLM — Z.ai (основной: GLM-5V-Turbo) / RouterAI.ru (ансамбль: Qwen3-VL)
+    zai_api_key: str = Field(default="", description="Ключ Z.ai API (GLM-5V-Turbo, GLM-OCR)")
+    openrouter_api_key: str = Field(default="", description="Ключ OpenRouter API (устарел, заменён на RouterAI)")
+    routerai_api_key: str = Field(default="", description="Ключ RouterAI.ru API (Qwen3-VL, Gemini Flash) — ансамбль")
+    routerai_api_url: str = Field(
+        default="https://routerai.ru/api/v1/chat/completions",
+        description="URL эндпоинта RouterAI.ru"
+    )
     vision_model: str = Field(
         default="glm-5v-turbo",
         description="Модель для распознавания чертежей (glm-4.6v / qwen/qwen3-vl-235b-a22b-instruct)"

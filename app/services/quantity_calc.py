@@ -378,34 +378,40 @@ def calculate_quantities(
                     else:
                         q.handles_count += 2 * qty
 
-        # ── Петли (таблица высота×вес по стандартам Blum/Hettich) ──
+        # ── Петли: по высоте ОДНОЙ ДВЕРИ, а не модуля ──
+        # Ящики = без петель (используют боксы)
+        # Встраиваемая техника = петли в комплекте, НЕ считаем
         if module.type in ("lower_base", "upper_base", "penal", "column", "tumbler"):
-            facade_h = module.height
-            # Определяем примерный вес фасада
-            facade_weight = _estimate_facade_weight(module, mat_props)
+            # Пропускаем модули-ящики (у них направляющие, не петли)
+            has_drawers_only = (
+                module.drawers
+                and module.drawers.get("count", 0) > 0
+                and not (module.facades and module.facades.get("count", 0) > 0)
+            )
+            # Пропускаем пеналы под встраиваемую технику
+            is_appliance_penal = (
+                module.type == "penal"
+                and module.width >= 600
+                # Если пенал без фасадов — под технику, петли в комплекте
+                and not (module.facades and module.facades.get("count", 0) > 0)
+            )
 
-            # Таблица: rows=высота, cols=вес
-            if facade_h <= 900:
-                hinges = 2 if facade_weight <= 18 else 3
-            elif facade_h <= 1600:
-                if facade_weight <= 9:       hinges = 2
-                elif facade_weight <= 13:    hinges = 3
-                elif facade_weight <= 22:    hinges = 4
-                else:                        hinges = 4
-            elif facade_h <= 2200:
-                if facade_weight <= 13:      hinges = 3
-                elif facade_weight <= 18:    hinges = 4
-                else:                        hinges = 5
-            elif facade_h <= 2700:
-                if facade_weight <= 9:       hinges = 3
-                elif facade_weight <= 18:    hinges = 4
-                else:                        hinges = 5
-            else:
-                hinges = 6
-
-            if module.facades:
+            if not has_drawers_only and not is_appliance_penal and module.facades:
                 facade_count = module.facades.get("count", 1)
-                q.hinges_count += hinges * facade_count * qty
+                # Высота ОДНОЙ двери = высота модуля / количество дверей
+                single_door_h = module.height / facade_count
+
+                # Правила заказчика (не Blum, не по весу):
+                if single_door_h >= 2000:
+                    hinges_per_door = 5
+                elif single_door_h > 900:
+                    hinges_per_door = 4
+                elif single_door_h > 600:
+                    hinges_per_door = 3
+                else:
+                    hinges_per_door = 2
+
+                q.hinges_count += hinges_per_door * facade_count * qty
 
         # ── Ящики (AI + рекомендации) ──
         if module.drawers and module.drawers.get("count", 0) > 0:

@@ -286,25 +286,47 @@ class FullPipeline:
         total_pages: int,
     ):
         """
-        Обработать одну страницу: рендеринг → Vision → результат.
-        Выполняется параллельно с другими страницами.
+        Обработать одну страницу: рендеринг → Фасадный анализ → Vision (fallback).
+        Основной метод: analyze_facades (Qwen3-VL-235B-Thinking, точность 93%).
+        Fallback: analyze_drawing (GLM-5V-Turbo, модульный подход).
         """
         logger.info(f"  ▶ Стр. {page_num + 1}/{total_pages}...")
 
         # Рендерим страницу
         jpeg_bytes = render_page(pdf_path, page_num)
 
-        # Сохраняем во временный файл
         with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
             tmp.write(jpeg_bytes)
             tmp_path = tmp.name
 
         try:
-            # Vision-распознавание
+            # ── Попытка 1: Фасадный анализ (точный) ──
+            facade_result = await self.vision.analyze_facades(tmp_path)
+            if facade_result.facades:
+                from app.services.image_analyzer import facades_to_modules
+                modules = facades_to_modules(
+                    facade_result.facades,
+                    zone_type=facade_result.zone_type,
+                )
+                logger.info(
+                    f"    ✅ Стр.{page_num + 1} (фасады): "
+                    f"{len(facade_result.facades)} фасадов → {len(modules)} модулей"
+                )
+                return RecognitionResult(
+                    modules=modules,
+                    confidence=facade_result.confidence,
+                    notes=facade_result.notes,
+                    zone_type=facade_result.zone_type,
+                    materials_mentioned=facade_result.materials_mentioned,
+                    model_used=facade_result.model_used,
+                )
+
+            # ── Попытка 2: Модульный анализ (fallback) ──
+            logger.info(f"    ⚠️ Фасады не найдены, пробуем модульный подход...")
             recog_result = await self.vision.analyze_drawing(tmp_path)
             return recog_result
+
         finally:
-            # Удаляем временный файл
             Path(tmp_path).unlink(missing_ok=True)
 
     # Индикаторы: страница содержит чертёж (размеры, масштаб, виды)

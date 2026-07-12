@@ -78,9 +78,21 @@ UNIFIED_PROMPT = """Ты — конструктор-технолог мебел�
 
 ЧТЕНИЕ ЧЕРТЕЖА — УСЛОВНЫЕ ОБОЗНАЧЕНИЯ:
 ★ Пунктирные треугольники на дверце = направление открывания. Это НЕ отдельный модуль, это маркер одной дверцы!
-★ Горизонтальная линия внутри нижней базы = деление на ящики. ВСЯ база — ОДИН модуль, укажи drawers.count = количеству ящиков.
-★ Верхние базы РАЗНОЙ глубины (350мм vs 280мм) — это разные модули. Но если глубина одинаковая — это один ярус.
+★ Горизонтальная линия внутри нижней базы = деление на ящики. ВСЯ база — ОДИН модуль, укажи drawers.count = количеству ящиков. НЕ создавай два модуля!
+★ Вертикальная линия только в зоне фасада (не доходит до столешницы) = стык двух дверей. Это ОДИН модуль с facades.count=2.
+★ Вертикальная линия через ВЕСЬ корпус (от столешницы до пола) = граница между РАЗНЫМИ модулями.
 ★ Пеналы: на всю высоту кухни, всегда с краю. Левый — часто под холодильник, правый — для коммуникаций.
+
+ОБЩИЕ ПРАВИЛА (нарушение = брак):
+1. Один физический корпус = ОДИН модуль. Две дверцы на одном корпусе = 1 модуль с facades.count=2.
+2. Шкаф с несколькими фасадами НЕ дробить на несколько модулей.
+3. Размерные линии и выноски — НЕ модули, игнорируй их.
+4. Планки-заполнители (40-80мм) — НЕ модули, игнорируй.
+5. Если точный размер не читается — стандартный (низ: 560×820, верх: 320×720, пенал: 560×2100).
+6. ВСЕ размеры в мм, целыми числами. Никаких "см" или "м".
+7. Угловой модуль — всегда is_corner=true, width=depth. Глубина угла НЕ бывает 320мм.
+8. Пеналы считай отдельно — они не входят в группу нижних/верхних баз.
+9. Если видишь «×3» или «3 шт» — quantity=3.
 
 ОБЩИЕ ПРАВИЛА (нарушение = брак):
 1. Один физический корпус = ОДИН модуль. Две дверцы на одном корпусе = 1 модуль с facades.count=2.
@@ -179,83 +191,45 @@ def _validate_module(module: "RecognizedModule") -> tuple:
 
 def _merge_adjacent_modules(modules: List["RecognizedModule"]) -> List["RecognizedModule"]:
     """
-    Слить соседние модули одного типа/высоты/глубины в общий корпус с несколькими фасадами.
+    Постобработка списка модулей: убрать мусор и сгруппировать дубликаты.
 
-    Эвристика: если два модуля имеют одинаковый type, height, depth
-    и их суммарная ширина ≤ 1200мм — это один корпус с facades.count > 1.
-    Планки-заполнители между ними (если есть) игнорируются.
-
-    Также обрабатывает случай horizontal split: если у двух lower_base
-    одинаковая ширина и глубина, но разная высота, и меньший сверху —
-    это одна база с ящиками (drawers).
+    Стратегия (консервативная — precision > recall):
+    1. Группировка ТОЛЬКО точных дублей (одинаковые W×D×H×type) → quantity
+    2. НЕ сливаем модули разной ширины (это разные шкафы!)
+    3. Модули <250мм уже отфильтрованы _validate_module
     """
     if len(modules) <= 1:
         return list(modules)
 
-    # Сортируем по типу, затем по высоте (для группировки)
-    sorted_mods = sorted(modules, key=lambda m: (m.type, m.height, m.depth))
+    # Группируем точные дубликаты
+    groups: Dict[str, List["RecognizedModule"]] = {}
+    for m in modules:
+        key = f"{m.type}_{m.width}_{m.depth}_{m.height}"
+        groups.setdefault(key, []).append(m)
 
-    merged = []
-    i = 0
-    while i < len(sorted_mods):
-        current = sorted_mods[i]
-        group = [current]
-
-        # Ищем соседей того же типа, высоты и глубины
-        j = i + 1
-        while j < len(sorted_mods):
-            candidate = sorted_mods[j]
-            if (candidate.type == current.type
-                and candidate.height == current.height
-                and candidate.depth == current.depth):
-                total_width = sum(m.width for m in group) + candidate.width
-                if total_width <= 1200:
-                    group.append(candidate)
-                    j += 1
-                else:
-                    break
-            else:
-                break
-
-        if len(group) == 1:
-            merged.append(current)
+    result = []
+    for key, mods in groups.items():
+        if len(mods) == 1:
+            result.append(mods[0])
         else:
-            # Сливаем в один модуль
-            total_w = sum(m.width for m in group)
-            total_qty = sum(max(m.quantity, 1) for m in group)
-            total_facades = sum(
-                m.facades.get("count", 1) if m.facades else 1
-                for m in group
+            total_qty = sum(max(m.quantity, 1) for m in mods)
+            merged = RecognizedModule(
+                type=mods[0].type,
+                width=mods[0].width,
+                depth=mods[0].depth,
+                height=mods[0].height,
+                quantity=total_qty,
+                has_glass=any(m.has_glass for m in mods),
+                facades=mods[0].facades,
+                drawers=mods[0].drawers,
+                shelves=max(m.shelves for m in mods),
+                is_corner=mods[0].is_corner,
+                bbox=mods[0].bbox,
             )
-            total_drawers = sum(
-                m.drawers.get("count", 0) if m.drawers else 0
-                for m in group
-            )
-            max_shelves = max(m.shelves for m in group)
+            result.append(merged)
+            logger.info(f"Merged {len(mods)}× duplicate {key} → qty={total_qty}")
 
-            merged_mod = RecognizedModule(
-                type=current.type,
-                width=total_w,
-                depth=current.depth,
-                height=current.height,
-                quantity=1,  # один корпус
-                has_glass=any(m.has_glass for m in group),
-                facades={"count": total_facades, "type": "doors"},
-                drawers={"count": total_drawers} if total_drawers > 0 else None,
-                shelves=max_shelves,
-                is_corner=False,
-                bbox=current.bbox,
-            )
-            merged.append(merged_mod)
-            logger.info(
-                f"Merged {len(group)} adjacent modules "
-                f"({current.type} {current.height}mm) → "
-                f"{total_w}mm, facades={total_facades}"
-            )
-
-        i = j
-
-    return merged
+    return result
 
 
 class GeminiImageAnalyzer:

@@ -9,3 +9,4 @@ __pycache__/
 venv/
 data/*.db
 *.log
+nul

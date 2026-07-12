@@ -150,17 +150,21 @@ FACADE_PROMPT = """Ты — конструктор-технолог мебель
 Фасад = видимая дверца шкафа с ручкой или треугольником открывания.
 
 Для КАЖДОГО фасада укажи:
-- width_mm: ширина — бери с размерных линий на чертеже. Если не указана — используй стандартную для этой зоны
-- height_mm: высота — бери с размерных линий на чертеже. Если не указана — стандарт: низ 716мм, верх 596мм, пенал 2500мм
-- zone: "lower" (нижние базы), "upper" (верхние базы), "penal" (пеналы)
-- is_corner: true только для углового фасада
+- width_mm: ширина. Бери с размерной линии. Если размерной линии нет — стандарт: низ/верх 600мм, пенал 600мм
+- height_mm: высота. Бери с размерной линии. Если размерной линии нет — стандарт: низ 716мм, верх 596мм, пенал 2500мм
+- zone: "lower", "upper", "penal"
+- is_corner: true только для углового
+
+ПРОВЕРКА НА ГИГАНТОВ/ЛИЛИПУТОВ:
+- Ширина фасада должна быть 250-1200мм. Если получилось меньше 250 или больше 1200 — перепроверь
+- Высота нижних 700-900мм, верхних 500-800мм, пеналов 1800-2800мм
+- Если размеры выходят за эти пределы — используй стандартные
 
 ПРАВИЛА:
 - Каждая видимая дверца = ОДИН фасад
-- Пенал: смотри на чертёж (1 или 2 фасада), не предполагай
+- Пенал: смотри на чертёж (1 или 2 фасада)
 - Планки-заполнители — НЕ фасады, игнорируй
 - Размеры в мм, целыми числами
-- Если размерная линия есть — бери с неё. Если нет — стандарт
 
 ОПРЕДЕЛИ: zone_type, materials, confidence
 
@@ -962,7 +966,15 @@ def facades_to_modules(
     - Пеналы: каждый фасад = 1 модуль (высокий)
     - Нижние/верхние: фасады одинаковой высоты = отдельные модули
     - Угловые фасады = corner-модуль
+    - Валидация: размеры вне реалистичных диапазонов → стандартные
     """
+    # Реалистичные диапазоны (гиганты/лилипуты → стандарт)
+    VALID_SIZE = {
+        "lower": {"width": (250, 1200), "height": (700, 900), "std_w": 600, "std_h": 716, "depth": 560},
+        "upper": {"width": (250, 1200), "height": (500, 800), "std_w": 600, "std_h": 596, "depth": 320},
+        "penal": {"width": (250, 1200), "height": (1800, 2800), "std_w": 600, "std_h": 2500, "depth": 560},
+    }
+
     modules = []
 
     # Группируем по zone
@@ -971,72 +983,51 @@ def facades_to_modules(
         by_zone.setdefault(f.zone, []).append(f)
 
     for zone, zone_facades in by_zone.items():
+        limits = VALID_SIZE.get(zone)
+        if not limits:
+            continue
+
         if zone == "penal":
-            # Каждый фасад пенала = отдельный модуль
             for f in zone_facades:
+                w = f.width_mm if limits["width"][0] <= f.width_mm <= limits["width"][1] else limits["std_w"]
+                h = f.height_mm if limits["height"][0] <= f.height_mm <= limits["height"][1] else limits["std_h"]
                 modules.append(RecognizedModule(
-                    type="penal",
-                    width=f.width_mm,
-                    depth=560,
-                    height=f.height_mm if f.height_mm > 0 else 0,  # 0 = не прочитано, требует проверки
-                    quantity=1,
-                    facades={"count": 1, "type": "doors"},
-                    shelves=0,
-                    is_corner=False,
+                    type="penal", width=w, depth=limits["depth"], height=h,
+                    quantity=1, facades={"count": 1, "type": "doors"}, shelves=0, is_corner=False,
                 ))
 
-        elif zone == "corner" or any(f.is_corner for f in zone_facades):
-            # Угловой модуль
+        elif any(f.is_corner for f in zone_facades):
             corner_f = next((f for f in zone_facades if f.is_corner), zone_facades[0])
+            w = corner_f.width_mm if limits["width"][0] <= corner_f.width_mm <= limits["width"][1] else limits["std_w"]
+            h = corner_f.height_mm if limits["height"][0] <= corner_f.height_mm <= limits["height"][1] else limits["std_h"]
             modules.append(RecognizedModule(
-                type="corner",
-                width=corner_f.width_mm,
-                depth=corner_f.width_mm,  # квадратный
-                height=corner_f.height_mm,
-                quantity=1,
-                facades={"count": 1, "type": "doors"},
-                shelves=0,
-                is_corner=True,
+                type="corner", width=w, depth=w, height=h,
+                quantity=1, facades={"count": 1, "type": "doors"}, shelves=0, is_corner=True,
             ))
-            # Остальные фасады этой зоны — как обычные базы
             other = [f for f in zone_facades if not f.is_corner]
             for f in other:
+                w = f.width_mm if limits["width"][0] <= f.width_mm <= limits["width"][1] else limits["std_w"]
+                h = f.height_mm if limits["height"][0] <= f.height_mm <= limits["height"][1] else limits["std_h"]
                 mod_type = "lower_base" if zone == "lower" else "upper_base"
-                depth = 560 if mod_type == "lower_base" else 320
                 modules.append(RecognizedModule(
-                    type=mod_type,
-                    width=f.width_mm,
-                    depth=depth,
-                    height=f.height_mm,
-                    quantity=1,
-                    facades={"count": 1, "type": "doors"},
-                    shelves=1,
-                    is_corner=False,
+                    type=mod_type, width=w, depth=limits["depth"], height=h,
+                    quantity=1, facades={"count": 1, "type": "doors"}, shelves=1, is_corner=False,
                 ))
 
         else:
-            # Обычные базы: группируем по высоте
             height_groups = {}
             for f in zone_facades:
-                # Округляем высоту до ближайших 50мм для группировки
                 h_key = round(f.height_mm / 50) * 50
                 height_groups.setdefault(h_key, []).append(f)
 
             for h_key, group in height_groups.items():
                 mod_type = "lower_base" if zone == "lower" else "upper_base"
-                depth = 560 if mod_type == "lower_base" else 320
-
-                # Каждый фасад = отдельный модуль (консервативно)
                 for f in group:
+                    w = f.width_mm if limits["width"][0] <= f.width_mm <= limits["width"][1] else limits["std_w"]
+                    h = f.height_mm if limits["height"][0] <= f.height_mm <= limits["height"][1] else limits["std_h"]
                     modules.append(RecognizedModule(
-                        type=mod_type,
-                        width=f.width_mm,
-                        depth=depth,
-                        height=f.height_mm,
-                        quantity=1,
-                        facades={"count": 1, "type": "doors"},
-                        shelves=1,
-                        is_corner=False,
+                        type=mod_type, width=w, depth=limits["depth"], height=h,
+                        quantity=1, facades={"count": 1, "type": "doors"}, shelves=1, is_corner=False,
                     ))
 
     return modules

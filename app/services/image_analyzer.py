@@ -73,18 +73,26 @@ UNIFIED_PROMPT = """Ты — конструктор-технолог мебел�
 ТИПЫ МОДУЛЕЙ (строго):
 - lower_base — напольный модуль (стоит на полу, высота 700-900мм, глубина 500-600мм)
 - upper_base — навесной модуль (висит на стене, высота 600-1000мм, глубина 280-350мм)
-- penal — высокий шкаф от пола до потолка (высота 1800-2500мм, глубина 500-600мм)
+- penal — высокий шкаф от пола до потолка (высота 1800-2500мм, глубина 500-600мм). Всегда с краю!
 - corner — УГЛОВОЙ модуль. ВСЕГДА квадратный: ширина=глубина (600×600, 900×900, 1000×1000). ЭТО ОДИН МОДУЛЬ!
 
-ВАЖНЕЙШИЕ ПРАВИЛА (нарушение = брак):
-1. Один физический корпус = ОДИН модуль. Две дверцы на одном корпусе = 1 модуль (не 2!).
+ЧТЕНИЕ ЧЕРТЕЖА — УСЛОВНЫЕ ОБОЗНАЧЕНИЯ:
+★ Пунктирные треугольники на дверце = направление открывания. Это НЕ отдельный модуль, это маркер одной дверцы!
+★ Горизонтальная линия внутри нижней базы = деление на ящики. ВСЯ база — ОДИН модуль, укажи drawers.count = количеству ящиков.
+★ Верхние базы РАЗНОЙ глубины (350мм vs 280мм) — это разные модули. Но если глубина одинаковая — это один ярус.
+★ Пеналы: на всю высоту кухни, всегда с краю. Левый — часто под холодильник, правый — для коммуникаций.
+
+ОБЩИЕ ПРАВИЛА (нарушение = брак):
+1. Один физический корпус = ОДИН модуль. Две дверцы на одном корпусе = 1 модуль с facades.count=2.
 2. Шкаф с несколькими фасадами НЕ дробить на несколько модулей.
 3. Размерные линии и выноски — это НЕ модули, игнорируй их.
-4. Планки-заполнители (40-80мм) — это НЕ модули, игнорируй.
-5. Если точный размер не читается — используй СТАНДАРТНЫЙ (низ: 560×820, верх: 320×720, пенал: 560×2100).
-6. ВСЕ размеры в мм, целыми числами. Никаких "см" или "м".
-7. Если видишь «×3» или «3 шт» — quantity=3.
-8. Угловой модуль — всегда is_corner=true, width=depth, type="corner".
+4. Планки-заполнители (40-80мм) — НЕ модули, игнорируй.
+5. Модуль уже 150мм — скорее всего ошибка: проверь, не дверца ли это.
+6. Если точный размер не читается — стандартный (низ: 560×820, верх: 320×720, пенал: 560×2100).
+7. ВСЕ размеры в мм, целыми числами. Никаких "см" или "м".
+8. Угловой модуль — всегда is_corner=true, width=depth. Глубина угла НЕ бывает 320мм.
+9. Пеналы считай отдельно — они не входят в группу нижних/верхних баз.
+10. Если видишь «×3» или «3 шт» — quantity=3.
 
 ОПРЕДЕЛИ ЗОНУ (строго одно из): Кухня, Гостиная, Спальня, Детская, Прихожая, Ванная, Гардеробная, Кабинет, Балкон, Столовая, Постирочная.
 
@@ -109,7 +117,7 @@ UNIFIED_PROMPT = """Ты — конструктор-технолог мебел�
 
 # Реалистичные диапазоны размеров мебельных модулей (мм)
 DIMENSION_LIMITS = {
-    "width":    (150, 2400),   # мин/макс ширина модуля
+    "width":    (250, 2400),   # мин/макс ширина модуля (уже 250мм — фильтрует дверцы-фантомы)
     "depth":    (200, 1200),   # мин/макс глубина
     "height":   (300, 2800),   # мин/макс высота
     "quantity": (1, 30),       # мин/макс количество одинаковых модулей
@@ -168,6 +176,87 @@ def _validate_module(module: "RecognizedModule") -> tuple:
 # ================================================================
 # ОСНОВНОЙ КЛАСС
 # ================================================================
+
+def _merge_adjacent_modules(modules: List["RecognizedModule"]) -> List["RecognizedModule"]:
+    """
+    Слить соседние модули одного типа/высоты/глубины в общий корпус с несколькими фасадами.
+
+    Эвристика: если два модуля имеют одинаковый type, height, depth
+    и их суммарная ширина ≤ 1200мм — это один корпус с facades.count > 1.
+    Планки-заполнители между ними (если есть) игнорируются.
+
+    Также обрабатывает случай horizontal split: если у двух lower_base
+    одинаковая ширина и глубина, но разная высота, и меньший сверху —
+    это одна база с ящиками (drawers).
+    """
+    if len(modules) <= 1:
+        return list(modules)
+
+    # Сортируем по типу, затем по высоте (для группировки)
+    sorted_mods = sorted(modules, key=lambda m: (m.type, m.height, m.depth))
+
+    merged = []
+    i = 0
+    while i < len(sorted_mods):
+        current = sorted_mods[i]
+        group = [current]
+
+        # Ищем соседей того же типа, высоты и глубины
+        j = i + 1
+        while j < len(sorted_mods):
+            candidate = sorted_mods[j]
+            if (candidate.type == current.type
+                and candidate.height == current.height
+                and candidate.depth == current.depth):
+                total_width = sum(m.width for m in group) + candidate.width
+                if total_width <= 1200:
+                    group.append(candidate)
+                    j += 1
+                else:
+                    break
+            else:
+                break
+
+        if len(group) == 1:
+            merged.append(current)
+        else:
+            # Сливаем в один модуль
+            total_w = sum(m.width for m in group)
+            total_qty = sum(max(m.quantity, 1) for m in group)
+            total_facades = sum(
+                m.facades.get("count", 1) if m.facades else 1
+                for m in group
+            )
+            total_drawers = sum(
+                m.drawers.get("count", 0) if m.drawers else 0
+                for m in group
+            )
+            max_shelves = max(m.shelves for m in group)
+
+            merged_mod = RecognizedModule(
+                type=current.type,
+                width=total_w,
+                depth=current.depth,
+                height=current.height,
+                quantity=1,  # один корпус
+                has_glass=any(m.has_glass for m in group),
+                facades={"count": total_facades, "type": "doors"},
+                drawers={"count": total_drawers} if total_drawers > 0 else None,
+                shelves=max_shelves,
+                is_corner=False,
+                bbox=current.bbox,
+            )
+            merged.append(merged_mod)
+            logger.info(
+                f"Merged {len(group)} adjacent modules "
+                f"({current.type} {current.height}mm) → "
+                f"{total_w}mm, facades={total_facades}"
+            )
+
+        i = j
+
+    return merged
+
 
 class GeminiImageAnalyzer:
     """
@@ -600,7 +689,7 @@ class GeminiImageAnalyzer:
         )
 
     def _postprocess_results(self, result: RecognitionResult) -> RecognitionResult:
-        """Постобработка: убираем дубликаты, фиксим ошибки классификации."""
+        """Постобработка: убираем дубликаты, фиксим ошибки классификации, сливаем раздробленные модули."""
         if not result.modules:
             return result
 
@@ -632,32 +721,11 @@ class GeminiImageAnalyzer:
 
         processed = list(unique_corners.values())
 
-        # Группировка одинаковых обычных модулей
-        groups: Dict[str, List[RecognizedModule]] = {}
-        for m in regular:
-            key = f"{m.type}_{m.width}_{m.depth}_{m.height}"
-            groups.setdefault(key, []).append(m)
-
-        for key, mods in groups.items():
-            if len(mods) == 1:
-                processed.append(mods[0])
-            else:
-                total_qty = sum(m.quantity for m in mods)
-                merged = RecognizedModule(
-                    type=mods[0].type,
-                    width=mods[0].width,
-                    depth=mods[0].depth,
-                    height=mods[0].height,
-                    quantity=total_qty,
-                    has_glass=mods[0].has_glass,
-                    facades=mods[0].facades,
-                    drawers=mods[0].drawers,
-                    shelves=mods[0].shelves,
-                    is_corner=mods[0].is_corner,
-                    bbox=mods[0].bbox,
-                )
-                processed.append(merged)
-                logger.info(f"Merged {len(mods)}× {key} → qty={total_qty}")
+        # ── СЛИЯНИЕ РАЗДРОБЛЕННЫХ МОДУЛЕЙ ──
+        # Если два соседних модуля одного типа, высоты и глубины
+        # и их суммарная ширина ≤ 1200мм → это ОДИН корпус с несколькими фасадами
+        merged_regular = _merge_adjacent_modules(regular)
+        processed.extend(merged_regular)
 
         logger.info(f"Post-process: {len(result.modules)} → {len(processed)}")
 

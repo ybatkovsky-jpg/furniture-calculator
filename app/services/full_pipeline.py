@@ -286,13 +286,14 @@ class FullPipeline:
         total_pages: int,
     ):
         """
-        Обработать одну страницу: рендеринг → Фасадный анализ → Vision (fallback).
-        Основной метод: analyze_facades (Qwen3-VL-235B-Thinking, точность 93%).
-        Fallback: analyze_drawing (GLM-5V-Turbo, модульный подход).
+        Обработать одну страницу: рендеринг → Масштаб → Фасады → Модули (fallback).
+
+        1. analyze_facades_scaled (bbox + масштаб = точные мм)
+        2. analyze_facades (фасады со стандартными размерами)
+        3. analyze_drawing (модульный подход)
         """
         logger.info(f"  ▶ Стр. {page_num + 1}/{total_pages}...")
 
-        # Рендерим страницу
         jpeg_bytes = render_page(pdf_path, page_num)
 
         with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
@@ -300,14 +301,28 @@ class FullPipeline:
             tmp_path = tmp.name
 
         try:
-            # ── Попытка 1: Фасадный анализ (точный) ──
+            # ── 1. Масштабный фасадный анализ (bbox → точные мм) ──
+            scaled_facades, zone_type, materials = await self.vision.analyze_facades_scaled(tmp_path)
+
+            if scaled_facades:
+                from app.services.image_analyzer import RecognizedModule
+                modules = _scaled_facades_to_modules(scaled_facades)
+                logger.info(
+                    f"    ✅ Стр.{page_num + 1} (масштаб): "
+                    f"{len(scaled_facades)} фасадов → {len(modules)} модулей"
+                )
+                return RecognitionResult(
+                    modules=modules,
+                    confidence="high",
+                    zone_type=zone_type,
+                    materials_mentioned=materials or [],
+                )
+
+            # ── 2. Фасадный анализ (стандартные размеры) ──
             facade_result = await self.vision.analyze_facades(tmp_path)
             if facade_result.facades:
                 from app.services.image_analyzer import facades_to_modules
-                modules = facades_to_modules(
-                    facade_result.facades,
-                    zone_type=facade_result.zone_type,
-                )
+                modules = facades_to_modules(facade_result.facades, zone_type=facade_result.zone_type)
                 logger.info(
                     f"    ✅ Стр.{page_num + 1} (фасады): "
                     f"{len(facade_result.facades)} фасадов → {len(modules)} модулей"
@@ -318,13 +333,11 @@ class FullPipeline:
                     notes=facade_result.notes,
                     zone_type=facade_result.zone_type,
                     materials_mentioned=facade_result.materials_mentioned,
-                    model_used=facade_result.model_used,
                 )
 
-            # ── Попытка 2: Модульный анализ (fallback) ──
+            # ── 3. Модульный анализ (fallback) ──
             logger.info(f"    ⚠️ Фасады не найдены, пробуем модульный подход...")
-            recog_result = await self.vision.analyze_drawing(tmp_path)
-            return recog_result
+            return await self.vision.analyze_drawing(tmp_path)
 
         finally:
             Path(tmp_path).unlink(missing_ok=True)
@@ -458,6 +471,33 @@ class FullPipeline:
 # ================================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (module-level)
 # ================================================================
+
+def _scaled_facades_to_modules(scaled_facades) -> List:
+    """
+    Конвертировать ScaledFacade (с bbox-вычисленными размерами) в RecognizedModule.
+    """
+    from app.services.image_analyzer import RecognizedModule
+
+    modules = []
+    for sf in scaled_facades:
+        zone = sf.zone
+        if zone == "penal":
+            modules.append(RecognizedModule(
+                type="penal", width=sf.width_mm, depth=560, height=sf.height_mm,
+                quantity=1, facades={"count": 1, "type": "doors"}, shelves=0, is_corner=False,
+            ))
+        elif zone == "lower":
+            modules.append(RecognizedModule(
+                type="lower_base", width=sf.width_mm, depth=560, height=sf.height_mm,
+                quantity=1, facades={"count": 1, "type": "doors"}, shelves=1, is_corner=False,
+            ))
+        elif zone == "upper":
+            modules.append(RecognizedModule(
+                type="upper_base", width=sf.width_mm, depth=320, height=sf.height_mm,
+                quantity=1, facades={"count": 1, "type": "doors"}, shelves=1, is_corner=False,
+            ))
+    return modules
+
 
 # Маппинг: zone_type → «в + винительный падеж» для комбинированных названий
 ROOM_CONTEXT = {

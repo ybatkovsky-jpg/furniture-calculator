@@ -17,13 +17,14 @@ import logging
 import base64
 import io
 import time
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 from dataclasses import dataclass, field
 
 import httpx
 from PIL import Image
 
+from app.services.scale_calc import calculate_scaled_facades, ScaledFacade
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -169,6 +170,32 @@ FACADE_PROMPT = """Ты — конструктор-технолог мебель
 ОПРЕДЕЛИ: zone_type, materials, confidence
 
 Верни ТОЛЬКО JSON: {"zone_type":"...","materials":[],"facades":[{"width_mm":600,"height_mm":716,"zone":"lower"},...],"confidence":"...","notes":""}"""
+
+
+# ПРОМПТ С МАСШТАБОМ — модель даёт bbox, Python считает размеры
+SCALE_PROMPT = """Ты — конструктор-технолог мебельной фабрики. Проанализируй чертёж и перечисли ВСЕ фасады (дверцы) с их положением на изображении.
+
+Для КАЖДОГО фасада укажи:
+- zone: "lower", "upper", "penal"
+- bbox_x_pct: положение левого края фасада в процентах от ширины ИЗОБРАЖЕНИЯ (0-100)
+- bbox_w_pct: ширина фасада в процентах от ширины ИЗОБРАЖЕНИЯ (0-100)
+- Пеналы указывай отдельно (они не входят в общую ширину нижних/верхних)
+
+Также найди на чертеже ОБЩИЙ ГАБАРИТ нижних баз:
+- total_width_mm: общая ширина ВСЕХ нижних баз в мм (цифра с размерной линии)
+- Если габарит не указан одной цифрой — сложи все размеры нижних фасадов с чертежа
+
+ПРАВИЛА:
+- Каждая видимая дверца = ОДИН фасад
+- Планки-заполнители — НЕ фасады, игнорируй
+- Проценты оценивай визуально, не нужно считать пиксели
+
+ОПРЕДЕЛИ: zone_type, materials, confidence
+
+Верни ТОЛЬКО JSON:
+{"zone_type":"...","materials":[],"total_width_mm":3000,
+ "facades":[{"zone":"lower","bbox_x_pct":5,"bbox_w_pct":20},...],
+ "confidence":"...","notes":""}"""
 
 
 # ================================================================
@@ -542,6 +569,105 @@ class GeminiImageAnalyzer:
             materials_mentioned=result_data.get("materials", []),
             notes=result_data.get("notes"),
         )
+
+    # -----------------------------------------------------------
+    # ФАСАДНЫЙ МЕТОД С МАСШТАБОМ — bbox + Python = точные размеры
+    # -----------------------------------------------------------
+
+    async def analyze_facades_scaled(
+        self,
+        image_path: str | Path,
+    ) -> Tuple[List[ScaledFacade], Optional[str], List[str]]:
+        """
+        Фасадный анализ с вычислением размеров через bbox + масштаб.
+
+        1. Qwen3-VL-235B-Thinking даёт bbox фасадов + общий габарит
+        2. Python считает масштаб и переводит проценты в мм
+
+        Returns:
+            (facades: List[ScaledFacade], zone_type, materials)
+        """
+
+        SCALE_MODEL = "qwen/qwen3-vl-235b-a22b-thinking"
+
+        logger.info(f"📐 Масштабный анализ: {SCALE_MODEL}")
+
+        try:
+            client = await self._get_client()
+
+            # Предобработка
+            image = Image.open(image_path)
+            from PIL import ImageEnhance, ImageFilter
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(1.3)
+            image = image.filter(ImageFilter.SHARPEN)
+            max_size = 1536
+            if image.width > max_size or image.height > max_size:
+                ratio = min(max_size / image.width, max_size / image.height)
+                image = image.resize(
+                    (int(image.width * ratio), int(image.height * ratio)),
+                    Image.Resampling.LANCZOS
+                )
+
+            buffer = io.BytesIO()
+            image.save(buffer, format='JPEG', quality=85)
+            image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": SCALE_PROMPT},
+                    {"type": "image_url", "image_url": {
+                        "url": f"data:image/jpeg;base64,{image_base64}"
+                    }}
+                ]
+            }]
+
+            headers = {
+                "Authorization": f"Bearer {self.routerai_key}",
+                "Content-Type": "application/json",
+            }
+
+            body = {
+                "model": SCALE_MODEL,
+                "messages": messages,
+                "temperature": 0.0,
+                "max_tokens": 8000,
+            }
+
+            url = self._get_api_url("routerai", SCALE_MODEL)
+            response = await client.post(url, headers=headers, json=body)
+            response.raise_for_status()
+            response_data = response.json()
+
+            msg = response_data["choices"][0]["message"]
+            response_text = msg.get("content", "") or ""
+
+            # Парсим JSON
+            cleaned = self._extract_json(response_text)
+            data = json.loads(cleaned)
+
+            total_width_mm = data.get("total_width_mm", 0)
+            facades_data = data.get("facades", [])
+            zone_type = data.get("zone_type")
+
+            logger.info(
+                f"📐 Масштаб: габарит={total_width_mm}мм, "
+                f"фасадов={len(facades_data)}"
+            )
+
+            if total_width_mm <= 0:
+                logger.warning("Габарит не найден — используем стандартные размеры")
+                total_width_mm = 3000
+
+            # Считаем размеры через scale_calc
+            facades = calculate_scaled_facades(facades_data, total_width_mm)
+
+            return facades, zone_type, data.get("materials", [])
+
+        except Exception as e:
+            logger.error(f"Масштабный анализ не удался: {e}")
+            return [], None, []
 
     # -----------------------------------------------------------
     # ОДНА ПОПЫТКА (модульный метод)

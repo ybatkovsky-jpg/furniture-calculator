@@ -40,109 +40,20 @@ logger = logging.getLogger(__name__)
 
 # (искомые_слова_в_наименовании, поле_в_MaterialQuantities, единица_измерения, множитель)
 # множитель применяется к значению из MaterialQuantities перед записью в ячейку
-# Загружается из templates/row_mapping.json, fallback — хардкод
+# Загружается из templates/row_mapping.json (обязательный файл)
 import json as _json_mod
 _row_config_path = Path(__file__).parent.parent.parent / "templates" / "row_mapping.json"
-if _row_config_path.exists():
-    try:
-        with open(_row_config_path, "r", encoding="utf-8") as _f:
-            _data = _json_mod.load(_f)
-        ROW_MAPPING: List[Tuple[List[str], str, str, float]] = [
-            (item["keywords"], item["field"], item.get("unit", ""), item.get("multiplier", 1.0))
-            for item in _data.get("mappings", [])
-        ]
-        logger.info(f"📋 ROW_MAPPING из JSON: {len(ROW_MAPPING)} строк")
-    except Exception as _e:
-        logger.warning(f"Ошибка загрузки row_mapping.json: {_e} — fallback на хардкод")
-        ROW_MAPPING = _get_default_mapping()
-else:
-    ROW_MAPPING = _get_default_mapping()
-
-
-def _get_default_mapping() -> List[Tuple[List[str], str, str, float]]:
-    """Хардкод-маппинг как fallback (синхронизирован с row_mapping.json)."""
-    return [
-    (["EGGER ЛДСП", "однотон"], "ldsp_sheets_plain", "листов", 1.0),
-    (["EGGER ЛДСП", "текстура"], "ldsp_sheets_texture", "листов", 1.0),
-    (["EGGER ЛМДФ", "древесн"], "mdf_sheets", "листов", 1.0),
-    (["EXTRAVERT", "однотон"], "ldsp_sheets_plain_extravert", "листов", 1.0),
-    (["EXTRAVERT", "текстуры"], "ldsp_sheets_texture_extravert", "листов", 1.0),
-    (["LAMARTY", "однотон"], "ldsp_sheets_plain_lamarty", "листов", 1.0),
-    (["LAMARTY", "текстуры"], "ldsp_sheets_texture_lamarty", "листов", 1.0),
-    (["ТОМЛЕСДРЕВ", "однотон"], "ldsp_sheets_tomlesdrev", "листов", 1.0),
-
-    # ── КРОМКА ──
-    (["EGGER 0,4*19"], "edge_04_m", "м.п.", 1.0),
-    (["EGGER 0,8*19"], "edge_08_m", "м.п.", 1.0),
-    (["EGGER 2*19"], "edge_2_m", "м.п.", 1.0),
-    (["EGGER 2*35"], "edge_2_35_m", "м.п.", 1.0),
-    (["EXTRAVERT 0,4*19"], "edge_04_m_extravert", "м.п.", 1.0),
-    (["EXTRAVERT 0,8*19"], "edge_08_m_extravert", "м.п.", 1.0),
-    (["EXTRAVERT 2*19"], "edge_2_m_extravert", "м.п.", 1.0),
-
-    # ── ХДФ ──
-    (["ЛХДФ"], "hdf_sheets", "листов", 1.0),
-
-    # ── МДФ / Фасады ──
-    (["EMDIWAY (однотонные матовые"], "facades_m2_emdiway", "м²", 1.0),
-    (["EMDIWAY", "Titan 3108"], "facades_m2_emdiway_titan", "м²", 1.0),
-    (["ЛЕМАКОМ", "ФАСАДЫ одностор. ПВХ 16 мм, фрезеровка S"], "facades_m2_pvh_s", "м²", 1.0),
-    (["ЛЕМАКОМ", "ФАСАДЫ одностор. ПВХ 16 мм, фрезеровка K"], "facades_m2_pvh_k", "м²", 1.0),
-    (["Лемаком", "Прямой односторон. МАТОВЫЙ"], "facades_m2_paint_matte", "м²", 1.0),
-    (["Лемаком", "Прямой односторон. ГЛЯНЕЦ"], "facades_m2_paint_gloss", "м²", 1.0),
-
-    # ── Петли FIRMAX ──
-    (["Петля FIRMAX с доводчиком (накладная, вкладная)"], "hinges_firmax_closer", "шт", 1.0),
-    (["Петля FIRMAX без доводчика (вкладная, накладная)"], "hinges_firmax_no_closer", "шт", 1.0),
-
-    # ── Ящики BLUM ──
-    (["Ящик внутренний TANDEMBOX", "МФ-ГРУПП"], "drawers_internal_tandembox", "шт", 1.0),
-    (["Ящик стандартный для низких фасадов TANDEMBOX"], "drawers_tandembox", "шт", 1.0),
-    (["Ящик с 1м релингом для средних фасадов TANDEMBOX"], "drawers_tandembox_mid", "шт", 1.0),
-    (["Ящик с 2мя релингами для высоких фасадов TANDEMBOX"], "drawers_tandembox_high", "шт", 1.0),
-    (["Ящик стандартный для низких фасадов LEGRABOX"], "drawers_legrabox", "шт", 1.0),
-    (["Ящик  для средних фасадов LEGRABOX 144мм"], "drawers_legrabox_mid", "шт", 1.0),
-    (["Ящик  для высоких фасадов LEGRABOX 193 мм"], "drawers_legrabox_high", "шт", 1.0),
-
-    # ── Ящики BOYARD ──
-    (["Стандартный ящик тонкий СТАРТ h=86 мм для низких фасадов"], "drawers_boyard_start", "шт", 1.0),
-
-    # ── Gola ──
-    (["GOLA профиль горизонтальный 3 м (C,L)"], "gola_horizontal_3m", "шт", 1.0),
-    (["GOLA профиль вертикальный боковой", "3 м"], "gola_vertical_3m", "шт", 1.0),
-
-    # ── Подсветка ──
-    (["Подсветка LED (Бухта 5м)"], "led_strip_5m", "шт", 1.0),
-    (["Блок питания", "324"], "led_power_supply", "шт", 1.0),       # R324
-    (["Датчик", "325"], "led_sensor", "шт", 1.0),                     # R325
-
-    # ── Комплектующие ──
-    (["Сушка для посуды Alba, в модуль на 900мм"], "drying_rack", "шт", 1.0),
-    (["Выдвижная корзина 2-х уровн.(150) Flora BOYARD круглый пруток"], "bottle_holder_150", "шт", 1.0),
-    (["Выдвижная корзина 2-х уровн.(200) Flora BOYARD круглый пруток"], "bottle_holder_200", "шт", 1.0),
-    (["Лоток для столовых приборов"], "cutlery_tray", "шт", 1.0),
-
-    # ── Стекло ──
-    # Зеркало и стекло будут на отдельном листе «РАСЧЕТ ЗЕРКАЛ»
-
-    # ── НОВЫЕ ПОЗИЦИИ (v2.0) ──
-    (["Столешница", "постформинг"], "countertop_length_m", "м", 1.0),
-    (["Столешница", "искусственный камень"], "countertop_length_m", "м", 1.0),
-    (["Конфирмат", "7×50"], "confirmat_count", "шт", 1.0),
-    (["Регулируемая опора"], "adjustable_feet", "шт", 1.0),
-    (["Настенный подвес"], "wall_mounts", "шт", 1.0),
-    (["Цоколь ПВХ", "Rehau"], "plinth_strips", "шт", 1.0),
-    (["Штанга круглая", "D25"], "rods_round", "шт", 1.0),
-    (["Штанга прямоугольная", "антискользящая"], "rods_rectangular", "шт", 1.0),
-    (["Ручка накладная"], "handles_count", "шт", 1.0),
-    (["Плёнка ПВХ", "IVEGO"], "pvc_film_m2", "м²", 1.0),
-    (["Кромка МДФ", "1*22"], "edge_mdf_1mm_m", "м.п.", 1.0),
-    (["EVO 1*22"], "edge_mdf_1mm_m", "м.п.", 1.0),
-    (["AGT 1*22"], "edge_mdf_1mm_m", "м.п.", 1.0),
-    (["EMDIWEY"], "edge_mdf_1mm_m", "м.п.", 1.0),
-    (["ETERNO", "1*22"], "edge_mdf_1mm_m", "м.п.", 1.0),
-    (["SM`ART", "1*23"], "edge_mdf_1mm_m", "м.п.", 1.0),
-    ]
+if not _row_config_path.exists():
+    raise FileNotFoundError(
+        f"Файл row_mapping.json не найден: {_row_config_path}. Создайте его."
+    )
+with open(_row_config_path, "r", encoding="utf-8") as _f:
+    _data = _json_mod.load(_f)
+ROW_MAPPING: List[Tuple[List[str], str, str, float]] = [
+    (item["keywords"], item["field"], item.get("unit", ""), item.get("multiplier", 1.0))
+    for item in _data.get("mappings", [])
+]
+logger.info(f"📋 ROW_MAPPING из JSON: {len(ROW_MAPPING)} строк")
 
 
 def _find_row_for_material(ws, keywords: List[str]) -> Optional[int]:

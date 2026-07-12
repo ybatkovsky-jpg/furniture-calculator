@@ -650,48 +650,6 @@ def calculate_quantities(
     return q
 
 
-def _estimate_facade_weight(module: RecognizedModule, mat_props: dict) -> float:
-    """
-    Оценить вес фасада (кг) по материалу и размерам.
-    Используется для таблицы петель (Blum/Hettich).
-
-    Категории:
-    - ≤9 кг: ЛДСП 16мм, небольшие фасады
-    - ≤13 кг: ЛДСП 18мм, средние фасады
-    - ≤18 кг: МДФ крашеный/плёнка, большие фасады
-    - ≤22 кг: МДФ + стекло, массив, высокие пеналы
-    """
-    facade_type = mat_props.get("facade_type", "unknown")
-    has_glass = mat_props.get("has_glass", False) or module.has_glass
-
-    # Плотность: ЛДСП ~650 кг/м³, МДФ ~750 кг/м³
-    if module.facades and module.facades.get("count", 0) > 0:
-        fc = module.facades.get("count", 1)
-        # Площадь фасада в м²
-        fh = (module.height - 4) / 1000
-        fw = (module.width / fc - 3) / 1000
-        area_per_facade = fh * fw
-    else:
-        area_per_facade = (module.height / 1000) * (module.width / 1000)
-
-    # Базовая масса ЛДСП 16мм: ~10.4 кг/м²
-    # МДФ 18мм: ~13.5 кг/м²
-    if facade_type in ("paint_matte", "paint_gloss", "emdiway", "emdiway_titan"):
-        density_kg_m2 = 13.5   # МДФ
-    elif facade_type == "pvh":
-        density_kg_m2 = 12.0   # МДФ + плёнка
-    else:
-        density_kg_m2 = 10.4   # ЛДСП
-
-    weight = area_per_facade * density_kg_m2
-
-    # Стекло добавляет ~5-8 кг
-    if has_glass:
-        weight += 7
-
-    return weight
-
-
 def fill_template_for_room(
     modules: List[RecognizedModule],
     room_name: str,

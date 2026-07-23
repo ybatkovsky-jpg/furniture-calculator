@@ -29,6 +29,7 @@ class ScaledFacade:
     height_mm: int
     bbox_x_pct: float
     bbox_w_pct: float
+    is_corner: bool = False   # признак углового фасада (от модели, пробрасывается из JSON)
 
 
 # Стандартные высоты по зонам (если модель не прочитала с чертежа)
@@ -105,6 +106,7 @@ def calculate_scaled_facades(
             height_mm=height_mm,
             bbox_x_pct=x_pct,
             bbox_w_pct=w_pct,
+            is_corner=bool(f.get("is_corner", False)),
         ))
 
     # 4. Проверка: сумма ширин нижних фасадов ≈ total_width_mm

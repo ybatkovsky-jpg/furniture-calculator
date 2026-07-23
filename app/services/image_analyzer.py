@@ -110,19 +110,8 @@ UNIFIED_PROMPT = """Ты — конструктор-технолог мебел�
 2. Шкаф с несколькими фасадами НЕ дробить на несколько модулей.
 3. Размерные линии и выноски — НЕ модули, игнорируй их.
 4. Планки-заполнители (40-80мм) — НЕ модули, игнорируй.
-5. Если точный размер не читается — стандартный (низ: 560×820, верх: 320×720, пенал: 560×2500).
-6. ВСЕ размеры в мм, целыми числами. Никаких "см" или "м".
-7. Угловой модуль — всегда is_corner=true, width=depth. Глубина угла НЕ бывает 320мм.
-8. Пеналы считай отдельно — они не входят в группу нижних/верхних баз.
-9. Если видишь «×3» или «3 шт» — quantity=3.
-
-ОБЩИЕ ПРАВИЛА (нарушение = брак):
-1. Один физический корпус = ОДИН модуль. Две дверцы на одном корпусе = 1 модуль с facades.count=2.
-2. Шкаф с несколькими фасадами НЕ дробить на несколько модулей.
-3. Размерные линии и выноски — это НЕ модули, игнорируй их.
-4. Планки-заполнители (40-80мм) — НЕ модули, игнорируй.
 5. Модуль уже 150мм — скорее всего ошибка: проверь, не дверца ли это.
-6. Если точный размер не читается — стандартный (низ: 560×820, верх: 320×720, пенал: 560×2100).
+6. Если точный размер не читается — стандартный (низ: 560×820, верх: 320×720, пенал: 560×2500).
 7. ВСЕ размеры в мм, целыми числами. Никаких "см" или "м".
 8. Угловой модуль — всегда is_corner=true, width=depth. Глубина угла НЕ бывает 320мм.
 9. Пеналы считай отдельно — они не входят в группу нижних/верхних баз.
@@ -186,6 +175,8 @@ SCALE_PROMPT = """Ты — конструктор-технолог мебель�
 - total_width_mm: общая ширина ВСЕХ нижних баз в мм (цифра с размерной линии)
 - Если габарит не указан одной цифрой — сложи все размеры нижних фасадов с чертежа
 
+ЯЩИКИ: горизонтальная линия внутри нижнего фасада = ящики. Если видишь такие линии — укажи номера этих фасадов (начиная с 1) в drawer_indices. Например, если фасады 2 и 3 имеют горизонтальные линии внутри: "drawer_indices": [2, 3]. Если ящиков нет — "drawer_indices": [].
+
 ПРАВИЛА:
 - Каждая видимая дверца = ОДИН фасад
 - Планки-заполнители — НЕ фасады, игнорируй
@@ -196,6 +187,7 @@ SCALE_PROMPT = """Ты — конструктор-технолог мебель�
 Верни ТОЛЬКО JSON:
 {"zone_type":"...","materials":[],"total_width_mm":3000,
  "facades":[{"zone":"lower","bbox_x_pct":5,"bbox_w_pct":20},...],
+ "drawer_indices":[],
  "confidence":"...","notes":""}"""
 
 # ЕДИНЫЙ ПРОМПТ v2 (2026-07-12)
@@ -206,96 +198,172 @@ SCALE_PROMPT = """Ты — конструктор-технолог мебель�
 
 UNIFIED_PROMPT_V2 = """Ты — конструктор-технолог мебельной фабрики. Проанализируй чертёж корпусной мебели и верни структурированный JSON.
 
-===== ЗАДАЧА 1: РАЗМЕРНАЯ ЛИНИЯ (total_width_mm) =====
-Найди на чертеже размерную линию над рядом нижних шкафов. Это горизонтальная линия со СТРЕЛКАМИ на концах (← →) и одним числом. Она охватывает ВСЕ нижние модули от левого края до правого.
+═══════════════════════════════════════
+ТИПЫ МЕБЕЛИ (строго)
+═══════════════════════════════════════
+- lower_base — напольный модуль (на полу, H=700-900, D=500-600)
+- upper_base — навесной модуль (на стене, H=600-1000, D=280-350)
+- penal — высокий шкаф от пола до потолка (H=1800-2800, D=500-600). ВСЕГДА С КРАЮ!
+- corner — УГЛОВОЙ модуль. ВСЕГДА квадратный: W=D (600×600, 900×900, 1000×1000). ЭТО ОДИН МОДУЛЬ!
+
+═══════════════════════════════════════
+УСЛОВНЫЕ ОБОЗНАЧЕНИЯ НА ЧЕРТЕЖЕ
+═══════════════════════════════════════
+★ Пунктирные треугольники на дверце = направление открывания. Это НЕ отдельный модуль, это одна дверца!
+★ Горизонтальная линия внутри нижней базы = деление на ящики. ВСЯ база — ОДИН модуль.
+★ Вертикальная линия только в зоне фасада (не доходит до столешницы) = стык двух дверей. ОДИН модуль, facades.count=2.
+★ Вертикальная линия через ВЕСЬ корпус (от столешницы до пола) = граница между РАЗНЫМИ модулями.
+★ Штриховка/сетка на фасаде = стекло → has_glass=true.
+★ Пеналы: на всю высоту кухни, всегда с краю.
+
+═══════════════════════════════════════
+СТАНДАРТНЫЕ РАЗМЕРЫ (если не читается)
+═══════════════════════════════════════
+| Тип         | Ширина  | Глубина | Высота |
+|-------------|---------|---------|--------|
+| lower_base  | 600     | 560     | 820    |
+| upper_base  | 600     | 320     | 720    |
+| penal       | 600     | 560     | 2500   |
+| corner      | 900     | 900     | 820    |
+
+ОБЩИЕ ПРАВИЛА (нарушение = брак):
+1. Один физический корпус = ОДИН модуль. Две дверцы на одном корпусе = 1 модуль с facades.count=2.
+2. Шкаф с несколькими фасадами НЕ дробить на несколько модулей.
+3. Размерные линии и выноски — НЕ модули, игнорируй их.
+4. Планки-заполнители (40-80мм) — НЕ модули и НЕ дверцы, игнорируй.
+5. Модуль уже 150мм — скорее всего ошибка: проверь, не дверца ли это.
+6. ВСЕ размеры в мм, целыми числами. Никаких "см" или "м".
+7. Угловой модуль — всегда is_corner=true, W=D. Глубина угла НЕ бывает 320мм.
+8. Пеналы считай отдельно — они не входят в группу нижних/верхних баз.
+
+═══════════════════════════════════════
+ЗАДАЧА 1: РАЗМЕРНАЯ ЛИНИЯ (total_width_mm)
+═══════════════════════════════════════
+Найди ОСНОВНУЮ размерную линию с одним числом — это габарит изделия по ШИРИНЕ.
+
+Для разных изделий линия выглядит по-разному:
+- Кухня/гарнитур: горизонтальная линия со СТРЕЛКАМИ (← →) над рядом нижних шкафов, охватывает ВСЕ нижние модули от левого до правого края.
+- Шкаф-купе/гардероб/пенал: горизонтальная линия под или над корпусом — полная ширина одного шкафа.
+- Прихожая/стеллаж: суммарная ширина всех модулей в ряду.
 
 ПРОВЕРЬ СЕБЯ:
-- Число должно быть >1000мм и <8000мм
-- Если число <1000 — это размер отдельного шкафа, ищи линию над ВСЕМ рядом
+- Число должно быть >400мм и <8000мм
+- Если число <400 — это размер отдельной полки/дверцы, ищи линию над ВСЕМ изделием
 - Если видишь несколько размерных линий — бери ту, что ДЛИННЕЕ всех
-- Типичные значения: 1800, 2400, 3000, 3600, 4200
+- Типичные значения: 600, 800, 1000, 1200, 1500, 1800, 2400, 3000, 3600, 4200, 4800
 - Если размерная линия не читается — укажи total_width_mm=0
 
-===== ЗАДАЧА 2: BBOX ФАСАДОВ (facades) =====
-Для КАЖДОГО видимого фасада (дверцы) укажи:
+═══════════════════════════════════════
+ЗАДАЧА 2: ПЕРЕЧИСЛИ ВСЕ ДВЕРЦЫ (facades)
+═══════════════════════════════════════
+Перечисли ВООБЩЕ ВСЕ видимые дверцы на чертеже. Каждая дверца = ОДИН элемент.
+НЕ группируй! НЕ пропускай! Считай по одной, слева направо.
+
+Для КАЖДОЙ дверцы:
 - zone: "lower" | "upper" | "penal"
 - bbox_x_pct: позиция ЛЕВОГО края в % от ширины ИЗОБРАЖЕНИЯ (0-100)
-- bbox_w_pct: ШИРИНА фасада в % от ширины ИЗОБРАЖЕНИЯ (0-100)
-- is_corner: true ТОЛЬКО для углового фасада (обычно шире остальных)
+- bbox_w_pct: ШИРИНА в % от ширины ИЗОБРАЖЕНИЯ (0-100)
+- is_corner: true ТОЛЬКО для угловой дверцы
 
-ВАЖНО для bbox:
+ВАЖНО:
 - Оценивай проценты с точностью до 1% (не округляй до 5% или 10%)
-- Сумма bbox_w_pct всех НИЖНИХ фасадов ≈ их реальной доле на изображении
-- Пеналы НЕ включай в сумму нижних (они отдельно, с краю)
-- Планки-заполнители (40-80мм) НЕ учитывай — это не фасады
+- Сумма bbox_w_pct всех НИЖНИХ дверей ≈ их доле на изображении
+- Пеналы НЕ включай в сумму нижних (они с краю)
+- Планки-заполнители (40-80мм) игнорируй
+- Дверца с треугольником открывания = одна дверца (не модуль!)
+- Дверца со штриховкой/сеткой = стекло → has_glass_facades
 
-===== ЗАДАЧА 3: МОДУЛИ (modules) =====
-Сгруппируй фасады в модули. ОДИН физический корпус = ОДИН модуль.
+═══════════════════════════════════════
+ЗАДАЧА 3: ЯЩИКИ (drawer_indices)
+═══════════════════════════════════════
+Горизонтальная линия внутри фасада = деление на ящики (выдвижные ящики).
+Ищи такие линии в ЛЮБОМ фасаде: нижние базы, пеналы, высокие шкафы-купе
+(в шкафах-купе ящики часто в нижней зоне).
 
-ТИПЫ МОДУЛЕЙ:
-- lower_base: на полу, H=700-900, D=500-600
-- upper_base: навесной, H=600-1000, D=280-350
-- penal: высокий шкаф H=1800-2800, всегда С КРАЮ
-- corner: УГЛОВОЙ, ВСЕГДА квадратный width=depth
+Если видишь горизонтальные линии внутри фасада — укажи НОМЕР этого фасада
+(начиная с 1, в порядке перечисления в массиве facades) в drawer_indices.
 
-УСЛОВНЫЕ ОБОЗНАЧЕНИЯ:
-★ Пунктирный треугольник на дверце = направление открывания. Это одна дверца.
-★ Горизонтальная линия внутри нижней базы = ящики. Укажи drawers.count.
-★ Вертикальная линия ТОЛЬКО в зоне фасада = стык двух дверей. facades.count=2, ОДИН модуль.
-★ Вертикальная линия через ВЕСЬ корпус до пола = граница РАЗНЫХ модулей.
-★ Штриховка/сетка на фасаде = стекло → has_glass=true.
+Пример: если у фасадов №2 и №3 есть горизонтальные линии внутри:
+"drawer_indices": [2, 3]
+Если ящиков нет — "drawer_indices": []
 
-ЗАЩИТА ОТ ОШИБОК (если размер не читается — бери СТАНДАРТ):
-| Параметр          | Мин   | Макс  | Стандарт |
-|-------------------|-------|-------|----------|
-| Ширина модуля     | 250   | 1200  | 600      |
-| Глубина lower     | 500   | 600   | 560      |
-| Глубина upper     | 280   | 350   | 320      |
-| Высота lower_base | 700   | 900   | 820      |
-| Высота upper_base | 600   | 1000  | 720      |
-| Высота penal      | 1800  | 2800  | 2500     |
-| total_width_mm    | 1200  | 6000  | 0=не найден |
-| Модуль уже 150мм  | —     | —     | Это дверца, не модуль |
-| Угловой W≠D       | —     | —     | Это НЕ угловой → lower_base |
-
-===== ПРИМЕР 1: прямая кухня (3 нижних + 2 верхних) =====
+═══════════════════════════════════════
+ПРИМЕР 1: прямая кухня (5 дверей)
+═══════════════════════════════════════
 {"zone_type":"Кухня","materials":["EGGER H1379"],"total_width_mm":3000,
  "facades":[
-   {"zone":"lower","bbox_x_pct":5,"bbox_w_pct":20,"is_corner":false},
-   {"zone":"lower","bbox_x_pct":25,"bbox_w_pct":20,"is_corner":false},
-   {"zone":"lower","bbox_x_pct":45,"bbox_w_pct":20,"is_corner":false},
-   {"zone":"upper","bbox_x_pct":5,"bbox_w_pct":20,"is_corner":false},
-   {"zone":"upper","bbox_x_pct":25,"bbox_w_pct":20,"is_corner":false}
- ],
- "modules":[
-   {"type":"lower_base","width":600,"depth":560,"height":820,"quantity":3,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":0},"shelves":1,"is_corner":false},
-   {"type":"upper_base","width":600,"depth":320,"height":720,"quantity":2,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":0},"shelves":1,"is_corner":false}
- ],
- "confidence":"high","notes":""}
+   {"zone":"lower","bbox_x_pct":3,"bbox_w_pct":19,"is_corner":false},
+   {"zone":"lower","bbox_x_pct":23,"bbox_w_pct":19,"is_corner":false},
+   {"zone":"lower","bbox_x_pct":43,"bbox_w_pct":19,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":3,"bbox_w_pct":19,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":23,"bbox_w_pct":19,"is_corner":false}
+ ],"has_glass_facades":[],"drawer_indices":[],"confidence":"high","notes":""}
 
-===== ПРИМЕР 2: угловая кухня с пеналом =====
+═══════════════════════════════════════
+ПРИМЕР 2: угловая кухня с пеналом (7 дверей)
+═══════════════════════════════════════
 {"zone_type":"Кухня","materials":["EGGER H3158","МДФ матовый"],"total_width_mm":3300,
  "facades":[
-   {"zone":"lower","bbox_x_pct":3,"bbox_w_pct":27,"is_corner":true},
-   {"zone":"lower","bbox_x_pct":30,"bbox_w_pct":18,"is_corner":false},
-   {"zone":"lower","bbox_x_pct":48,"bbox_w_pct":18,"is_corner":false},
-   {"zone":"upper","bbox_x_pct":30,"bbox_w_pct":18,"is_corner":false},
-   {"zone":"upper","bbox_x_pct":48,"bbox_w_pct":18,"is_corner":false},
-   {"zone":"penal","bbox_x_pct":70,"bbox_w_pct":18,"is_corner":false}
- ],
- "modules":[
-   {"type":"corner","width":900,"depth":900,"height":820,"quantity":1,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":0},"shelves":0,"is_corner":true},
-   {"type":"lower_base","width":600,"depth":560,"height":820,"quantity":2,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":1},"shelves":1,"is_corner":false},
-   {"type":"upper_base","width":600,"depth":320,"height":720,"quantity":2,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":0},"shelves":1,"is_corner":false},
-   {"type":"penal","width":600,"depth":560,"height":2500,"quantity":1,"has_glass":false,"facades":{"count":1,"type":"doors"},"drawers":{"count":0},"shelves":0,"is_corner":false}
- ],
- "confidence":"high","notes":""}
+   {"zone":"lower","bbox_x_pct":2,"bbox_w_pct":26,"is_corner":true},
+   {"zone":"lower","bbox_x_pct":28,"bbox_w_pct":13,"is_corner":false},
+   {"zone":"lower","bbox_x_pct":41,"bbox_w_pct":13,"is_corner":false},
+   {"zone":"lower","bbox_x_pct":54,"bbox_w_pct":14,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":28,"bbox_w_pct":13,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":41,"bbox_w_pct":13,"is_corner":false},
+   {"zone":"penal","bbox_x_pct":72,"bbox_w_pct":13,"is_corner":false}
+ ],"has_glass_facades":[3,7],"drawer_indices":[2],"confidence":"high","notes":""}
+
+═══════════════════════════════════════
+ПРИМЕР 3: большая кухня (16 дверей)
+═══════════════════════════════════════
+{"zone_type":"Кухня","materials":["EGGER H1379","EGGER H3158"],"total_width_mm":3600,
+ "facades":[
+   {"zone":"lower","bbox_x_pct":2,"bbox_w_pct":10,"is_corner":false},
+   {"zone":"lower","bbox_x_pct":12,"bbox_w_pct":10,"is_corner":false},
+   {"zone":"lower","bbox_x_pct":22,"bbox_w_pct":10,"is_corner":false},
+   {"zone":"lower","bbox_x_pct":32,"bbox_w_pct":10,"is_corner":false},
+   {"zone":"lower","bbox_x_pct":42,"bbox_w_pct":10,"is_corner":false},
+   {"zone":"lower","bbox_x_pct":52,"bbox_w_pct":10,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":2,"bbox_w_pct":9,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":11,"bbox_w_pct":9,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":20,"bbox_w_pct":9,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":29,"bbox_w_pct":9,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":38,"bbox_w_pct":9,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":47,"bbox_w_pct":9,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":56,"bbox_w_pct":9,"is_corner":false},
+   {"zone":"penal","bbox_x_pct":70,"bbox_w_pct":10,"is_corner":false},
+   {"zone":"penal","bbox_x_pct":80,"bbox_w_pct":10,"is_corner":false},
+   {"zone":"penal","bbox_x_pct":91,"bbox_w_pct":10,"is_corner":false}
+ ],"has_glass_facades":[1,9],"drawer_indices":[],"confidence":"high","notes":""}
+
+═══════════════════════════════════════
+ПРИМЕР 4: шкаф-купе в спальню (3 двери)
+═══════════════════════════════════════
+{"zone_type":"Спальня","materials":["EGGER H3158"],"total_width_mm":1800,
+ "facades":[
+   {"zone":"upper","bbox_x_pct":3,"bbox_w_pct":31,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":35,"bbox_w_pct":31,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":67,"bbox_w_pct":31,"is_corner":false}
+ ],"has_glass_facades":[],"drawer_indices":[],"confidence":"high","notes":"Шкаф-купе 1800×600×2500, раздвижные двери"}
+
+═══════════════════════════════════════
+ПРИМЕР 5: гардеробная (4 модуля)
+═══════════════════════════════════════
+{"zone_type":"Гардеробная","materials":["LAMARTY H1185"],"total_width_mm":2400,
+ "facades":[
+   {"zone":"penal","bbox_x_pct":3,"bbox_w_pct":23,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":27,"bbox_w_pct":23,"is_corner":false},
+   {"zone":"upper","bbox_x_pct":51,"bbox_w_pct":23,"is_corner":false},
+   {"zone":"lower","bbox_x_pct":75,"bbox_w_pct":23,"is_corner":false}
+ ],"has_glass_facades":[],"drawer_indices":[1,4],"confidence":"high","notes":"Гардеробная 2400×600, ящики в пенале №1 и нижнем модуле №4"}
 
 ОПРЕДЕЛИ ЗОНУ (строго одно из): Кухня, Гостиная, Спальня, Детская, Прихожая, Ванная, Гардеробная, Кабинет, Балкон, Столовая, Постирочная.
 
-Верни ТОЛЬКО валидный JSON с полями: zone_type, materials, total_width_mm, facades, modules, confidence, notes.
+МАТЕРИАЛЫ: если указаны декоры (EGGER H1379, H3158 и т.п.) — перечисли в materials.
 
-confidence: "high" если размерная линия прочитана; "medium" если часть размеров оценена; "low" если много предположений или чертёж нестандартный."""
+Верни ТОЛЬКО валидный JSON с полями: zone_type, materials, total_width_mm, facades, has_glass_facades, drawer_indices, confidence, notes.
+
+confidence: "high" если размерная линия прочитана; "medium" если часть размеров оценена; "low" если много предположений."""
 
 
 # ================================================================
@@ -719,11 +787,11 @@ class GeminiImageAnalyzer:
         """
         Единый анализ страницы чертежа.
 
-        1. Qwen3-VL-235B с UNIFIED_PROMPT_V2:
-           - bbox фасадов в процентах + total_width_mm с размерной линии
-           - типы модулей, фасады, ящики, стекло, материалы
-        2. Если total_width_mm > 0 → scale_calc → точные мм
-        3. Слияние: точные размеры из bbox + метаданные из modules
+        1. Qwen3-VL-235B с UNIFIED_PROMPT_V2 (только дверцы + габарит):
+           - bbox КАЖДОЙ дверцы в процентах + total_width_mm с размерной линии
+           - Python вычисляет точные мм через scale_calc
+           - Python группирует дверцы в модули (без помощи модели!)
+        2. Если total_width_mm <= 0 → fallback на стандартные размеры
 
         Returns:
             (modules, zone_type, materials, confidence)
@@ -790,14 +858,16 @@ class GeminiImageAnalyzer:
 
             total_width_mm = data.get("total_width_mm", 0)
             facades_data = data.get("facades", [])
-            modules_data = data.get("modules", [])
+            glass_indices = set(data.get("has_glass_facades", []))
+            drawer_indices = set(data.get("drawer_indices", []))
             zone_type = data.get("zone_type")
             materials = data.get("materials", [])
             confidence = data.get("confidence", "medium")
 
             logger.info(
                 f"📐 Единый: габарит={total_width_mm}мм, "
-                f"фасадов={len(facades_data)}, модулей={len(modules_data)}, "
+                f"дверей={len(facades_data)}, "
+                f"ящиков={len(drawer_indices)}, "
                 f"confidence={confidence}"
             )
 
@@ -806,18 +876,18 @@ class GeminiImageAnalyzer:
             if total_width_mm > 0 and facades_data:
                 scaled_facades = calculate_scaled_facades(facades_data, total_width_mm)
                 logger.info(
-                    f"📏 Масштаб: {len(scaled_facades)} фасадов с вычисленными размерами"
+                    f"📏 Масштаб: {len(scaled_facades)} дверей с вычисленными размерами"
                 )
             elif total_width_mm <= 0:
-                logger.warning("Габарит не найден — используем стандартные размеры из modules")
+                logger.warning("Габарит не найден — вернусь к стандартным размерам")
+                return [], zone_type, materials, "low"
 
-            # Собираем RecognizedModule
-            modules = self._build_modules(
-                modules_data=modules_data,
-                scaled_facades=scaled_facades,
-                facades_data=facades_data,
-                zone_type=zone_type,
-            )
+            if not scaled_facades:
+                logger.warning("Не удалось вычислить размеры — вернусь к стандартным")
+                return [], zone_type, materials, "low"
+
+            # Python: создаём модули из фасадов (без помощи модели!)
+            modules = self._facades_to_modules(scaled_facades, zone_type, glass_indices, drawer_indices)
 
             return modules, zone_type, materials, confidence
 
@@ -825,113 +895,116 @@ class GeminiImageAnalyzer:
             logger.error(f"Единый анализ не удался: {type(e).__name__}: {e}")
             return [], None, [], "low"
 
-    def _build_modules(
+    def _facades_to_modules(
         self,
-        modules_data: List[Dict],
         scaled_facades: List,
-        facades_data: List[Dict],
         zone_type: Optional[str] = None,
+        glass_indices: set = None,
+        drawer_indices: set = None,
     ) -> List[RecognizedModule]:
         """
-        Собрать RecognizedModule из ответа модели.
+        Python-группировка: отдельные дверцы → модули мебели.
 
-        Приоритет размеров:
-        1. bbox-вычисленные (scaled_facades) — самые точные
-        2. Из modules (прямое чтение моделью) — если нет bbox
-        3. Стандартные из FURNITURE_DEFAULTS — если ни один источник не дал размеров
+        Правила:
+        - Каждая дверца = потенциально отдельный модуль
+        - Дверцы одной зоны (lower/upper/penal) с одинаковой шириной (±30mm) = один тип модуля
+        - Угловая дверца (is_corner) → модуль corner (квадратный)
+        - Пенал → всегда отдельный модуль (не группируем!)
+        - Дверцы с одинаковой шириной группируются с quantity=N
+        - drawer_indices: индексы фасадов с ящиками (1-based)
         """
+        if not scaled_facades:
+            return []
+
+        rules = get_rules(zone_type)
+        glass_indices = glass_indices or set()
+        drawer_indices = drawer_indices or set()
+
         modules = []
 
-        # Правила для этого типа помещения
-        rules = get_rules(zone_type)
+        # Группируем по зонам
+        by_zone = {}
+        for i, sf in enumerate(scaled_facades):
+            zone = sf.zone if sf.zone in ("lower", "upper", "penal") else "lower"
+            by_zone.setdefault(zone, []).append((i, sf))
 
-        # Индекс bbox-размеров по zone
-        scaled_by_zone = {}
-        for sf in scaled_facades:
-            scaled_by_zone.setdefault(sf.zone, []).append(sf)
+        for zone in ["lower", "upper", "penal"]:
+            zone_items = by_zone.get(zone, [])
+            if not zone_items:
+                continue
 
-        # Стандартные размеры из правил
-        default_dims = {
-            "lower":  {"depth": rules.default_depth_lower, "height": rules.default_height_lower},
-            "upper":  {"depth": rules.default_depth_upper, "height": rules.default_height_upper},
-            "penal":  {"depth": rules.default_depth_lower, "height": rules.default_height_penal},
-            "corner": {"depth": 900, "height": rules.default_height_corner},
-            "wardrobe": {"depth": rules.default_depth_wardrobe, "height": rules.default_height_lower},
-            "tall_cabinet": {"depth": rules.default_depth_tall, "height": rules.default_height_lower},
-            "shelf_unit": {"depth": rules.default_depth_shelf, "height": rules.default_height_lower},
-            "vanity": {"depth": rules.default_depth_vanity, "height": rules.default_height_lower},
-            "drawer_unit": {"depth": rules.default_depth_lower, "height": rules.default_height_lower},
-            "open_unit": {"depth": rules.default_depth_shelf, "height": rules.default_height_lower},
-        }
+            # Сортируем по ширине для группировки
+            zone_items.sort(key=lambda x: x[1].width_mm)
 
-        # Собираем модули — метаданные из modules_data, размеры из bbox
-        zone_idx = {"lower": 0, "upper": 0, "penal": 0, "corner": 0}
+            i = 0
+            while i < len(zone_items):
+                idx, sf = zone_items[i]
 
-        for md in modules_data:
-            try:
-                m_type = md.get("type", "lower_base")
-                zone = m_type if m_type in ("corner",) else (
-                    "penal" if m_type == "penal" else
-                    "upper" if m_type == "upper_base" else "lower"
+                # Угловой → отдельный модуль
+                is_corner = getattr(sf, 'is_corner', False) or (
+                    zone == "lower" and sf.width_mm >= 800 and sf.width_mm <= 1100
                 )
 
-                # Размеры: приоритет у bbox, иначе из modules, иначе из FURNITURE_DEFAULTS
-                defaults = default_dims.get(m_type, default_dims["lower"])
-
-                width = int(md.get("width", 0))
-                depth = int(md.get("depth", 0)) or defaults["depth"]
-                height = int(md.get("height", 0)) or defaults["height"]
-                height = int(md.get("height", 0)) or defaults["height"]
-
-                # Если есть bbox-размеры для этой zone — используем их
-                sf_list = scaled_by_zone.get(zone, [])
-                idx = zone_idx.get(zone, 0)
-                if sf_list and idx < len(sf_list):
-                    sf = sf_list[idx]
-                    width = sf.width_mm
-                    if sf.height_mm and sf.height_mm > 0:
-                        height = sf.height_mm
-                    zone_idx[zone] = idx + 1
-                    logger.debug(
-                        f"  {m_type}: bbox {width}×{height} (вместо {md.get('width',0)}×{md.get('height',0)})"
-                    )
-                elif width <= 0:
-                    width = defaults.get("std_w", 600)
-
-                # Валидация
-                if width < 250 or width > 1200:
-                    width = 600
-
-                is_corner = (
-                    m_type == "corner"
-                    or md.get("is_corner", False)
-                    or (m_type == "lower_base" and width == depth and width in (600, 900, 1000))
-                )
-
-                module = RecognizedModule(
-                    type="corner" if is_corner else m_type,
-                    width=width,
-                    depth=depth if not is_corner else width,  # corner: depth=width
-                    height=height,
-                    quantity=md.get("quantity", 1),
-                    has_glass=md.get("has_glass", False),
-                    facades=md.get("facades"),
-                    drawers=md.get("drawers"),
-                    shelves=md.get("shelves", 0),
-                    is_corner=is_corner,
-                )
-
-                # Валидация размеров
-                is_valid, reason = _validate_module(module)
-                if not is_valid:
-                    logger.warning(f"⚠️ Пропущен модуль: {reason}, data={md}")
+                if is_corner:
+                    modules.append(RecognizedModule(
+                        type="corner",
+                        width=sf.width_mm,
+                        depth=sf.width_mm,  # corner: квадратный
+                        height=sf.height_mm,
+                        quantity=1,
+                        is_corner=True,
+                        has_glass=(idx + 1) in glass_indices,
+                        facades={"count": 1, "type": "doors"},
+                        drawers={"count": 1} if (idx + 1) in drawer_indices else None,
+                    ))
+                    i += 1
                     continue
 
-                modules.append(module)
+                # Пенал → ВСЕГДА отдельный модуль (даже если несколько рядом)
+                if zone == "penal":
+                    modules.append(RecognizedModule(
+                        type="penal",
+                        width=sf.width_mm,
+                        depth=rules.default_depth_lower,  # глубина как у нижних баз
+                        height=sf.height_mm,
+                        quantity=1,
+                        has_glass=(idx + 1) in glass_indices,
+                        facades={"count": 1, "type": "doors"},
+                    ))
+                    i += 1
+                    continue
 
-            except Exception as e:
-                logger.warning(f"Ошибка сборки модуля: {e}, data={md}")
-                continue
+                # Группируем дверцы с одинаковой шириной (±30mm)
+                group = [(idx, sf)]
+                j = i + 1
+                while j < len(zone_items):
+                    jdx, jsf = zone_items[j]
+                    if abs(jsf.width_mm - sf.width_mm) <= 30:
+                        group.append((jdx, jsf))
+                        j += 1
+                    else:
+                        break
+
+                avg_width = sum(g[1].width_mm for g in group) // len(group)
+                avg_height = sum(g[1].height_mm for g in group) // len(group)
+                any_glass = any((g[0] + 1) in glass_indices for g in group)
+                any_drawer = any((g[0] + 1) in drawer_indices for g in group)
+
+                mtype = {"lower": "lower_base", "upper": "upper_base"}.get(zone, "lower_base")
+                depth = rules.default_depth_upper if zone == "upper" else rules.default_depth_lower
+
+                modules.append(RecognizedModule(
+                    type=mtype,
+                    width=avg_width,
+                    depth=depth,
+                    height=avg_height,
+                    quantity=len(group),
+                    has_glass=any_glass,
+                    facades={"count": 1, "type": "doors"},
+                    drawers={"count": 1} if any_drawer else None,
+                ))
+
+                i = j
 
         return modules
 

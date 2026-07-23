@@ -10,6 +10,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import or_, select
 
 from app.bot.states.price_admin import PriceAdminStates
+from app.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.price import PriceHistory, PriceItem
 from app.services.price_manager import import_price_from_xlsx
@@ -30,6 +31,9 @@ def parse_price_value(value: str) -> float | None:
 
 @router.message(Command("price_upload"))
 async def cmd_price_upload(message: Message, state: FSMContext):
+    if not settings.is_admin(message.from_user.id if message.from_user else 0):
+        await message.answer("⛔ Недостаточно прав для загрузки прайса.")
+        return
     await state.set_state(PriceAdminStates.waiting_for_file)
     await message.answer("📤 Отправьте файл XLSX с прайсом.")
 
@@ -104,6 +108,9 @@ async def cmd_price_edit(message: Message):
     # Проверяем, что пользователь существует
     if not message.from_user:
         await message.answer("Ошибка: пользователь не найден.")
+        return
+    if not settings.is_admin(message.from_user.id):
+        await message.answer("⛔ Недостаточно прав для редактирования прайса.")
         return
 
     text = message.text or ""

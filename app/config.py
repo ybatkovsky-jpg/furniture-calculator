@@ -16,6 +16,21 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str = Field(default="", description="Токен Telegram-бота")
 
+    # Администраторы — ID через запятую, которым доступны команды управления прайсом
+    # (price_upload, price_edit). Берётся из ADMIN_TELEGRAM_IDS в .env
+    admin_telegram_ids: str = Field(default="", description="ID админов через запятую")
+
+    def is_admin(self, user_id: int | str) -> bool:
+        """Проверить, является ли пользователь администратором.
+
+        Возвращает True, если список админов пуст (открытый режим,
+        как было исторически) ИЛИ user_id есть в ADMIN_TELEGRAM_IDS.
+        """
+        if not self.admin_telegram_ids.strip():
+            return True
+        allowed = {s.strip() for s in self.admin_telegram_ids.split(",") if s.strip()}
+        return str(user_id) in allowed
+
     # Vision LLM — Z.ai (основной: GLM-5V-Turbo) / RouterAI.ru (ансамбль: Qwen3-VL)
     zai_api_key: str = Field(default="", description="Ключ Z.ai API (GLM-5V-Turbo, GLM-OCR)")
     openrouter_api_key: str = Field(default="", description="Ключ OpenRouter API (устарел, заменён на RouterAI)")

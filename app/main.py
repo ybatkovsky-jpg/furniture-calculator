@@ -6,28 +6,37 @@
 
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
+import os
+
 from app.config import settings
 from app.db import init_db
 from app.bot.bot import bot, dp, setup_bot_commands
 from app.bot.handlers import start_router, price_router, project_router, image_router, manual_input_router, materials_router, calculation_router, discounts_router, kp_router
 
 # Логирование
+# Уровень берётся из LOG_LEVEL (по умолчанию INFO — DEBUG слишком шумный для прода,
+# пишет base64 изображений и полные ответы LLM).
+# Ротация: до 10МБ на файл, 3 бэкапа — защищает от переполнения диска.
+_log_level = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=_log_level,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("bot_debug.log", encoding='utf-8'),
-        logging.StreamHandler()
-    ]
+        RotatingFileHandler(
+            "bot_debug.log", maxBytes=10_000_000, backupCount=3, encoding="utf-8"
+        ),
+        logging.StreamHandler(),
+    ],
 )
 logger = logging.getLogger(__name__)
 
 
 async def main():
     """Главная функция запуска приложения."""
-    
+
     logger.info("🚀 Запуск мебельного калькулятора...")
-    
+
     # 1. Создаём таблицы в БД
     try:
         await init_db()
@@ -35,7 +44,7 @@ async def main():
     except Exception as e:
         logger.error(f"✗ Ошибка при инициализации БД: {e}")
         raise
-    
+
     # 2. Подключаем routers (обработчики)
     dp.include_router(start_router)
     dp.include_router(price_router)
@@ -47,22 +56,22 @@ async def main():
     dp.include_router(discounts_router)
     dp.include_router(kp_router)
     logger.info("✓ Handlers подключены")
-    
+
     # 3. Устанавливаем команды бота
     try:
         await setup_bot_commands()
     except Exception as e:
         logger.warning(f"⚠ Ошибка при установке команд: {e}")
-    
+
     # 4. Удаляем вебхуки (если были)
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("✓ Вебхуки очищены")
-    
+
     # 5. Запускаем polling
     logger.info("✓ Бот запущен на polling")
-    logger.info(f"📝 Токен бота: {settings.telegram_bot_token[:10]}...")
+    logger.info("📝 Токен бота: ****<скрыт>")  # не логируем токен — секрет
     logger.info(f"📦 БД: {settings.database_url}")
-    
+
     try:
         await dp.start_polling(
             bot,

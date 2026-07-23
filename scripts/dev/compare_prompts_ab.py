@@ -4,7 +4,7 @@ A/B сравнение промптов: SCALE_PROMPT (старый) vs UNIFIED_
 Прогоняет ОБА промпта на эталонных изображениях через одну модель
 (Qwen3-VL-235B, RouterAI) и печатает сравнительную таблицу.
 
-Использование: python compare_prompts_ab.py
+Использование: python scripts/dev/compare_prompts_ab.py
 Требует: ключи ROUTERAI_API_KEY / ZAI_API_KEY в .env
 
 Стоимость: ~2 вызова × N изображений. По умолчанию N=3.
@@ -18,6 +18,11 @@ import logging
 import sys
 from pathlib import Path
 
+# Добавляем корень проекта в sys.path для импорта app.*
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import httpx
 from PIL import Image, ImageEnhance, ImageFilter
 
@@ -29,10 +34,11 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 MODEL = "qwen/qwen3-vl-235b-a22b-thinking"
+_IMG_DIR = _PROJECT_ROOT / "input_images"
 IMAGES = [
-    "input_images/Альбом чертежей Рокоссовского-59-79_page-0003.jpg",
-    "input_images/Альбом чертежей Рокоссовского-59-79_page-0005.jpg",
-    "input_images/Альбом чертежей Рокоссовского-59-79_page-0007.jpg",
+    str(_IMG_DIR / "Альбом чертежей Рокоссовского-59-79_page-0003.jpg"),
+    str(_IMG_DIR / "Альбом чертежей Рокоссовского-59-79_page-0005.jpg"),
+    str(_IMG_DIR / "Альбом чертежей Рокоссовского-59-79_page-0007.jpg"),
 ]
 
 
@@ -175,7 +181,7 @@ async def main():
                     print(f"  ✅ V2 нашёл стекло: {summary_b['has_glass_facades']} (SCALE не нашёл)")
 
             # Сохраняем полные ответы для детального разбора
-            out_dir = Path("output/ab_comparison")
+            out_dir = _PROJECT_ROOT / "output" / "ab_comparison"
             out_dir.mkdir(parents=True, exist_ok=True)
             stem = p.stem.replace(" ", "_")
             if summary_a:

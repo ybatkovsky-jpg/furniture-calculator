@@ -10,3 +10,12 @@ venv/
 data/*.db
 *.log
 nul
+
+# Данные и артефакты пайплайна
+input_images/
+output/
+temp/
+
+# Метаданные инструментов (агенты)
+.session/
+.zcode/

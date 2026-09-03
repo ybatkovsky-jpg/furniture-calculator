@@ -51,6 +51,20 @@ class Settings(BaseSettings):
     # Gemini Flash (устаревший, оставлен для совместимости)
     gemini_api_key: str = Field(default="", description="Ключ Google Gemini API")
 
+    # Локальный LLM-сервер (OpenAI-compatible, напр. Qwen3.8 GGUF через llama.cpp)
+    local_llm_api_url: str = Field(
+        default="",
+        description="Base URL локального OpenAI-совместимого сервера "
+                    "(напр. http://192.168.1.133:8888/v1). Пусто — выключено."
+    )
+    local_llm_api_key: str = Field(
+        default="", description="API-ключ локального сервера (если требуется)"
+    )
+    local_vision_model: str = Field(
+        default="unsloth/Qwen3.8-27B-GGUF",
+        description="Имя модели на локальном сервере"
+    )
+
     # База данных
     database_url: str = Field(
         default="sqlite+aiosqlite:///./data/furniture.db",

@@ -15,7 +15,8 @@ import sys
 import logging
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,8 +28,8 @@ from app.services.image_analyzer import GeminiImageAnalyzer, RecognitionResult
 from app.services.full_pipeline import PipelineResult, RoomSpec
 from app.services.template_filler import fill_template_from_pipeline
 
-TEMPLATE = Path(__file__).parent / "templates" / "Таблица для расчетов пустая.xlsx"
-OUTPUT_DIR = Path(__file__).parent / "output"
+TEMPLATE = ROOT / "templates" / "Таблица для расчетов пустая.xlsx"
+OUTPUT_DIR = ROOT / "output"
 
 
 async def process_images(image_paths: list[str], output_name: str = "Расчет") -> str:

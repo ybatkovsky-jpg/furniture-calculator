@@ -480,6 +480,7 @@ class GeminiImageAnalyzer:
     Анализатор изображений чертежей через Vision LLM.
 
     Провайдеры:
+    0. Локальный сервер (Qwen3.8 GGUF, OpenAI-compatible) — если настроен LOCAL_LLM_API_URL
     1. RouterAI.ru Qwen3-VL-235B — основной (bbox + типы модулей)
     2. Z.ai GLM-5V-Turbo — fallback (быстрый, дешёвый)
     """
@@ -497,9 +498,17 @@ class GeminiImageAnalyzer:
         self.primary_model = settings.vision_model
         self.api_url = settings.vision_api_url
 
+        # Локальный LLM-сервер (OpenAI-compatible), если настроен
+        self.local_llm_url = settings.local_llm_api_url.rstrip("/")
+        self.local_llm_key = settings.local_llm_api_key
+        self.local_vision_model = settings.local_vision_model
+
         self.client: Optional[httpx.AsyncClient] = None
 
-        providers = ["Z.ai"]
+        providers = []
+        if self.local_llm_url:
+            providers.append(f"Local ({self.local_vision_model})")
+        providers.append("Z.ai")
         if self.routerai_key:
             providers.append("RouterAI.ru")
         logger.info(
@@ -509,7 +518,9 @@ class GeminiImageAnalyzer:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self.client is None:
-            self.client = httpx.AsyncClient(timeout=httpx.Timeout(180.0))
+            # Локальный 27B-модель генерирует медленно — даём больше времени
+            timeout = 900.0 if self.local_llm_url else 180.0
+            self.client = httpx.AsyncClient(timeout=httpx.Timeout(timeout))
         return self.client
 
     async def close(self):
@@ -530,9 +541,10 @@ class GeminiImageAnalyzer:
         Простой модульный анализ (одна модель, без ансамбля и цепочек).
 
         Используется как fallback, если analyze_page() не дал модулей.
-        По умолчанию — FALLBACK_MODEL (glm-5v-turbo через Z.ai).
+        По умолчанию — локальная модель (если настроена), иначе
+        FALLBACK_MODEL (glm-5v-turbo через Z.ai).
         """
-        model = model or self.FALLBACK_MODEL
+        model = model or (self.local_vision_model if self.local_llm_url else self.FALLBACK_MODEL)
         provider = self._detect_provider(model)
 
         logger.info(f"🔄 Fallback: {model} ({provider})")
@@ -796,9 +808,10 @@ class GeminiImageAnalyzer:
         Returns:
             (modules, zone_type, materials, confidence)
         """
-        MODEL = "qwen/qwen3-vl-235b-a22b-thinking"
+        use_local = bool(self.local_llm_url)
+        MODEL = self.local_vision_model if use_local else "qwen/qwen3-vl-235b-a22b-thinking"
 
-        logger.info(f"🎯 Единый анализ: {MODEL}")
+        logger.info(f"🎯 Единый анализ: {MODEL} ({'local' if use_local else 'RouterAI'})")
 
         try:
             client = await self._get_client()
@@ -832,7 +845,7 @@ class GeminiImageAnalyzer:
             }]
 
             headers = {
-                "Authorization": f"Bearer {self.routerai_key}",
+                "Authorization": f"Bearer {(self.local_llm_key if use_local else self.routerai_key)}",
                 "Content-Type": "application/json",
             }
 
@@ -840,11 +853,18 @@ class GeminiImageAnalyzer:
                 "model": MODEL,
                 "messages": messages,
                 "temperature": 0.0,
-                "max_tokens": 8000,
-                "response_format": {"type": "json_object"},
+                # Локальная — thinking-модель: запас на длинный JSON
+                "max_tokens": 16000 if use_local else 8000,
             }
+            if not use_local:
+                body["response_format"] = {"type": "json_object"}
+            else:
+                # Локальный сервер (unsloth-studio): response_format не поддержан —
+                # JSON извлекается через _extract_json. Thinking выключен: иначе
+                # reasoning съедает бюджет токенов и засоряет ответ рассуждениями.
+                body["chat_template_kwargs"] = {"enable_thinking": False}
 
-            url = self._get_api_url("routerai", MODEL)
+            url = self._get_api_url("local" if use_local else "routerai", MODEL)
             response = await client.post(url, headers=headers, json=body)
             response.raise_for_status()
             response_data = response.json()
@@ -1081,8 +1101,14 @@ class GeminiImageAnalyzer:
             "messages": messages,
             "temperature": 0.0,              # детерминированный вывод для чертежей
             "max_tokens": 8000,
-            "response_format": {"type": "json_object"},  # гарантирует валидный JSON на выходе
         }
+        if provider == "local":
+            # Локальный сервер (unsloth-studio): response_format не поддержан —
+            # JSON извлекается через _extract_json. Thinking выключен: иначе
+            # reasoning съедает бюджет токенов и засоряет ответ рассуждениями.
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        else:
+            body["response_format"] = {"type": "json_object"}  # гарантирует валидный JSON на выходе
 
         # GLM-модели: reasoning_effort только для прямого Z.ai (не через RouterAI)
         if "glm" in model.lower() and provider == "zai":
@@ -1130,6 +1156,10 @@ class GeminiImageAnalyzer:
 
     def _detect_provider(self, model: str) -> str:
         """Определить провайдера по имени модели."""
+        # Локальный сервер — проверка ПЕРВАЯ: имя содержит "qwen",
+        # иначе модель ошибочно ушла бы в RouterAI
+        if self.local_llm_url and model == self.local_vision_model:
+            return "local"
         if "glm" in model.lower() and "z-ai" not in model.lower():
             return "zai"      # GLM без префикса → Z.ai
         if "z-ai" in model.lower():
@@ -1140,6 +1170,8 @@ class GeminiImageAnalyzer:
 
     def _get_api_key(self, provider: str) -> str:
         """Получить API ключ для провайдера."""
+        if provider == "local":
+            return self.local_llm_key or ""
         if provider == "zai":
             return self.zai_key or ""
         elif provider == "routerai":
@@ -1150,6 +1182,8 @@ class GeminiImageAnalyzer:
 
     def _get_api_url(self, provider: str, model: str) -> str:
         """Получить URL эндпоинта."""
+        if provider == "local":
+            return f"{self.local_llm_url}/chat/completions"
         if provider == "zai":
             return "https://api.z.ai/api/paas/v4/chat/completions"
         elif provider == "routerai":

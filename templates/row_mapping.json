@@ -46,12 +46,16 @@
 
     {"keywords": ["Подсветка LED (Бухта 5м)"], "field": "led_strip_5m", "unit": "шт", "multiplier": 1.0},
     {"keywords": ["Блок питания", "324"], "field": "led_power_supply", "unit": "шт", "multiplier": 1.0},
-    {"keywords": ["Датчик", "325"], "field": "led_sensor", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Датчик"], "field": "led_sensor", "unit": "шт", "multiplier": 1.0},
 
-    {"keywords": ["Сушка для посуды Alba, в модуль на 900мм"], "field": "drying_rack", "unit": "шт", "multiplier": 1.0},
-    {"keywords": ["Выдвижная корзина 2-х уровн.(150) Flora BOYARD круглый пруток"], "field": "bottle_holder_150", "unit": "шт", "multiplier": 1.0},
-    {"keywords": ["Выдвижная корзина 2-х уровн.(200) Flora BOYARD круглый пруток"], "field": "bottle_holder_200", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Сушка для посуды Alba, в модуль на 900мм"], "field": "drying_rack_alba", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Сушка в верхнюю базу Боярд"], "field": "drying_rack_boyard", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Выдвижная корзина 2-х уровн.(150) Flora BOYARD круглый пруток"], "field": "bottle_holder_flora", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Выдвижная корзина 2-х уровн.(200) Flora BOYARD круглый пруток"], "field": "bottle_holder_flora_200", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Бутылочница Квадро-1 в базу на 150 мм"], "field": "bottle_holder_kvadro", "unit": "шт", "multiplier": 1.0},
     {"keywords": ["Лоток для столовых приборов"], "field": "cutlery_tray", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Гигиенический поддон"], "field": "hygienic_mat", "unit": "шт", "multiplier": 1.0},
+    {"keywords": ["Противоскользящий кухонный коврик"], "field": "hygienic_mat", "unit": "шт", "multiplier": 1.0},
 
     {"keywords": ["Столешница", "постформинг"], "field": "countertop_length_m", "unit": "м", "multiplier": 1.0},
     {"keywords": ["Столешница", "искусственный камень"], "field": "countertop_length_m", "unit": "м", "multiplier": 1.0},

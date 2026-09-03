@@ -308,16 +308,27 @@ def apply_spec_to_quantities(
         elif "led" in item.name.lower() or "подсветк" in item.name.lower():
             if "бухта" in item.name.lower() or "5м" in item.name.lower():
                 materials_qty.led_strip_m += 5.0
-            materials_qty.led_power_supply += 1
-            materials_qty.led_sensor += 1
+            # Блок питания и датчик — только если ещё не добавлены авто-логикой
+            if materials_qty.led_power_supply == 0:
+                materials_qty.led_power_supply = 1
+            if materials_qty.led_sensor == 0:
+                materials_qty.led_sensor = 1
             added += 1
         elif "направляющие" in item.name.lower():
             added += 1
         elif "бутылочниц" in item.name.lower():
             materials_qty.bottle_holder_count += int(item.count)
+            if "квадро" in item.name.lower():
+                materials_qty.bottle_holder_type = "kvadro"
+            elif "боярд" in item.name.lower() or "flora" in item.name.lower():
+                materials_qty.bottle_holder_type = "flora"
             added += 1
         elif "сушка" in item.name.lower():
             materials_qty.drying_rack_count += int(item.count)
+            if "боярд" in item.name.lower():
+                materials_qty.drying_rack_type = "boyard"
+            elif "alba" in item.name.lower():
+                materials_qty.drying_rack_type = "alba"
             added += 1
         elif "лоток" in item.name.lower():
             materials_qty.cutlery_tray_count += int(item.count)
@@ -335,7 +346,8 @@ def apply_spec_to_quantities(
             added += 1
         elif "батарейк" in item.name.lower():
             added += 1
-        elif "гигиенический" in item.name.lower() or "поддон" in item.name.lower():
+        elif "гигиенический" in item.name.lower() or "поддон" in item.name.lower() or "коврик" in item.name.lower():
+            materials_qty.hygienic_mat_count += int(item.count)
             added += 1
         elif "блок питания" in item.name.lower():
             materials_qty.led_power_supply += int(item.count)

@@ -145,8 +145,11 @@ class MaterialQuantities:
     # Комплектующие
     has_sink: bool = False
     bottle_holder_count: int = 0
+    bottle_holder_type: str = ""       # "flora" / "kvadro" / "boyard"
     cutlery_tray_count: int = 0
     drying_rack_count: int = 0
+    drying_rack_type: str = ""         # "alba" или "boyard"
+    hygienic_mat_count: int = 0       # гигиенический коврик/поддон
 
     # Эргономика / рекомендации
     suggestions: List[str] = field(default_factory=list)
@@ -239,6 +242,7 @@ def calculate_quantities(
     materials: List[str] = None,
     *,
     zone_type: str = None,           # NEW: тип помещения из AI
+    has_spec: bool = False,          # если есть spec.yaml — не автодобавлять
     auto_accessories: bool = True,   # авто-сушка, лоток, бутылочница
     auto_drawers: bool = True,       # авто-ящики если AI не нашёл
     auto_led: bool = True,           # авто-подсветка для кухни
@@ -405,11 +409,11 @@ def calculate_quantities(
 
                 # Правила заказчика (не Blum, не по весу):
                 if single_door_h >= 2000:
-                    hinges_per_door = 5
+                    hinges_per_door = 4     # пеналы: 4 петли
                 elif single_door_h > 900:
-                    hinges_per_door = 4
+                    hinges_per_door = 3     # высокие фасады: 3 петли
                 elif single_door_h > 600:
-                    hinges_per_door = 3
+                    hinges_per_door = 2     # стандартные: 2 петли
                 else:
                     hinges_per_door = 2
 
@@ -472,7 +476,7 @@ def calculate_quantities(
 
     # ── ИТОГОВЫЕ РАСЧЁТЫ ──
 
-    # Фасады из ЛДСП: если не EMDIWAY/ПВХ/лакокраска — добавляем площадь фасадов в ЛДСП
+    # Фасады из ЛДСП: если не МДФ/ПВХ/лакокраска — добавляем в ЛДСП
     if mat_props["facade_type"] == "unknown" and q.facades_area_m2 > 0:
         q.ldsp_area_m2 += q.facades_area_m2 * 1.15  # +15% на облицовку кромок фасадов
         logger.info(f"Фасады ЛДСП: +{q.facades_area_m2:.1f} м² → ЛДСП")
@@ -548,7 +552,7 @@ def calculate_quantities(
         q.plinth_strips = math.ceil(lower_modules_width * 1.10 / 4)
 
     # ── Gola: вертикальные + горизонтальные (только для kitchen_family) ──
-    if rules.auto_gola:
+    if rules.auto_gola and not has_spec:
         # Горизонтальный Gola: сумма ширин нижних баз
         q.gola_horizontal_m = lower_modules_width
 
@@ -574,12 +578,15 @@ def calculate_quantities(
         # Штуки по 3 метра
         q.gola_horizontal_pcs = math.ceil(q.gola_horizontal_m / 3) if q.gola_horizontal_m > 0 else 0
 
-        # LED: 70% от длины горизонтального Gola
-        if auto_led:
+        # LED: если spec уже добавил LED — не дублируем блоки питания/датчики
+        if auto_led and not has_spec and q.led_strip_m == 0:
             q.led_strip_m      = q.gola_horizontal_m * 0.7
-            led_watt = q.led_strip_m * 9.6 * 1.2  # мощность с запасом 20%
-            q.led_power_supply = max(1, math.ceil(led_watt / 100)) if q.led_strip_m > 0 else 0
-            q.led_sensor       = 1 if q.led_strip_m > 0 else 0
+            if q.led_strip_m > 0:
+                led_watt = q.led_strip_m * 9.6 * 1.2  # мощность с запасом 20%
+                if q.led_power_supply == 0:
+                    q.led_power_supply = max(1, math.ceil(led_watt / 100))
+                if q.led_sensor == 0:
+                    q.led_sensor = 1
 
     # ── Отключаем ручки для Gola и push-to-open ──
     # Если есть Gola — ручки не нужны
@@ -588,9 +595,9 @@ def calculate_quantities(
 
     # ── Эргономика / рекомендации (на основе FURNITURE_DEFAULTS) ──
 
-    # Кухня: ящики, сушка, лоток
+    # Кухня: НЕ дублируем если spec уже добавил
     if is_kitchen:
-        if auto_drawers and q.drawers_count == 0:
+        if auto_drawers and not has_spec and q.drawers_count == 0 and q.drawers_internal_count == 0:
             q.drawers_count = 2
             q.drawers_internal_count = 1
             q.drawer_system = "Tandembox"
@@ -599,13 +606,17 @@ def calculate_quantities(
                 "один стандартный, один с внутренним для столовых приборов"
             )
 
-        if auto_accessories:
-            q.cutlery_tray_count = 1
-            q.bottle_holder_count = 1 if any(m.width <= 200 for m in modules) else 0
+        if auto_accessories and not has_spec:
+            if q.cutlery_tray_count == 0:
+                q.cutlery_tray_count = 1
+            if q.bottle_holder_count == 0:
+                q.bottle_holder_count = 1 if any(m.width <= 200 for m in modules) else 0
+                q.bottle_holder_type = "flora"
             q.has_sink = True
-            if q.has_sink:
+            if q.has_sink and q.drying_rack_count == 0:
                 q.drying_rack_count = 1
-                q.suggestions.append("💧 Рекомендация: сушка для посуды Alba в модуль 900мм")
+                q.drying_rack_type = "alba"
+                q.suggestions.append("💧 Рекомендация: сушка для посуды в верхнюю базу")
 
         has_upper = any(m.type == "upper_base" for m in modules)
         has_lower = any(m.type == "lower_base" for m in modules)

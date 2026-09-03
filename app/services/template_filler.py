@@ -213,11 +213,19 @@ def _build_quantity_map(
 
     # Комплектующие
     if q.drying_rack_count > 0:
-        m["drying_rack"] = q.drying_rack_count
+        if q.drying_rack_type == "boyard":
+            m["drying_rack_boyard"] = q.drying_rack_count
+        else:
+            m["drying_rack_alba"] = q.drying_rack_count
     if q.bottle_holder_count > 0:
-        m["bottle_holder_150"] = q.bottle_holder_count
+        if q.bottle_holder_type == "kvadro":
+            m["bottle_holder_kvadro"] = q.bottle_holder_count
+        else:
+            m["bottle_holder_flora"] = q.bottle_holder_count
     if q.cutlery_tray_count > 0:
         m["cutlery_tray"] = q.cutlery_tray_count
+    if q.hygienic_mat_count > 0:
+        m["hygienic_mat"] = q.hygienic_mat_count
 
     # ── НОВЫЕ ПОЛЯ (v2.0) ──
 
@@ -300,6 +308,7 @@ def fill_template_from_pipeline(
 
     # Для каждого помещения создаём копию листа-шаблона
     unfilled_items = []  # собираем позиции, для которых не нашлась строка
+    spec_applied = False  # спецификацию применяем только к ПЕРВОЙ комнате
 
     for i, room in enumerate(rooms_with_modules):
         sheet_name = _clean_sheet_name(room.room_name)[:31]
@@ -311,12 +320,18 @@ def fill_template_from_pipeline(
         # Обновляем заголовок (A1) — заменяем на название помещения
         _update_title(new_ws, room, pipeline_result)
 
-        # Рассчитываем количества
-        q = calculate_quantities(room.modules, room.room_name, room.materials, zone_type=room.zone_type)
+        # Рассчитываем количества (spec подавляет автодобавление)
+        q = calculate_quantities(room.modules, room.room_name, room.materials, zone_type=room.zone_type,
+                                 has_spec=(project_spec is not None))
 
-        # Применяем спецификацию проекта (добавляет позиции, которые AI не видит)
-        if project_spec:
-            apply_spec_to_quantities(project_spec, q, room.room_name)
+        # Применяем спецификацию проекта ТОЛЬКО к первой комнате (не дублируем!)
+        if project_spec and not spec_applied:
+            n_added = apply_spec_to_quantities(project_spec, q, room.room_name)
+            if n_added > 0:
+                spec_applied = True
+                # Если spec добавил GOLA — убираем ручки
+                if q.gola_horizontal_pcs > 0 or q.gola_vertical_pcs > 0:
+                    q.handles_count = 0
 
         # Строим мапу quantities
         qty_map = _build_quantity_map(q, room.materials, room.room_name)

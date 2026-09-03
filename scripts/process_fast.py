@@ -4,7 +4,7 @@
 """
 import asyncio, sys, logging, time
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-7s %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
@@ -14,8 +14,8 @@ from app.services.full_pipeline import PipelineResult, RoomSpec
 from app.services.template_filler import fill_template_from_pipeline
 
 IMAGES_DIR = Path(r"D:\БИЗНЕС\ПРО МЕБЕЛЬ\ПРОЕКТЫ\АНДЕЛИС\картинки")
-TEMPLATE = Path(__file__).parent / "templates" / "Таблица для расчетов пустая.xlsx"
-OUTPUT = Path(__file__).parent / "output" / "Расчет_Рокоссовского_59-79.xlsx"
+TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "Таблица для расчетов пустая.xlsx"
+OUTPUT = Path(__file__).resolve().parent.parent / "output" / "Расчет_Рокоссовского_59-79.xlsx"
 
 ZONE_NAMES = {
     "kitchen": "Кухня", "living_room": "Гостиная", "bedroom": "Спальня",
@@ -109,4 +109,5 @@ async def main():
     finally:
         await analyzer.close()
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

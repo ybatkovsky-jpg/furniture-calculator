@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx
 from PIL import Image
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.config import settings
 from app.services.pdf_renderer import render_page
 

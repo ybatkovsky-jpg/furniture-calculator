@@ -3,7 +3,7 @@
 """
 import asyncio, sys, logging, time
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-7s %(message)s', datefmt='%H:%M:%S')
 logging.getLogger('httpx').setLevel(logging.WARNING)
@@ -15,8 +15,8 @@ from app.services.template_filler import fill_template_from_pipeline
 from app.services.project_spec import load_project_spec
 
 IMAGES_DIR = Path(r"D:\БИЗНЕС\ПРО МЕБЕЛЬ\furniture-calculator\input_images")
-TEMPLATE = Path(__file__).parent / "templates" / "Таблица для расчетов пустая.xlsx"
-OUTPUT = Path(__file__).parent / "output" / "Расчет_Рокоссовского_ПОЛНЫЙ.xlsx"
+TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "Таблица для расчетов пустая.xlsx"
+OUTPUT = Path(__file__).resolve().parent.parent / "output" / "Расчет_Рокоссовского_ПОЛНЫЙ.xlsx"
 SPEC = Path(r"D:\БИЗНЕС\ПРО МЕБЕЛЬ\ПРОЕКТЫ\АНДЕЛИС\project_spec.yaml")
 
 

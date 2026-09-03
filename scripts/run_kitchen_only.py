@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 # Добавляем проект в path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.services.full_pipeline import FullPipeline, print_result, PipelineResult, RoomSpec
 

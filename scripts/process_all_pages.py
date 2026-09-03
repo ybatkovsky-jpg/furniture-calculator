@@ -11,7 +11,7 @@ import sys
 import logging
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,8 +26,8 @@ from app.services.template_filler import fill_template_from_pipeline
 
 # Пути
 IMAGES_DIR = Path(r"D:\БИЗНЕС\ПРО МЕБЕЛЬ\ПРОЕКТЫ\АНДЕЛИС\картинки")
-TEMPLATE = Path(__file__).parent / "templates" / "Таблица для расчетов пустая.xlsx"
-OUTPUT = Path(__file__).parent / "output" / "Расчет_Рокоссовского_59-79_ВСЕ.xlsx"
+TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "Таблица для расчетов пустая.xlsx"
+OUTPUT = Path(__file__).resolve().parent.parent / "output" / "Расчет_Рокоссовского_59-79_ВСЕ.xlsx"
 
 ZONE_NAMES = {
     "kitchen": "Кухня", "living_room": "Гостиная", "bedroom": "Спальня",

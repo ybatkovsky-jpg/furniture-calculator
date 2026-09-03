@@ -4,7 +4,7 @@ SCALE_PROMPT подход: модель даёт bbox + ОДНО число га
 """
 import asyncio, sys, json, base64, io, logging
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-7s %(message)s', datefmt='%H:%M:%S')
 logging.getLogger('httpx').setLevel(logging.WARNING)
@@ -19,8 +19,8 @@ from app.services.full_pipeline import PipelineResult, RoomSpec
 from app.services.template_filler import fill_template_from_pipeline
 
 IMAGES_DIR = Path(r"D:\БИЗНЕС\ПРО МЕБЕЛЬ\ПРОЕКТЫ\АНДЕЛИС\картинки")
-TEMPLATE = Path(__file__).parent / "templates" / "Таблица для расчетов пустая.xlsx"
-OUTPUT = Path(__file__).parent / "output" / "Расчет_SCALE_BBOX.xlsx"
+TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "Таблица для расчетов пустая.xlsx"
+OUTPUT = Path(__file__).resolve().parent.parent / "output" / "Расчет_SCALE_BBOX.xlsx"
 
 # SCALE_PROMPT — только bbox + габарит, без модулей
 SCALE_PROMPT_V3 = """Ты — конструктор-технолог мебельной фабрики. Проанализируй чертёж корпусной мебели.
@@ -287,4 +287,5 @@ async def main():
         fill_template_from_pipeline(result, str(TEMPLATE), str(OUTPUT))
         print(f"\n📊 Excel: {OUTPUT}")
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

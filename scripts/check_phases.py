@@ -3,6 +3,12 @@
 Запуск: python test_phases.py
 """
 import sys, re
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 from app.services.quantity_calc import (
     detect_material_properties, calculate_quantities
 )
@@ -161,9 +167,15 @@ print('ТЕСТ 4: calculate_quantities')
 print('━' * 60)
 
 mods_kitchen = [mk('lower_base',600,560,820,q=3), mk('upper_base',600,320,720,q=2)]
-q_auto = calculate_quantities(mods_kitchen, 'Кухня', ['EGGER H1379'])
+# v3.0: тип помещения определяется через zone_type (get_rules), а не room_name.
+# При has_spec=True авто-добавление подавляется — комплектующие приходят из spec.yaml
+# (дедупликация авто-комплектующих, commit 5a62ba5).
+q_auto = calculate_quantities(mods_kitchen, 'Кухня', ['EGGER H1379'], zone_type='kitchen')
 q_off  = calculate_quantities(mods_kitchen, 'Кухня', ['EGGER H1379'],
+                               zone_type='kitchen',
                                auto_accessories=False, auto_drawers=False, auto_led=False)
+q_spec = calculate_quantities(mods_kitchen, 'Кухня', ['EGGER H1379'],
+                               zone_type='kitchen', has_spec=True)
 
 check(q_auto.drawers_count > 0, f'авто-ящики: {q_auto.drawers_count} шт')
 check(q_off.drawers_count == 0, f'без авто: drawers=0')
@@ -171,6 +183,9 @@ check(q_auto.cutlery_tray_count > 0, f'авто-лоток: {q_auto.cutlery_tray
 check(q_off.cutlery_tray_count == 0, f'без авто: tray=0')
 check(q_auto.led_strip_m > 0, f'авто-LED: {q_auto.led_strip_m:.1f}м')
 check(q_off.led_strip_m == 0, f'без авто: led=0')
+check(q_spec.drawers_count == 0 and q_spec.cutlery_tray_count == 0 and q_spec.led_strip_m == 0,
+       f'spec-режим: авто подавлено '
+       f'(drawers={q_spec.drawers_count}, tray={q_spec.cutlery_tray_count}, led={q_spec.led_strip_m})')
 
 # Смежные стенки: 3 модуля 600×560×820
 mods3 = [mk('lower_base',600,560,820,q=3)]

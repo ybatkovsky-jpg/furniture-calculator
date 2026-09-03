@@ -3,7 +3,7 @@
 """
 import asyncio, sys, logging
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-7s %(message)s', datefmt='%H:%M:%S')
 
@@ -41,4 +41,5 @@ async def main():
     finally:
         await pipeline.close()
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

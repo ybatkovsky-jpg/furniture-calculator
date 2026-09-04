@@ -30,18 +30,51 @@ class HardwareCalculation:
             self.breakdown = {}
 
 
+# ═══════════════════════════════════════════════════════════════════
+# ЕДИНОЕ ПРАВИЛО ПЕТЕЛЬ (по высоте ОДНОЙ двери)
+# ═══════════════════════════════════════════════════════════════════
+
+# Нисходящий список порогов: (мин_высота_мм, петель_на_дверь).
+# FIRMAX — «правила заказчика» (Excel-смета AI-пайплайна, quantity_calc):
+#   ≥2000 → 4; 901..1999 → 3; ≤900 → 2.
+# BLUM/HETTICH — высотная таблица (вес фасада не учитывается — не вводится):
+#   >1600 → 5; 1200..1600 → 4; 900..1200 → 3; <900 → 2.
+HINGE_RULES_BY_BRAND: Dict[str, tuple] = {
+    "FIRMAX": ((2000, 4), (901, 3), (0, 2)),
+    "BLUM": ((1601, 5), (1200, 4), (900, 3), (0, 2)),
+    "HETTICH": ((1601, 5), (1200, 4), (900, 3), (0, 2)),
+}
+DEFAULT_HINGE_BRAND = "FIRMAX"
+
+
+def hinges_per_door(door_height_mm: float, brand: str = DEFAULT_HINGE_BRAND) -> int:
+    """Сколько петель ставить на ОДНУ дверь высотой door_height_mm.
+
+    Единая точка истины для сметного пайплайна (quantity_calc) и
+    калькулятора стоимости (calc_engine → hardware_calc), чтобы оба потока
+    давали одинаковое число петель на один и тот же набор дверей.
+    Неизвестный бренд → DEFAULT_HINGE_BRAND.
+    """
+    rules = HINGE_RULES_BY_BRAND.get(
+        (brand or "").upper(), HINGE_RULES_BY_BRAND[DEFAULT_HINGE_BRAND]
+    )
+    for min_h, count in rules:
+        if door_height_mm >= min_h:
+            return count
+    return rules[-1][1]
+
+
 def calculate_hinges_for_modules(
     modules: List[Dict],
-    hinge_price: float = 0
+    hinge_price: float = 0,
+    brand: str = DEFAULT_HINGE_BRAND
 ) -> Dict:
     """
     Расчёт петель для модулей с фасадами.
 
-    Правила:
-    - высота < 900 мм → 2 петли
-    - 900-1200 мм → 3 петли
-    - 1200-1600 мм → 4 петли
-    - > 1600 мм → 5 петель
+    Правила по высоте ОДНОЙ двери (см. hinges_per_door):
+    - FIRMAX: ≥2000 → 4; 901-1999 → 3; ≤900 → 2
+    - BLUM/HETTICH: >1600 → 5; 1200-1600 → 4; 900-1200 → 3; <900 → 2
 
     Returns:
         {"total_hinges": кол-во, "cost": стоимость}
@@ -55,17 +88,7 @@ def calculate_hinges_for_modules(
 
         for facade in module["facades"]:
             height_mm = facade.get("height_mm", 0)
-
-            if height_mm < 900:
-                hinges = 2
-            elif height_mm <= 1200:
-                hinges = 3
-            elif height_mm <= 1600:
-                hinges = 4
-            else:
-                hinges = 5
-
-            total_hinges += hinges
+            total_hinges += hinges_per_door(height_mm, brand)
 
     cost = total_hinges * hinge_price
 
@@ -145,7 +168,8 @@ def calculate_drawers_for_modules(
 def calculate_hardware_for_modules(
     modules: List[Dict],
     hinge_price: float = 0,
-    drawer_prices: Optional[Dict[str, float]] = None
+    drawer_prices: Optional[Dict[str, float]] = None,
+    hinge_brand: str = DEFAULT_HINGE_BRAND
 ) -> HardwareCalculation:
     """
     Полный расчёт фурнитуры для модулей.
@@ -153,7 +177,7 @@ def calculate_hardware_for_modules(
     result = HardwareCalculation()
 
     # Петли
-    hinges_data = calculate_hinges_for_modules(modules, hinge_price)
+    hinges_data = calculate_hinges_for_modules(modules, hinge_price, brand=hinge_brand)
     result.hinges_total = hinges_data["total_hinges"]
     result.breakdown["hinges"] = hinges_data
 

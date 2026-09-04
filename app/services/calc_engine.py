@@ -18,7 +18,9 @@ import logging
 from app.services.cost_calc import calculate_cost, CostBreakdown, DiscountInfo
 from app.services.sheet_calc import calculate_sheets_for_modules, SheetCalculation
 from app.services.edge_calc import calculate_edge_for_modules, EdgeCalculation
-from app.services.hardware_calc import calculate_hardware_for_modules, HardwareCalculation
+from app.services.hardware_calc import (
+    calculate_hardware_for_modules, HardwareCalculation, DEFAULT_HINGE_BRAND
+)
 from app.services.glass_calc import calculate_glass_for_modules, GlassCalculation
 
 logger = logging.getLogger(__name__)
@@ -131,10 +133,17 @@ def calculate_full_cost(
     # 4. Расчёт фурнитуры
     hinge_price = _extract_hinge_price(selected_hardware)
     drawer_prices = _extract_drawer_prices(selected_hardware)
+    # Бренд петель (FIRMAX по умолчанию — «правила заказчика», общие со сметой
+    # quantity_calc); BLUM/HETTICH — высотная таблица (см. hinges_per_door).
+    hinge_brand = DEFAULT_HINGE_BRAND
+    _hw_cfg = (selected_hardware or {}).get("hinges")
+    if isinstance(_hw_cfg, dict) and _hw_cfg.get("brand"):
+        hinge_brand = str(_hw_cfg["brand"])
     result.hardware_calc = calculate_hardware_for_modules(
         modules=modules,
         hinge_price=hinge_price,
-        drawer_prices=drawer_prices
+        drawer_prices=drawer_prices,
+        hinge_brand=hinge_brand,
     )
     result.hardware_cost = float(result.hardware_calc.total_cost or 0)
 

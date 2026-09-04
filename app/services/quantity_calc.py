@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 from app.services.full_pipeline import PipelineResult, RoomSpec
 from app.services.image_analyzer import RecognizedModule
 from app.services.furniture_defaults import get_rules, FurnitureRules
+from app.services.hardware_calc import hinges_per_door  # единое правило петель (parity с calc_engine)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -404,20 +405,15 @@ def calculate_quantities(
 
             if not has_drawers_only and not is_appliance_penal and module.facades:
                 facade_count = module.facades.get("count", 1)
-                # Высота ОДНОЙ двери = высота модуля / количество дверей
-                single_door_h = module.height / facade_count
-
-                # Правила заказчика (не Blum, не по весу):
-                if single_door_h >= 2000:
-                    hinges_per_door = 4     # пеналы: 4 петли
-                elif single_door_h > 900:
-                    hinges_per_door = 3     # высокие фасады: 3 петли
-                elif single_door_h > 600:
-                    hinges_per_door = 2     # стандартные: 2 петли
-                else:
-                    hinges_per_door = 2
-
-                q.hinges_count += hinges_per_door * facade_count * qty
+                # Высота двери = высота модуля: facades.count описывает двери РЯДОМ
+                # (промпт: «вертикальная линия = стык двух дверей»), каждая — полная
+                # высота. Деление высоты на число дверей (как для «друг на друге»)
+                # занижало петли высоких дверей. Единое правило — hinges_per_door().
+                q.hinges_count += (
+                    hinges_per_door(module.height, brand="FIRMAX")
+                    * facade_count
+                    * qty
+                )
 
         # ── Ящики (AI + рекомендации) ──
         if module.drawers and module.drawers.get("count", 0) > 0:

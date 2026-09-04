@@ -5,21 +5,23 @@ Telegram-бот для автоматического расчёта стоим�
 ## 🎯 Что делает
 
 ```
-PDF чертежей  →  AI-распознавание  →  Расчёт материалов  →  Excel-смета
-    (21 стр.)      (OCR + Vision)      (ЛДСП, кромка,         (шаблон с
-                                         фасады, петли,        заполненными
-                                         ящики, Gola, LED)     количествами)
+PDF-альбом чертежей → AI-распознавание → Расчёт материалов → Excel-смета
+(страницы → JPEG)    (GLM-OCR, Vision:   (ЛДСП, кромка,       (шаблон «Таблица
+                      локальная Qwen3.8,  фасады, петли,        для расчетов
+                      облако — fallback)  ящики, Gola, LED)     пустая» + QC)
 ```
 
 ## 🧠 AI-конвейер
 
 | Этап | Модель | Что делает |
 |------|--------|-----------|
-| **OCR** | GLM-OCR (Z.ai) | Читает PDF: помещения, размеры, материалы, таблицы |
-| **Vision** | GLM-5V-Turbo + GLM-4.6V | Распознаёт модули мебели на чертежах (тип, Ш×Г×В, количество) |
-| **Ансамбль** | Qwen3-VL (fallback) | Кросс-валидация — вторая модель перепроверяет результат |
-| **Расчёт** | quantity_calc | Переводит модули в позиции прайса: листы ЛДСП, метры кромки, фасады, петли, ящики |
-| **Заполнение** | template_filler | Заполняет Excel-шаблон (колонка «Количество») + листы контроля качества |
+| **OCR** | GLM-OCR (Z.ai) | Читает PDF (layout_parsing): помещения, размеры, материалы, таблицы |
+| **Vision (основная)** | Qwen3.8-27B (GGUF, локально через llama.cpp) | Распознаёт модули мебели на чертежах (тип, Ш×Г×В, количество); thinking отключён → чистый JSON, ~20–33 с/стр. |
+| **Облачный fallback** | Qwen3-VL-235B (RouterAI.ru), GLM-5V-Turbo (Z.ai) | Запасные провайдеры; кросс-валидация результатов |
+| **Фасады / масштаб** | Qwen3-VL-235B (RouterAI.ru, cloud-only) | Анализ фасадов, калибровка масштаба bbox |
+| **Расчёт** | quantity_calc / calc_engine → hardware_calc | Переводит модули в позиции прайса: листы ЛДСП, метры кромки, фасады, петли (единый `hinges_per_door`), ящики, крепёж |
+| **Спецификация проекта** | project_spec.py | Применяет project_spec.yaml: правила авто-комплектующих и петель проекта |
+| **Заполнение** | template_filler | Заполняет Excel-шаблон «Таблица для расчетов пустая.xlsx» + листы контроля качества |
 
 ## 🚀 Быстрый старт
 
@@ -37,9 +39,17 @@ pip install -r requirements.txt
 
 ```env
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF
-ZAI_API_KEY=your_zai_key
-OPENROUTER_API_KEY=your_openrouter_key
-VISION_MODEL=glm-5v-turbo
+ADMIN_TELEGRAM_IDS=                # ID админов через запятую (управление прайсом)
+
+# Облако — fallback (если LOCAL_LLM_API_URL пуст, используется как основное)
+ZAI_API_KEY=your_zai_key           # GLM-OCR, GLM-5V-Turbo
+ROUTERAI_API_KEY=sk-...            # Qwen3-VL-235B (ансамбль, фасады)
+
+# Локальная vision-модель — основная (OpenAI-совместимый сервер llama.cpp)
+LOCAL_LLM_API_URL=http://<host>:8888/v1   # напр. 192.168.1.133:8888
+LOCAL_LLM_API_KEY=
+LOCAL_VISION_MODEL=unsloth/Qwen3.8-27B-GGUF
+
 DATABASE_URL=sqlite+aiosqlite:///./data/furniture.db
 ```
 
@@ -52,8 +62,10 @@ python -m app.main
 ### 4. Или запустить конвейер из командной строки
 
 ```bash
-python -m app.services.template_filler "путь/к/чертежам.pdf" "путь/к/шаблону.xlsx" "выход.xlsx"
+python -m app.services.template_filler "путь/к/чертежам.pdf" "templates/Таблица для расчетов пустая.xlsx" "выход.xlsx"
 ```
+
+Продвинутые прогоны (возобновляемый, ансамбль, фасады, масштаб) — скрипты в [`scripts/`](scripts/).
 
 ## 📊 Формула расчёта
 
@@ -79,52 +91,69 @@ python -m app.services.template_filler "путь/к/чертежам.pdf" "пу�
 ```
 furniture-calculator/
 ├── app/
-│   ├── main.py                    # FastAPI + запуск бота
-│   ├── config.py                  # Pydantic Settings (.env)
+│   ├── main.py                    # FastAPI + запуск Telegram-бота
+│   ├── config.py                  # Pydantic Settings (.env): облако + локальный LLM
 │   ├── bot/                       # Telegram-бот (aiogram 3)
-│   │   ├── handlers/              # /start, проекты, материалы, скидки, КП
-│   │   ├── keyboards/             # inline + reply клавиатуры
+│   │   ├── bot.py
+│   │   ├── handlers/              # start, проекты, изображения, материалы, скидки, КП, прайс
+│   │   ├── keyboards/             # inline-клавиатуры
 │   │   └── states/                # FSM состояния (aiogram)
-│   ├── services/                  # Бизнес-логика
-│   │   ├── image_analyzer.py      # Vision-распознавание (GLM-5V, Qwen3, Gemini)
-│   │   ├── pdf_parser.py          # GLM-OCR — парсинг PDF
-│   │   ├── pdf_renderer.py        # Рендеринг страниц PDF → JPEG
-│   │   ├── full_pipeline.py       # Сборка конвейера OCR + Vision
-│   │   ├── quantity_calc.py       # Расчёт количеств материалов
-│   │   ├── calc_engine.py         # Главный расчётный движок
-│   │   ├── cost_calc.py           # Итоговая смета + скидки/бонусы
-│   │   ├── calculation_excel.py   # Генерация Excel с нуля
-│   │   ├── template_filler.py     # Заполнение шаблона Excel
-│   │   ├── glass_calc.py          # Расчёт стекла
-│   │   ├── edge_calc.py           # Расчёт кромки
-│   │   ├── sheet_calc.py          # Расчёт листов ЛДСП/МДФ
-│   │   ├── hardware_calc.py       # Расчёт фурнитуры
-│   │   ├── price_manager.py       # Импорт/экспорт прайса
-│   │   ├── kp_generator.py        # Генерация PDF КП
-│   │   └── excel_writer.py        # Запись в Excel
-│   ├── models/                    # SQLAlchemy модели
-│   ├── schemas/                   # Pydantic схемы
-│   └── db/                        # Сессии БД + seed
+│   ├── db/                        # Сессии БД (async SQLAlchemy)
+│   ├── models/                    # SQLAlchemy-модели (project, price, calculation, glass, settings)
+│   └── services/                  # Бизнес-логика и AI-конвейер
+│       ├── image_analyzer.py      # Vision: локальная Qwen3.8 + облачный fallback
+│       ├── pdf_parser.py          # GLM-OCR — парсинг PDF (layout_parsing)
+│       ├── pdf_renderer.py        # Рендеринг страниц PDF → JPEG
+│       ├── full_pipeline.py       # Сборка конвейера OCR + Vision
+│       ├── quantity_calc.py       # Расчёт количеств материалов (модули → позиции)
+│       ├── calc_engine.py         # Главный расчётный движок
+│       ├── hardware_calc.py       # Петли (единый hinges_per_door), фурнитура
+│       ├── fastener_calc.py       # Расчёт крепежа
+│       ├── glass_calc.py          # Расчёт стекла
+│       ├── edge_calc.py           # Расчёт кромки
+│       ├── sheet_calc.py          # Расчёт листов ЛДСП/МДФ
+│       ├── scale_calc.py          # Калибровка масштаба (bbox)
+│       ├── project_spec.py        # Спецификация проекта (project_spec.yaml)
+│       ├── furniture_defaults.py  # Дефолты мебельных конструкций
+│       ├── cost_calc.py           # Итоговая смета + скидки/бонусы
+│       ├── calculation_excel.py   # Генерация Excel с нуля
+│       ├── excel_writer.py        # Запись в Excel
+│       ├── template_filler.py     # Заполнение шаблона «Таблица для расчетов пустая.xlsx»
+│       ├── price_manager.py       # Импорт/экспорт прайса
+│       └── kp_generator.py        # Генерация PDF КП
+├── scripts/                       # CLI-скрипты пайплайна
+│   ├── process_all_resumable.py   # Возобновляемый прогон (с места остановки)
+│   ├── process_ensemble.py        # Ансамблевый прогон
+│   ├── process_facades.py         # Анализ фасадов
+│   ├── run_scale_bbox.py          # Калибровка масштаба
+│   ├── check_phases.py / import_price.py / process_images.py / …
+│   └── dev/                       # Вспомогательные dev-скрипты
 ├── templates/
-│   ├── row_mapping.json           # Маппинг материалов → строки шаблона
-│   └── kp_template.html           # Шаблон КП
-├── ROADMAP_IMPROVEMENTS.md        # План улучшений (5 фаз)
-├── SETUP_COMPLETE.md              # Статус настройки
+│   ├── row_mapping.json                 # Маппинг материалов → строки шаблона
+│   ├── project_spec_EXAMPLE.yaml        # Пример спецификации проекта
+│   └── Таблица для расчетов пустая.xlsx # Excel-шаблон сметы (заполняется пайплайном)
+├── alembic/                      # Миграции БД
+├── tests/                        # calc_engine, hinge_parity, scale_calc, discounts, фасады
+├── data/   input_images/   output/   temp/   pdfs/   # артефакты прогонов (в gitignore)
+├── Dockerfile / docker-compose.yml
+├── ROADMAP_IMPROVEMENTS.md       # ROADMAP: Архитектура v2.1 (2026-09-04)
 └── requirements.txt
 ```
 
-## 🔧 Последние улучшения (Фазы 1–5)
+## 🧭 Актуальное состояние (ROADMAP v2.1, 2026-09-04)
 
-- ✅ **JSON-format** — модель гарантированно возвращает валидный JSON
-- ✅ **Валидация размеров** — фильтр нереалистичных модулей (ширина 150–2400 мм и т.д.)
-- ✅ **Предобработка изображений** — контраст +30%, повышение резкости
-- ✅ **Ансамбль моделей** — кросс-валидация двумя моделями, overlap ≥70% → confidence high
-- ✅ **Few-shot промпты** — единый промпт с примерами прямой и угловой кухни
-- ✅ **Учёт смежных стенок** — соседние модули делят боковину, экономия ЛДСП
-- ✅ **Fuzzy matching** — нечёткий поиск строк в шаблоне (SequenceMatcher)
-- ✅ **Лист «⚠ Проблемы»** — все незаполненные строки в отдельном листе Excel
-- ✅ **Лист «✅ Контроль качества»** — цветовая индикация: зелёный / жёлтый / красный
-- ✅ **JSON-конфиг маппинга** — `templates/row_mapping.json` вместо хардкода
+- ✅ **Local-first** — основная vision-модель: локальная **Qwen3.8-27B (GGUF, llama.cpp)**, OpenAI-совместимый API (`LOCAL_LLM_API_URL`); thinking отключён → чистый JSON; облако (RouterAI.ru / Z.ai) — fallback; фасады — cloud-only
+- ✅ **Parity петель** — единое правило `hinges_per_door(height, brand)` в `hardware_calc.py`: `quantity_calc` и `calc_engine` считают одинаково (FIRMAX: ≥2000→4 / 901–1999→3 / ≤900→2; BLUM/HETTICH — высотная таблица до 5); 19 тестов parity
+- ✅ **Спецификация проекта** — `project_spec.yaml`: правила авто-комплектующих и петель конкретного проекта (дедупликация позиций)
+- ✅ **Валидация на реальном проекте** — альбом «Рокоссовского 59-79»: 12/12 страниц прогнано локально, помещения определены верно на всех страницах
+- ✅ **Возобновляемый прогон** — `scripts/process_all_resumable.py` продолжает с места остановки, с QC-вердиктами по страницам
+
+### Ранее (Фазы 1–5, ROADMAP v1)
+
+- ✅ JSON-format промпты, валидация размеров (150–2400 мм), предобработка изображений (контраст, резкость)
+- ✅ Ансамбль моделей — кросс-валидация, overlap ≥70% → confidence high; учёт смежных стенок (экономия ЛДСП)
+- ✅ Fuzzy matching строк шаблона (SequenceMatcher); `templates/row_mapping.json` вместо хардкода
+- ✅ Листы «⚠ Проблемы» и «✅ Контроль качества» (цветовая индикация) в Excel
 
 Подробнее: [`ROADMAP_IMPROVEMENTS.md`](ROADMAP_IMPROVEMENTS.md)
 
@@ -134,7 +163,7 @@ furniture-calculator/
 |-----------|-----------|
 | Язык | Python 3.12 |
 | Telegram Bot | aiogram 3 |
-| Vision AI | GLM-5V-Turbo, GLM-4.6V, Qwen3-VL (OpenRouter), Gemini Flash |
+| Vision AI | Qwen3.8-27B (локально, llama.cpp) — primary; Qwen3-VL-235B (RouterAI.ru), GLM-5V-Turbo (Z.ai) — fallback |
 | OCR | GLM-OCR (Z.ai) |
 | База данных | SQLite + aiosqlite (→ PostgreSQL) |
 | ORM | SQLAlchemy 2.0 (async) |

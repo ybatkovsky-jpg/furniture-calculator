@@ -985,6 +985,33 @@ class GeminiImageAnalyzer:
                 f"confidence={confidence}"
             )
 
+            # 🔤 OCR-заземление габарита: числа с размерных линий читает OCR,
+            # а не догадка VLM (локальная модель при temperature=0 нестабильна
+            # на цифрах: 1581↔2581, 1830↔3000). При уверенном OCR-прочтении,
+            # расходящемся с ответом модели, total_width_mm заменяется на OCR.
+            if settings.ocr_dimensions_enabled and total_width_mm > 0 and facades_data:
+                try:
+                    from app.services.dim_ocr import (
+                        extract_dimension_numbers,
+                        select_total_width,
+                    )
+                    ocr_candidates = await extract_dimension_numbers(image_path)
+                    ocr_width, ocr_conf = select_total_width(
+                        ocr_candidates, total_width_mm
+                    )
+                    if (
+                        ocr_width is not None
+                        and ocr_conf >= 0.7
+                        and abs(ocr_width - total_width_mm) > 10
+                    ):
+                        logger.info(
+                            f"🔤 OCR: габарит {ocr_width} мм "
+                            f"(модель давала {total_width_mm})"
+                        )
+                        total_width_mm = ocr_width
+                except Exception:
+                    pass  # OCR опционален — молча пропускаем любые ошибки
+
             # Если есть и габарит, и bbox-данные → точные размеры через scale_calc
             scaled_facades = []
             if total_width_mm > 0 and facades_data:

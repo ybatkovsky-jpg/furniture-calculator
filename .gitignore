@@ -15,6 +15,7 @@ nul
 input_images/
 output/
 temp/
+data/recognition_cache/
 
 # Метаданные инструментов (агенты)
 .session/

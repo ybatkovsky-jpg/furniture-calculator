@@ -65,6 +65,15 @@ class Settings(BaseSettings):
         description="Имя модели на локальном сервере"
     )
 
+    # OCR-заземление размерных линий: числа с чертежа читает OCR
+    # (GLM-OCR/Tesseract), а не догадка VLM — ground truth для total_width_mm.
+    # False — конвейер работает как раньше (только ответ модели).
+    ocr_dimensions_enabled: bool = Field(
+        default=True,
+        description="OCR чисел размерных линий для total_width_mm "
+                    "(env: OCR_DIMENSIONS_ENABLED)",
+    )
+
     # База данных
     database_url: str = Field(
         default="sqlite+aiosqlite:///./data/furniture.db",

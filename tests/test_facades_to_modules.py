@@ -59,13 +59,26 @@ def test_none_glass_and_drawer_become_empty_sets():
 
 
 # ════════════════════════════════════════════════════════════════════
-# УГЛОВОЙ МОДУЛЬ (эвристика ширины 800-1100 в зоне lower)
+# УГЛОВОЙ МОДУЛЬ (только по явному is_corner от модели; авто-эвристика
+# «ширина 800-1100 в зоне lower = угол» УБРАНА как источник ложных углов:
+# прямые тумбы/шкафы с дверями ~900мм превращались в «угловые»)
 # ════════════════════════════════════════════════════════════════════
 
-def test_corner_detected_by_width_950():
-    """Ширина 950 в зоне lower → модуль corner (квадратный: depth=width)."""
+def test_corner_requires_explicit_flag_950():
+    """Ширина 950 в lower БЕЗ флага is_corner → НЕ угол, обычная lower_base."""
     analyzer = make_analyzer()
     facades = [make_facade("lower", 950)]
+    result = analyzer._facades_to_modules(facades)
+    assert result[0].type == "lower_base"
+    assert result[0].is_corner is False
+    assert result[0].depth == 560  # обычная глубина, не квадрат
+
+
+def test_corner_explicit_flag_950():
+    """Ширина 950 в lower С флагом is_corner=True → corner (квадратный)."""
+    analyzer = make_analyzer()
+    facades = [ScaledFacade(zone="lower", width_mm=950, height_mm=820,
+                            bbox_x_pct=0, bbox_w_pct=20, is_corner=True)]
     result = analyzer._facades_to_modules(facades)
     assert result[0].type == "corner"
     assert result[0].is_corner is True
@@ -74,22 +87,22 @@ def test_corner_detected_by_width_950():
     assert result[0].quantity == 1
 
 
-def test_corner_boundary_800_is_corner():
-    """Ровно 800мм в lower → угол (граница включительно)."""
+def test_width_800_no_flag_not_corner():
+    """Ровно 800мм в lower БЕЗ флага → НЕ угол (эвристика убрана)."""
     analyzer = make_analyzer()
     result = analyzer._facades_to_modules([make_facade("lower", 800)])
-    assert result[0].type == "corner"
+    assert result[0].type == "lower_base"
 
 
-def test_corner_boundary_1100_is_corner():
-    """Ровно 1100мм в lower → угол (граница включительно)."""
+def test_width_1100_no_flag_not_corner():
+    """Ровно 1100мм в lower БЕЗ флага → НЕ угол (эвристика убрана)."""
     analyzer = make_analyzer()
     result = analyzer._facades_to_modules([make_facade("lower", 1100)])
-    assert result[0].type == "corner"
+    assert result[0].type == "lower_base"
 
 
 def test_below_corner_range_not_corner():
-    """799мм в lower → НЕ угол (нижняя граница 800)."""
+    """799мм в lower БЕЗ флага → НЕ угол."""
     analyzer = make_analyzer()
     result = analyzer._facades_to_modules([make_facade("lower", 799)])
     assert result[0].type == "lower_base"
@@ -316,12 +329,14 @@ def test_glass_indices_1_based():
 def test_glass_with_corner_facade():
     """Угловой фасад со стеклом: glass_indices 1-based корректно помечает угол.
 
-    Фасад idx=1 (второй) → угол. glass_indices={2} → (1+1)=2 → стекло.
+    Угол задаётся ЯВНЫМ флагом is_corner=True (не шириной). Фасад idx=1
+    (второй) → угол. glass_indices={2} → (1+1)=2 → стекло.
     """
     analyzer = make_analyzer()
     facades = [
         make_facade("lower", 600),   # idx=0 (1-й)
-        make_facade("lower", 800),   # idx=1 (2-й) → corner
+        ScaledFacade(zone="lower", width_mm=800, height_mm=820,
+                     bbox_x_pct=0, bbox_w_pct=20, is_corner=True),  # idx=1 (2-й)
     ]
     result = analyzer._facades_to_modules(facades, glass_indices={2})
     corners = [m for m in result if m.type == "corner"]
@@ -371,10 +386,11 @@ def test_drawer_indices_no_match():
 # ════════════════════════════════════════════════════════════════════
 
 def test_full_kitchen_scenario():
-    """Полный сценарий: 1 угол + 2 нижних + 1 верхний + 1 пенал."""
+    """Полный сценарий: угол (по флагу) + 3 нижних + 1 верхний + 1 пенал."""
     analyzer = make_analyzer()
     facades = [
-        make_facade("lower", 900, height_mm=820),     # corner
+        ScaledFacade(zone="lower", width_mm=900, height_mm=820,
+                     bbox_x_pct=0, bbox_w_pct=20, is_corner=True),  # угол
         make_facade("lower", 600, height_mm=820),     # lower
         make_facade("lower", 600, height_mm=820),     # lower (группируется)
         make_facade("upper", 600, height_mm=720),     # upper
@@ -385,14 +401,33 @@ def test_full_kitchen_scenario():
     # Ожидаем 4 модуля: 1 corner + 1 lower_base(qty=2) + 1 upper_base + 1 penal
     assert len(result) == 4
     types = [m.type for m in result]
-    assert types == ["lower_base", "upper_base", "penal", "corner"] or \
-           set(types) == {"corner", "lower_base", "upper_base", "penal"}
+    assert set(types) == {"corner", "lower_base", "upper_base", "penal"}
 
     by_type = {m.type: m for m in result}
     assert by_type["corner"].quantity == 1
     assert by_type["lower_base"].quantity == 2
     assert by_type["upper_base"].quantity == 1
     assert by_type["penal"].quantity == 1
+
+
+def test_full_kitchen_wide_door_without_flag_not_corner():
+    """Прямая кухня с широкой дверью 900 БЕЗ флага → НЕ угол (регресс P-loose).
+
+    Реальный кейс: TV-тумба/шкаф с дверями ~900мм раньше превращались в
+    «угловые модули» из-за эвристики 800–1100; теперь остаются lower_base.
+    """
+    analyzer = make_analyzer()
+    facades = [
+        make_facade("lower", 900, height_mm=820),   # широкая дверь, НЕ угол
+        make_facade("lower", 600, height_mm=820),
+        make_facade("lower", 600, height_mm=820),
+    ]
+    result = analyzer._facades_to_modules(facades, zone_type="Кухня")
+    assert all(m.type != "corner" for m in result)
+    # 600+600 группируются (qty=2), 900 отдельным модулем
+    by_width = {m.width: m for m in result}
+    assert by_width[600].quantity == 2
+    assert by_width[900].quantity == 1
 
 
 # ════════════════════════════════════════════════════════════════════

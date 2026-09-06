@@ -256,6 +256,25 @@ _UNIFIED_PROMPT_V2_EMBEDDED = """Ты — конструктор-техноло�
 - Если размерная линия не читается — укажи total_width_mm=0
 
 ═══════════════════════════════════════
+ЗАДАЧА 1Б: ВЫСОТЫ РЯДОВ (heights_mm)
+═══════════════════════════════════════
+Высоты читай с ВЕРТИКАЛЬНЫХ размерных линий ТАК ЖЕ, как ширину — с горизонтальных.
+Для КАЖДОГО ряда дверей, который есть на чертеже, найди его вертикальную размерную линию с числом:
+- lower (нижние базы): вертикальная линия у нижнего ряда (типично 700–900 мм)
+- upper (верхние базы): вертикальная линия у навесного ряда (типично 550–750 мм)
+- penal (пенал/высокий шкаф): вертикальная линия у пенала (типично 1800–2800 мм)
+
+Верни объект "heights_mm" ТОЛЬКО с зонами, высоты которых прочитал с чертежа:
+  "heights_mm": {"lower": 820, "upper": 720, "penal": 2500}
+
+Правила:
+- Нужна ВЫСОТА РЯДА = высота фасада/дверцы этого ряда (размер вертикальной размерной линии, приложенной К САМОМУ ряду, со стрелками сверху/снизу ряда). НЕ бери расстояние от пола до нижнего края верхних шкафов, от пола до потолка и т.п.
+- Типичные высоты, чтобы проверить себя: кухонные нижние базы 600–900; навесные (upper) 450–1000; пенал/высокий шкаф 1800–2800; шкаф-купе створки 2000–2800.
+- Если вертикальной размерной линии у ряда НЕТ или число вне типичного диапазона зоны — НЕ выдумывай: не включай ключ, Python возьмёт стандарт.
+- Кровать/стол/диван/тумба без дверей: heights_mm НЕ возвращай (facades пуст).
+- Числа целые, в мм. Без "см"/"м".
+
+═══════════════════════════════════════
 ЗАДАЧА 2: ПЕРЕЧИСЛИ ВСЕ ДВЕРЦЫ (facades)
 ═══════════════════════════════════════
 Перечисли ВООБЩЕ ВСЕ видимые дверцы на чертеже. Каждая дверца = ОДИН элемент.
@@ -313,7 +332,7 @@ _UNIFIED_PROMPT_V2_EMBEDDED = """Ты — конструктор-техноло�
 ═══════════════════════════════════════
 ПРИМЕР 1: прямая кухня (5 дверей)
 ═══════════════════════════════════════
-{"zone_type":"Кухня","materials":["EGGER H1379"],"total_width_mm":3000,
+{"zone_type":"Кухня","materials":["EGGER H1379"],"heights_mm":{"lower":820,"upper":720},"total_width_mm":3000,
  "facades":[
    {"zone":"lower","bbox_x_pct":3,"bbox_w_pct":19,"is_corner":false},
    {"zone":"lower","bbox_x_pct":23,"bbox_w_pct":19,"is_corner":false},
@@ -325,7 +344,7 @@ _UNIFIED_PROMPT_V2_EMBEDDED = """Ты — конструктор-техноло�
 ═══════════════════════════════════════
 ПРИМЕР 2: угловая кухня с пеналом (7 дверей)
 ═══════════════════════════════════════
-{"zone_type":"Кухня","materials":["EGGER H3158","МДФ матовый"],"total_width_mm":3300,
+{"zone_type":"Кухня","materials":["EGGER H3158","МДФ матовый"],"heights_mm":{"lower":820,"upper":720,"penal":2500},"total_width_mm":3300,
  "facades":[
    {"zone":"lower","bbox_x_pct":2,"bbox_w_pct":26,"is_corner":true},
    {"zone":"lower","bbox_x_pct":28,"bbox_w_pct":13,"is_corner":false},
@@ -390,6 +409,8 @@ _UNIFIED_PROMPT_V2_EMBEDDED = """Ты — конструктор-техноло�
 МАТЕРИАЛЫ: если указаны декоры (EGGER H1379, H3158 и т.п.) — перечисли в materials.
 
 Верни ТОЛЬКО валидный JSON с полями: zone_type, materials, total_width_mm, facades, has_glass_facades, drawer_indices, confidence, notes.
+
+heights_mm — ОПЦИОНАЛЬНОЕ поле (ЗАДАЧА 1Б): {"lower":820,"upper":720,"penal":2500}. Включай ТОЛЬКО зоны, высоту которых прочитал с ВЕРТИКАЛЬНОЙ размерной линии. Не читается → не включай ключ (Python возьмёт стандарт).
 
 РУБРИКА CONFIDENCE (выбирай строго):
 - "high": ОСНОВНАЯ размерная линия прочитана с чертежа И все дверцы пересчитаны по чертежу, одна за другой.
@@ -931,6 +952,7 @@ class GeminiImageAnalyzer:
             facades_data = data.get("facades", [])
             glass_indices = set(data.get("has_glass_facades", []))
             drawer_indices = set(data.get("drawer_indices", []))
+            heights_mm = data.get("heights_mm") or {}
             zone_type = data.get("zone_type")
             materials = data.get("materials", [])
             confidence = data.get("confidence", "medium")
@@ -939,13 +961,26 @@ class GeminiImageAnalyzer:
                 f"📐 Единый: габарит={total_width_mm}мм, "
                 f"дверей={len(facades_data)}, "
                 f"ящиков={len(drawer_indices)}, "
+                f"высоты={heights_mm or 'не прочитаны'}, "
                 f"confidence={confidence}"
             )
 
             # Если есть и габарит, и bbox-данные → точные размеры через scale_calc
             scaled_facades = []
             if total_width_mm > 0 and facades_data:
-                scaled_facades = calculate_scaled_facades(facades_data, total_width_mm)
+                # Высоты рядов (lower/upper/penal), прочитанные моделью с чертежа,
+                # передаём в scale_calc — иначе берутся константы 716/596/2500.
+                # Защита от явно абсурдных значений (0/1/9999 от модели).
+                def _plausible_height(v):
+                    return v if (v is not None and 200 <= int(v) <= 2900) else None
+
+                scaled_facades = calculate_scaled_facades(
+                    facades_data,
+                    total_width_mm,
+                    lower_height_mm=_plausible_height(heights_mm.get("lower")),
+                    upper_height_mm=_plausible_height(heights_mm.get("upper")),
+                    penal_height_mm=_plausible_height(heights_mm.get("penal")),
+                )
                 logger.info(
                     f"📏 Масштаб: {len(scaled_facades)} дверей с вычисленными размерами"
                 )
@@ -1011,10 +1046,11 @@ class GeminiImageAnalyzer:
             while i < len(zone_items):
                 idx, sf = zone_items[i]
 
-                # Угловой → отдельный модуль
-                is_corner = getattr(sf, 'is_corner', False) or (
-                    zone == "lower" and sf.width_mm >= 800 and sf.width_mm <= 1100
-                )
+                # Угловой → отдельный модуль (ТОЛЬКО по явному признаку модели:
+                # is_corner=true из JSON). Авто-эвристика «нижний фасад 800–1100мм
+                # = угол» УБРАНА — она превращала прямые тумбы/шкафы (две двери
+                # по ~900мм) в ложные «угловые модули» с глубиной = ширине.
+                is_corner = getattr(sf, 'is_corner', False)
 
                 if is_corner:
                     modules.append(RecognizedModule(

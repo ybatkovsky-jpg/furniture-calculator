@@ -26,6 +26,7 @@ from PIL import Image
 
 from app.services.scale_calc import calculate_scaled_facades, ScaledFacade
 from app.services.furniture_defaults import get_rules
+from app.services.recognition_protocol import scale_ok_meta, door_count_of
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -887,7 +888,8 @@ class GeminiImageAnalyzer:
     async def analyze_page(
         self,
         image_path: str | Path,
-    ) -> Tuple[List[RecognizedModule], Optional[str], List[str], str]:
+        return_meta: bool = False,
+    ) -> Tuple[Any, ...]:
         """
         Единый анализ страницы чертежа.
 
@@ -897,8 +899,16 @@ class GeminiImageAnalyzer:
            - Python группирует дверцы в модули (без помощи модели!)
         2. Если total_width_mm <= 0 → fallback на стандартные размеры
 
+        Args:
+            return_meta: False (по умолчанию) — прежний 4-элементный кортеж,
+                существующие вызовы не ломаются. True — дополнительно 5-й
+                элемент meta для протокола стабильности
+                (scripts/process_images.py):
+                {"total_width_mm": int, "scale_ok": bool, "heights_mm": dict,
+                 "door_count": int, "zone_type": str}
+
         Returns:
-            (modules, zone_type, materials, confidence)
+            (modules, zone_type, materials, confidence[, meta])
         """
         use_local = bool(self.local_llm_url)
         MODEL = self.local_vision_model if use_local else "qwen/qwen3-vl-235b-a22b-thinking"
@@ -1033,20 +1043,50 @@ class GeminiImageAnalyzer:
                 )
             elif total_width_mm <= 0:
                 logger.warning("Габарит не найден — вернусь к стандартным размерам")
+                if return_meta:
+                    return [], zone_type, materials, "low", self._build_meta(
+                        [], total_width_mm, heights_mm, zone_type
+                    )
                 return [], zone_type, materials, "low"
 
             if not scaled_facades:
                 logger.warning("Не удалось вычислить размеры — вернусь к стандартным")
+                if return_meta:
+                    return [], zone_type, materials, "low", self._build_meta(
+                        [], total_width_mm, heights_mm, zone_type
+                    )
                 return [], zone_type, materials, "low"
 
             # Python: создаём модули из фасадов (без помощи модели!)
             modules = self._facades_to_modules(scaled_facades, zone_type, glass_indices, drawer_indices)
 
+            if return_meta:
+                return modules, zone_type, materials, confidence, self._build_meta(
+                    modules, total_width_mm, heights_mm, zone_type
+                )
             return modules, zone_type, materials, confidence
 
         except Exception as e:
             logger.error(f"Единый анализ не удался: {type(e).__name__}: {e}")
+            if return_meta:
+                return [], None, [], "low", self._build_meta([], 0, {}, None)
             return [], None, [], "low"
+
+    @staticmethod
+    def _build_meta(
+        modules: List["RecognizedModule"],
+        total_width_mm,
+        heights_mm,
+        zone_type,
+    ) -> Dict[str, Any]:
+        """Метаданные попытки для протокола стабильности (чисто, без сети)."""
+        return {
+            "total_width_mm": int(total_width_mm or 0),
+            "scale_ok": bool(scale_ok_meta(modules, total_width_mm or 0)),
+            "heights_mm": dict(heights_mm or {}),
+            "door_count": int(door_count_of(modules)),
+            "zone_type": zone_type or "",
+        }
 
     def _facades_to_modules(
         self,

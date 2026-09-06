@@ -389,6 +389,9 @@ def fill_template_from_pipeline(
     # ── Контроль качества ──
     _add_quality_sheet(wb, pipeline_result)
 
+    # ── Список распознанной мебели по комнатам ──
+    _add_modules_sheet(wb, rooms_with_modules)
+
     # Сохраняем
     wb.save(output_path)
     logger.info(f"💾 Сохранено: {output_path}")
@@ -503,6 +506,101 @@ def _add_quality_sheet(wb: Workbook, pipeline_result: PipelineResult):
     score_cell.font = Font(bold=True)
 
     logger.info(f"📊 Лист «Контроль качества»: {len(pipeline_result.rooms)} помещений, средний score={avg_score:.0%}")
+
+
+# Человекочитаемые названия типов модулей для листа «🧩 Модули (распознано)».
+MODULE_TYPE_LABELS_RU = {
+    "lower_base": "Нижняя база",
+    "upper_base": "Верхняя база",
+    "penal": "Пенал",
+    "corner": "Угловой модуль",
+    "column": "Колонна (техника)",
+    "tumbler": "Тумба",
+    "tall_cabinet": "Высокий шкаф",
+    "wardrobe": "Шкаф-купе",
+    "shelf_unit": "Стеллаж / открытые полки",
+    "vanity": "Тумба под раковину",
+    "drawer_unit": "Модуль с ящиками",
+    "open_unit": "Открытый модуль",
+    "wall_panel": "Декоративная панель",
+}
+
+
+def _module_ru_name(mtype: Optional[str]) -> str:
+    """Тип модуля → русское название (для оператора)."""
+    return MODULE_TYPE_LABELS_RU.get(mtype, mtype or "?")
+
+
+def _add_modules_sheet(wb: Workbook, rooms_with_modules: list):
+    """
+    Лист «🧩 Модули (распознано)»: КАКАЯ мебель и с какими габаритами
+    посчитана по каждому помещению (одна строка = один распознанный модуль).
+    Оператор видит состав мебели, а не только агрегированные материалы.
+    """
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    sheet_name = "🧩 Модули (распознано)"
+    if sheet_name in [ws.title for ws in wb.worksheets]:
+        del wb[sheet_name]
+    ws = wb.create_sheet(sheet_name)  # в конец книги
+
+    header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+    room_fill = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
+    alt_fill = PatternFill(start_color="F2F7FC", end_color="F2F7FC", fill_type="solid")
+
+    headers = [
+        "Помещение", "Мебель (модуль)", "Габарит Ш×Г×В, мм", "Кол-во",
+        "Дверей (фасадов)", "Ящиков", "Стекло", "Угловой", "Материалы",
+    ]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(vertical="center", wrap_text=True)
+
+    row = 2
+    prev_room = None
+    for room in rooms_with_modules:
+        rname = (room.room_name or "?")[:31]
+        for m in room.modules or []:
+            qty = getattr(m, "quantity", 1) or 1
+            facades = (m.facades or {}).get("count") if isinstance(m.facades, dict) else None
+            drawers = (m.drawers or {}).get("count") if isinstance(m.drawers, dict) else None
+            vals = [
+                rname if rname != prev_room else "",
+                _module_ru_name(getattr(m, "type", "")),
+                f"{getattr(m, 'width', 0)}×{getattr(m, 'depth', 0)}×{getattr(m, 'height', 0)}",
+                qty,
+                facades if facades is not None else "",
+                drawers if drawers is not None else "",
+                "✅" if getattr(m, "has_glass", False) else "",
+                "✅" if getattr(m, "is_corner", False) else "",
+                ", ".join(room.materials or [])[:80],
+            ]
+            for col, v in enumerate(vals, 1):
+                ws.cell(row=row, column=col, value=v)
+            if rname != prev_room:
+                for col in range(1, len(headers) + 1):
+                    ws.cell(row=row, column=col).fill = room_fill
+                prev_room = rname
+            elif row % 2 == 0:
+                for col in range(1, len(headers) + 1):
+                    ws.cell(row=row, column=col).fill = alt_fill
+            row += 1
+
+    if row == 2:
+        ws.cell(row=2, column=1, value="Нет распознанных модулей")
+
+    widths = [16, 24, 18, 8, 13, 8, 8, 8, 50]
+    for col, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(col)].width = w
+    ws.freeze_panes = "A2"
+    if row > 2:
+        ws.auto_filter.ref = f"A1:I{row - 1}"
+
+    logger.info(f"🧩 Лист «Модули (распознано)»: {row - 2} строк мебели")
 
 
 def _add_problems_sheet(wb: Workbook, unfilled_items: list):

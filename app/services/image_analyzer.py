@@ -196,7 +196,7 @@ SCALE_PROMPT = """Ты — конструктор-технолог мебель�
 # Python вычисляет точные мм через scale_calc.
 # ================================================================
 
-UNIFIED_PROMPT_V2 = """Ты — конструктор-технолог мебельной фабрики. Проанализируй чертёж корпусной мебели и верни структурированный JSON.
+_UNIFIED_PROMPT_V2_EMBEDDED = """Ты — конструктор-технолог мебельной фабрики. Проанализируй чертёж корпусной мебели и верни структурированный JSON.
 
 ═══════════════════════════════════════
 ТИПЫ МЕБЕЛИ (строго)
@@ -364,6 +364,25 @@ UNIFIED_PROMPT_V2 = """Ты — конструктор-технолог мебе
 Верни ТОЛЬКО валидный JSON с полями: zone_type, materials, total_width_mm, facades, has_glass_facades, drawer_indices, confidence, notes.
 
 confidence: "high" если размерная линия прочитана; "medium" если часть размеров оценена; "low" если много предположений."""
+
+
+def _load_unified_prompt() -> str:
+    """Читает промпт из prompts/unified.txt; при отсутствии/ошибке — встроенный.
+
+    Файл позволяет править промпт без изменения кода (roadmap «Конфиги»).
+    Пустой файл тоже откатывается на встроенный вариант.
+    """
+    path = Path(__file__).resolve().parents[2] / "prompts" / "unified.txt"
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+        if text:
+            return text
+    except OSError as exc:
+        logger.warning("Не удалось прочитать %s (%s) — использую встроенный промпт", path, exc)
+    return _UNIFIED_PROMPT_V2_EMBEDDED
+
+
+UNIFIED_PROMPT_V2 = _load_unified_prompt()
 
 
 # ================================================================

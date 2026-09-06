@@ -63,6 +63,30 @@ def _translate_zone_type(zone_type: str) -> str:
     return ZONE_TYPE_RU.get(key, zone_type)
 
 
+# Зоны, где на странице обычно НЕ корпусная мебель с дверцами
+# (кровать, стол, диван, стеллаж без дверец): расчёт модулей не требуется.
+NO_DOOR_ZONES = frozenset({"Детская", "Спальня", "Гостиная", "Прихожая"})
+
+
+def is_no_door_zone_page(zone_type: Optional[str], modules: List) -> bool:
+    """
+    Гейт legacy-fallback: страница с мебелью БЕЗ дверец (например, кровать
+    в детской) не должна уходить в analyze_drawing, который выдумывает
+    из кровати/стола модули корпусной мебели.
+
+    True  → modules пусто И зона из NO_DOOR_ZONES → fallback не вызывать,
+            страницу пометить «не корпусная мебель: <зона>».
+    False → модули есть, либо зона неизвестна/корпусная → поведение как раньше
+            (при пустых modules — legacy-fallback).
+    """
+    if modules:
+        return False
+    if not zone_type:
+        return False
+    zone_ru = _translate_zone_type(str(zone_type))
+    return zone_ru in NO_DOOR_ZONES
+
+
 def _fix_ocr_name(name: str) -> str:
     """
     Исправить латинские буквы в кириллическом тексте (ошибки OCR).
@@ -319,7 +343,21 @@ class FullPipeline:
                     materials_mentioned=materials or [],
                 )
 
-            # ── 2. Fallback: модульный анализ (GLM-5V-Turbo) ──
+            # ── 2. Гейт: мебель без дверец (кровать/стол/диван) → fallback не нужен ──
+            if is_no_door_zone_page(zone_type, modules):
+                logger.info(
+                    f"    ⏭️ Стр.{page_num + 1}: не корпусная мебель "
+                    f"({zone_type}) — fallback пропущен"
+                )
+                return RecognitionResult(
+                    modules=[],
+                    confidence=confidence,
+                    zone_type=zone_type,
+                    materials_mentioned=materials or [],
+                    notes=f"не корпусная мебель: {zone_type}",
+                )
+
+            # ── 3. Fallback: модульный анализ (GLM-5V-Turbo) ──
             logger.info(f"    ⚠️ Единый анализ не дал модулей, fallback на GLM-5V...")
             return await self.vision.analyze_drawing(tmp_path)
 

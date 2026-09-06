@@ -423,27 +423,93 @@ def test_gola_vertical_corner_adds_one():
 # ════════════════════════════════════════════════════════════════════
 
 def test_wardrobe_rods():
-    """Гардеробная: штанги для модулей шириной ≥450 мм."""
+    """Гардеробная: штанги для модулей шириной ≥450 мм.
+
+    КВЕРК sliding: зона «wardrobe» помечена door_system="sliding"
+    (furniture_defaults) — фасады здесь это раздвижные створки, поэтому
+    петель и накладных ручек НЕТ (раньше тест фиксировал ошибочные 4 петли
+    на пенал 2500). Раздвижная система направляющих/роликов в прайсе
+    отсутствует — в смету пока не попадает (см. комментарии в quantity_calc)."""
     q = _calc([_mk("penal", 1000, h=2500, fc=1)], [], room="Гардеробная",
               zone_type="wardrobe")
     assert q.rods_rectangular_count == 1
-    assert q.hinges_count == 4          # фасад пенала 2500 → 4 петли
+    assert q.hinges_count == 0          # sliding: створка без петель
+    assert q.handles_count == 0         # sliding: без накладных ручек
     assert q.countertop_length_m == 0   # столешницы нет
+
+
+# ════════════════════════════════════════════════════════════════════
+# Раздвижные двери (door_system="sliding"): петли и ручки НЕ считаются
+# ════════════════════════════════════════════════════════════════════
+
+@pytest.mark.parametrize("zone", ["Спальня", "Гардеробная", "wardrobe"])
+def test_sliding_zone_no_hinges_no_handles(zone):
+    """КВЕРК sliding: зоны с door_system="sliding" (шкаф-купе/гардеробная) —
+    модули с фасадами-створками получают 0 петель и 0 накладных ручек:
+    на раздвижные створки ставят систему направляющих/роликов, а не петли.
+    (До фикса корпус 1800×2500 с 2 створками давал бы 8 петель и 4 ручки.)"""
+    q = _calc([_mk("penal", 1800, h=2500, fc=2)], ["EGGER U702"],
+              room=zone, zone_type=zone)
+    assert q.facades_area_m2 > 0        # фасады-створки в смете остаются
+    assert q.hinges_count == 0
+    assert q.handles_count == 0
+
+
+def test_sliding_vs_hinged_same_module():
+    """Контраст: один и тот же корпус 1800×2500 с 2 фасадами —
+    «Спальня» (sliding) → 0 петель / 0 ручек;
+    «Гостиная» (hinged, без Gola) → 8 петель (2×4) / 4 ручки (2×2)."""
+    mods = [_mk("penal", 1800, h=2500, fc=2)]
+    q_sliding = _calc(mods, ["EGGER U702"], room="Спальня", zone_type="Спальня")
+    q_hinged = _calc(mods, ["EGGER U702"], room="Гостиная", zone_type="Гостиная")
+    assert (q_sliding.hinges_count, q_sliding.handles_count) == (0, 0)
+    assert (q_hinged.hinges_count, q_hinged.handles_count) == (8, 4)
+
+
+def test_sliding_zone_kitchen_hinged_still_counts():
+    """Те же створки при hinged zone_type='Кухня': петли как раньше (8 шт),
+    ручки обнуляются Gola-блоком — прежнее кухонное поведение не тронуто."""
+    q = _calc([_mk("penal", 1800, h=2500, fc=2)], ["EGGER U702"],
+              room="Кухня", zone_type="Кухня")
+    assert q.hinges_count == 8          # 2 створки × 4 петли (2500 ≥ 2000, FIRMAX)
+    assert q.handles_count == 0         # кухня с Gola — ручки не нужны (как было)
 
 
 # ════════════════════════════════════════════════════════════════════
 # Кромка: зафиксированные кверки (регрессионный бейзлайн, см. P7)
 # ════════════════════════════════════════════════════════════════════
 
-def test_mdf_tall_facade_2mm_edge_is_lost():
-    """КВЕРК P7-5: фасад МДФ >2000 мм копит 2мм-кромку в edge_2_m,
-    но финальное распределение перезаписывает её нулём (ceil(premium=0)).
-    Поведение зафиксировано тестом до исправления."""
+def test_mdf_tall_facade_gets_2mm_edge():
+    """КВЕРК P7-5 (исправлено): фасад МДФ >2000 мм получает 2мм-кромку ≈ периметру.
+
+    Раньше накопленный в edge_2_m метраж безусловно перезаписывался
+    ceil(edge_premium_m)=0 (edge_premium_m нигде не накапливается), и высокий
+    МДФ-фасад попадал в смету БЕЗ кромки (ни 2мм, ни 1мм). Теперь финальное
+    распределение складывает оба источника 2мм: премиум ЛДСП + МДФ-фасад."""
     q = _calc([_mk("penal", 600, h=2500, fc=1)], ["EMDIWAY U702"], zone_type="kitchen")
     assert q.mdf_facade_needs_edge is True
-    # накоплено было >0, но после распределения:
+    fh, fw = (2500 - 4) / 1000, (600 - 3) / 1000
+    # периметр фасада × запас 1.30 → ceil = 9 м.п. кромки 2мм
+    assert q.edge_2_m == math.ceil((2 * fh + 2 * fw) * 1.30) == 9
+    assert q.edge_mdf_1mm_m == 0        # в 1мм-кромку не попадает (ветка >2000)
+
+
+def test_mdf_tall_and_short_facades_separate_buckets():
+    """Высокий (2мм) и короткий (1мм) МДФ-фасады в одном проекте не смешиваются."""
+    q = _calc(
+        [_mk("penal", 600, h=2500, fc=1), _mk("penal", 600, h=1500, fc=1)],
+        ["EMDIWAY U702"], zone_type="kitchen")
+    assert q.edge_2_m == 9          # только высокий фасад → 2мм
+    assert q.edge_mdf_1mm_m == 6    # только короткий фасад → 1мм
+
+
+def test_tall_ldsp_facade_not_mistaken_for_mdf_2mm():
+    """Высокий НЕ-МДФ фасад (ЛДСП EGGER) не получает 2мм кромку МДФ:
+    фикс применяется только к плитному МДФ >2000мм (mdf_needs_edge)."""
+    q = _calc([_mk("penal", 600, h=2500, fc=1)], ["EGGER U702"], zone_type="kitchen")
+    assert q.mdf_facade_needs_edge is False
     assert q.edge_2_m == 0
-    assert q.edge_mdf_1mm_m == 0        # и в 1мм-кромку не попало → кромка потеряна
+    assert q.edge_mdf_1mm_m == 0
 
 
 def test_mdf_1mm_edge_not_added_to_ldsp_edge():

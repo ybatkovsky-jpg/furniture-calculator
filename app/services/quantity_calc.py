@@ -7,6 +7,9 @@
 - Фасады (площадь фасадов × цена за м²; плёнка ПВХ IVEGO)
 - Петли (таблица: высота + вес фасада → N петель)
 - Ручки (Gola → 0, push-to-open → 0, обычные ≤1200→1, >1200→2)
+- Раздвижные двери (door_system="sliding": шкаф-купе, гардеробные) — БЕЗ
+  петель и накладных ручек: створки ездят на системе направляющих/роликов
+  (позиции раздвижной системы в прайсе нет — не выдумываем цену)
 - Ящики (ширина фасада → тип системы; рекомендации)
 - Gola (горизонтальные + вертикальные профиля)
 - Столешница (длина + свес + подрезка)
@@ -31,7 +34,11 @@ logger = logging.getLogger(__name__)
 from app.services.full_pipeline import PipelineResult, RoomSpec
 from app.services.image_analyzer import RecognizedModule
 from app.services.furniture_defaults import get_rules, FurnitureRules
-from app.services.hardware_calc import hinges_per_door  # единое правило петель (parity с calc_engine)
+from app.services.hardware_calc import (
+    hinges_per_door,                 # единое правило петель (parity с calc_engine)
+    estimate_facade_weight_kg,       # оценка веса фасада (BLUM/HETTICH + вес)
+    DEFAULT_HINGE_BRAND,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -237,6 +244,42 @@ def detect_material_properties(materials: List[str]) -> dict:
     return result
 
 
+def _estimate_door_weight_kg(module, facade_count: int, mat_props: dict) -> float:
+    """Оценка веса ОДНОЙ двери (кг) для высотно-весовой логики BLUM/HETTICH.
+
+    Дверь считается по габаритам модуля (facades.count описывает двери РЯДОМ,
+    каждая — полная высота модуля): ширина = module.width / facade_count,
+    высота = module.height. Материал фасада определяется из mat_props:
+      - ПВХ-плёнка (pvh) → ЛДСП (плотность ldsp);
+      - EMDIWAY / крашеный МДФ (emdiway/paint_*) → МДФ (mdf);
+      - стекло/зеркало → стекло (glass).
+    Если материал фасада не определён → возвращаем None: вес «неизвестен»,
+    и петли считаются по чисто высотной таблице (ровно как раньше).
+    Толщина фасада берётся типовая по материалу (estimate_facade_weight_kg).
+    """
+    door_width_mm = module.width / max(facade_count, 1)
+    door_height_mm = module.height
+
+    facade_type = (mat_props or {}).get("facade_type", "unknown")
+    has_glass = bool((mat_props or {}).get("has_glass", False))
+    has_glass = has_glass or bool(getattr(module, "has_glass", False))
+
+    if facade_type == "pvh":
+        material = "ldsp"      # ПВХ-фасад на ЛДСП
+    elif facade_type in ("emdiway", "emdiway_titan", "paint_matte", "paint_gloss"):
+        material = "mdf"       # плитный/крашеный МДФ (EMDIWAY, EVOGLOSS, AGT…)
+    elif has_glass:
+        material = "glass"     # стеклянная дверь/витрина (оценка по стеклу)
+    else:
+        return None            # материал не определён → вес неизвестен
+
+    return estimate_facade_weight_kg(
+        width_mm=door_width_mm,
+        height_mm=door_height_mm,
+        material=material,
+    )
+
+
 def calculate_quantities(
     modules: List[RecognizedModule],
     room_name: str = "",
@@ -251,6 +294,9 @@ def calculate_quantities(
     has_oven: bool = False,          # духовка
     has_dishwasher: bool = False,    # посудомойка
     has_hood: bool = False,          # вытяжка
+    hinge_brand: str = DEFAULT_HINGE_BRAND,  # бренд петель (parity с calc_engine):
+                                            # "FIRMAX" — правила заказчика (по высоте),
+                                            # "BLUM"/"HETTICH" — высота + вес фасада
 ) -> MaterialQuantities:
     """
     Рассчитать количества материалов для списка модулей.
@@ -269,6 +315,11 @@ def calculate_quantities(
     room_lower = room_name.lower()
     is_kitchen = rules.family == "kitchen"
     is_wardrobe = rules.family == "wardrobe"
+    # Раздвижная система дверей (шкаф-купе/гардеробная): зоны «Спальня»,
+    # «Гардеробная», «wardrobe» помечены door_system="sliding" (furniture_defaults).
+    # На створки купе ставят систему направляющих/роликов, а НЕ петли; накладные
+    # ручки на раздвижные створки тоже не вешаются — см. блоки ручек и петель ниже.
+    is_sliding = rules.door_system == "sliding"
 
     # Определяем свойства материала (единая функция)
     mat_props = detect_material_properties(materials)
@@ -351,7 +402,9 @@ def calculate_quantities(
             fh = (module.height - 4) / 1000
             fw = (module.width / fc - 3) / 1000
             facade_perimeter = (2 * fh + 2 * fw) * fc * qty
-            # Высокие фасады >2000мм → 2мм кромка
+            # Высокие фасады >2000мм → 2мм кромка.
+            # Сырой метраж копится в edge_2_m и УЧИТЫВАЕТСЯ в финальном
+            # распределении (edge_2_m = ceil(premium) + ceil(edge_2_m)), см. ниже.
             if module.height > 2000:
                 q.edge_2_m += facade_perimeter * EDGE_OVERLAP
             else:
@@ -373,8 +426,12 @@ def calculate_quantities(
             facade_w_m = (module.width / facade_count - 3) / 1000
             q.pvc_film_m2 += facade_w_m * facade_h_m * facade_count * qty
 
-        # ── Ручки (только для обычных фасадов на петлях) ──
-        if module.type in ("lower_base", "upper_base", "penal", "column", "tumbler"):
+        # ── Ручки (обычные накладные, только для распашных фасадов) ──
+        # На раздвижные створки (door_system="sliding": шкаф-купе, гардеробная)
+        # обычные накладные ручки не ставят — для купе используется профиль-ручка
+        # (врезная/накладная на раму створки). Такой позиции в прайсе НЕТ
+        # (см. price_manager.py) → ручки для sliding просто не считаем.
+        if not is_sliding and module.type in ("lower_base", "upper_base", "penal", "column", "tumbler"):
             if module.facades and module.facades.get("count", 0) > 0:
                 fc = module.facades.get("count", 1)
                 # Gola и push-to-open — без ручек; обычные петли — с ручками
@@ -403,17 +460,38 @@ def calculate_quantities(
                 and not (module.facades and module.facades.get("count", 0) > 0)
             )
 
-            if not has_drawers_only and not is_appliance_penal and module.facades:
+            # Sliding (шкаф-купе/гардеробная, door_system="sliding"): петли НЕ
+            # ставятся — раздвижные створки ездят по системе (верхняя/нижняя
+            # направляющие + ролики). Раздвижная система НЕ учтена в смете:
+            # готовой позиции с ценой в прайсе нет (price_manager.py) — цену
+            # не выдумываем, оставляем только исключение петель.
+            if not is_sliding and not has_drawers_only and not is_appliance_penal and module.facades:
                 facade_count = module.facades.get("count", 1)
                 # Высота двери = высота модуля: facades.count описывает двери РЯДОМ
                 # (промпт: «вертикальная линия = стык двух дверей»), каждая — полная
                 # высота. Деление высоты на число дверей (как для «друг на друге»)
                 # занижало петли высоких дверей. Единое правило — hinges_per_door().
+                #
+                # Вес фасада: для BLUM/HETTICH (высота×вес) оцениваем вес ОДНОЙ
+                # двери по габаритам (ширина модуля / число дверей × высота двери)
+                # и материалу фасада из mat_props (см. estimate_facade_weight_kg).
+                # Для FIRMAX вес не передаём: «правила заказчика» — только по высоте.
+                hinge_brand_key = (hinge_brand or DEFAULT_HINGE_BRAND).upper()
+                door_weight_kg = None
+                if hinge_brand_key in ("BLUM", "HETTICH"):
+                    door_weight_kg = _estimate_door_weight_kg(
+                        module, facade_count, mat_props
+                    )
                 q.hinges_count += (
-                    hinges_per_door(module.height, brand="FIRMAX")
+                    hinges_per_door(
+                        module.height,
+                        brand=hinge_brand_key,
+                        door_weight_kg=door_weight_kg,
+                    )
                     * facade_count
                     * qty
                 )
+                q.hinge_brand = hinge_brand_key
 
         # ── Ящики (AI + рекомендации) ──
         if module.drawers and module.drawers.get("count", 0) > 0:
@@ -508,8 +586,13 @@ def calculate_quantities(
             total_hdf_area = max(0, total_hdf_area - excluded)
         q.hdf_sheets = max(1, math.ceil(total_hdf_area * WASTE_FACTOR_HDF / SHEET_MDF_STANDARD["area_m2"]))
 
-    # Кромка ЛДСП: распределяем
-    q.edge_2_m  = math.ceil(q.edge_premium_m)
+    # Кромка ЛДСП: распределяем.
+    # КВЕРК P7-5: edge_2_m к этому моменту содержит сырой метраж 2мм-кромки
+    # высоких МДФ-фасадов (>2000мм), накопленный в цикле. Ранее он безусловно
+    # перезаписывался ceil(edge_premium_m)=0 (edge_premium_m не накапливается),
+    # и кромка терялась из сметы. Теперь складываем оба источника 2мм:
+    # премиум ЛДСП (edge_premium_m) + высокие МДФ-фасады (накоплено в edge_2_m).
+    q.edge_2_m  = math.ceil(q.edge_premium_m) + math.ceil(q.edge_2_m)
     q.edge_08_m = math.ceil(q.edge_visible_m)
     q.edge_04_m = math.ceil(q.edge_total_m - q.edge_visible_m - q.edge_premium_m)
     if q.edge_04_m < 0:

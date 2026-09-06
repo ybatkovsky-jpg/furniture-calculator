@@ -26,7 +26,12 @@ logging.basicConfig(
 )
 
 from app.services.image_analyzer import GeminiImageAnalyzer, RecognitionResult
-from app.services.full_pipeline import PipelineResult, RoomSpec, _calculate_quality
+from app.services.full_pipeline import (
+    PipelineResult,
+    RoomSpec,
+    _calculate_quality,
+    is_no_door_zone_page,
+)
 from app.services.template_filler import fill_template_from_pipeline
 
 TEMPLATE = ROOT / "templates" / "Таблица для расчетов пустая.xlsx"
@@ -55,6 +60,7 @@ async def process_images(image_paths: list[str], output_name: str = "Расче�
         # ── Шаг 1: Анализ каждой картинки ──
         rooms = []
         errors = []
+        no_door_pages = []  # страницы «не корпусная мебель» (без дверец)
         
         for i, img_path in enumerate(image_paths, 1):
             path = Path(img_path)
@@ -71,6 +77,12 @@ async def process_images(image_paths: list[str], output_name: str = "Расче�
             
             if modules:
                 method = "единый (Qwen3-VL)"
+            elif is_no_door_zone_page(zone_type, modules):
+                # ── 1b'. Гейт: мебель без дверец (кровать/стол/диван) ──
+                # legacy-fallback НЕ вызываем: он выдумывает модули из кровати
+                no_door_pages.append(path.name)
+                print(f"   ⏭️ Не корпусная мебель: {zone_type} — расчёт не требуется")
+                continue
             else:
                 # ── 1b. Fallback: GLM-5V-Turbo ──
                 print("   ⚠️ Единый анализ не дал модулей → fallback GLM-5V-Turbo...")
@@ -123,6 +135,12 @@ async def process_images(image_paths: list[str], output_name: str = "Расче�
                 print(f"   ❌ Модули не найдены ни одной моделью")
         
         if not rooms:
+            if no_door_pages and not errors:
+                print(
+                    "\n⏭️ Страница содержит не корпусную мебель — расчёт не требуется."
+                )
+                print("   Модули корпусной мебели отсутствуют, Excel-смета не формируется.")
+                return ""
             print("\n❌ Ни одного помещения с модулями не распознано.")
             if errors:
                 print("Ошибки:")

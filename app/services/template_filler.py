@@ -320,6 +320,9 @@ def fill_template_from_pipeline(
         # Обновляем заголовок (A1) — заменяем на название помещения
         _update_title(new_ws, room, pipeline_result)
 
+        # Блок «🧩 Мебель:» в шапке листа (строка 2) — видно, ЧТО посчитано
+        _add_furniture_header(new_ws, room)
+
         # Рассчитываем количества (spec подавляет автодобавление)
         q = calculate_quantities(room.modules, room.room_name, room.materials, zone_type=room.zone_type,
                                  has_spec=(project_spec is not None))
@@ -679,6 +682,61 @@ def _update_title(ws, room: RoomSpec, result: PipelineResult):
         ws["A2"].value = result.project_address
     else:
         ws["A2"].value = ""
+
+
+def _add_furniture_header(ws, room: RoomSpec):
+    """
+    Блок «🧩 Мебель:» в шапке листа-комнаты (строка 2, мерж A2:H2).
+
+    Оператор сразу видит, КАКАЯ мебель распознана и посчитана в этом листе:
+      • Нижняя база 634×560×716 мм — 6 шт (1 двер., 2 ящика)
+      • Верхняя база 634×320×596 мм — 6 шт (стекло)
+    Строка 2 в копии шаблона пустая, таблица цен начинается со строки 3 —
+    поэтому блок не сдвигает и не ломает раскладку/мержи шаблона.
+    """
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    modules = room.modules or []
+    if not modules:
+        return
+
+    lines = []
+    for m in modules:
+        qty = getattr(m, "quantity", 1) or 1
+        detail = []
+        facades = (m.facades or {}).get("count") if isinstance(m.facades, dict) else None
+        drawers = (m.drawers or {}).get("count") if isinstance(m.drawers, dict) else None
+        if facades:
+            detail.append(f"{facades} двер." if facades != 1 else "1 двер.")
+        if drawers:
+            detail.append(f"ящиков {drawers}" if drawers != 1 else f"{drawers} ящик")
+        if getattr(m, "has_glass", False):
+            detail.append("стекло")
+        if getattr(m, "is_corner", False):
+            detail.append("угловой")
+        name = _module_ru_name(getattr(m, "type", ""))
+        dims = f"{getattr(m, 'width', 0)}×{getattr(m, 'depth', 0)}×{getattr(m, 'height', 0)}"
+        line = f"{name} {dims} мм — {qty} шт"
+        if detail:
+            line += " (" + ", ".join(detail) + ")"
+        lines.append(line)
+
+    text = "🧩 Мебель:\n" + "\n".join(f"  • {line}" for line in lines)
+
+    # Вторую строку не используем под адрес — помещаем состав мебели.
+    # Мержим широко (A:H), чтобы строки помещались без обрезки.
+    range_ = "A2:H2"
+    if range_ not in [str(r) for r in ws.merged_cells.ranges]:
+        ws.merge_cells(range_)
+    cell = ws["A2"]
+    cell.value = text
+    cell.font = Font(name="Arial", size=9)
+    cell.fill = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
+    cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    # Высота строки = под каждую строку списка
+    ws.row_dimensions[2].height = 14 * (len(lines) + 1) + 4
+
+    logger.info(f"🧩 {room.room_name}: шапка «Мебель:» — {len(lines)} модулей")
 
 
 def _update_summary(wb: Workbook, result: PipelineResult, rooms: List[RoomSpec]):

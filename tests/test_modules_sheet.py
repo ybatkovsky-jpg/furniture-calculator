@@ -1,9 +1,13 @@
-"""Тесты листа «🧩 Модули (распознано)» в Excel-смете (template_filler)."""
+"""Тесты листа «🧩 Модули (распознано)» и шапки «🧩 Мебель:» (template_filler)."""
 from types import SimpleNamespace
 
 from openpyxl import Workbook
 
-from app.services.template_filler import _add_modules_sheet, _module_ru_name
+from app.services.template_filler import (
+    _add_furniture_header,
+    _add_modules_sheet,
+    _module_ru_name,
+)
 
 SHEET = "🧩 Модули (распознано)"
 
@@ -67,3 +71,28 @@ def test_modules_sheet_empty_rooms():
     _add_modules_sheet(wb, [])
     assert SHEET in wb.sheetnames
     assert wb[SHEET]["A2"].value == "Нет распознанных модулей"
+
+
+def test_furniture_header_lists_modules():
+    wb = Workbook()
+    ws = wb.active
+    room = _room("Кухня", [
+        _module("lower_base", 600, 560, 820, qty=2, facades={"count": 2, "type": "doors"}),
+        _module("upper_base", 600, 320, 720, glass=True, facades={"count": 1, "type": "doors"}),
+    ], ["EGGER H1379"])
+    _add_furniture_header(ws, room)
+
+    text = ws["A2"].value
+    assert text.startswith("🧩 Мебель:")
+    assert "Нижняя база 600×560×820 мм — 2 шт (2 двер.)" in text
+    assert "Верхняя база 600×320×720 мм — 1 шт (1 двер., стекло)" in text
+    # мерж широкой шапки и высота строки
+    assert "A2:H2" in [str(r) for r in ws.merged_cells.ranges]
+    assert ws.row_dimensions[2].height and ws.row_dimensions[2].height > 14
+
+
+def test_furniture_header_empty_room_no_crash():
+    wb = Workbook()
+    ws = wb.active
+    _add_furniture_header(ws, _room("Кухня", []))
+    assert ws["A2"].value in (None, "")

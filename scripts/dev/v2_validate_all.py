@@ -7,6 +7,10 @@
 - количество фасадов
 - drawer_indices / has_glass_facades
 
+Local-first (v2.1): при настроенном LOCAL_LLM_API_URL прогон идёт через
+локальную Qwen3.8 (unsloth-studio), иначе — RouterAI qwen3-vl-235b.
+Маршрут логируется в каждую строку сводки (поле "route").
+
 Использование: python scripts/dev/v2_validate_all.py
 Стоимость: ~12 вызовов (по 1 на изображение).
 """
@@ -35,7 +39,12 @@ from app.services.furniture_defaults import FURNITURE_DEFAULTS
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-MODEL = "qwen/qwen3-vl-235b-a22b-thinking"
+# Local-first: локальная Qwen3.8, если настроена; иначе облачный референс.
+USE_LOCAL = bool(getattr(settings, "local_llm_api_url", ""))
+MODEL = settings.local_vision_model if USE_LOCAL else "qwen/qwen3-vl-235b-a22b-thinking"
+API_URL = (settings.local_llm_api_url if USE_LOCAL else settings.routerai_api_url).rstrip("/")
+API_KEY = settings.local_llm_api_key if USE_LOCAL else settings.routerai_api_key
+ROUTE = "local" if USE_LOCAL else "routerai"
 IMAGE_DIR = _PROJECT_ROOT / "input_images"
 OUT_DIR = _PROJECT_ROOT / "output" / "v2_validation"
 
@@ -57,7 +66,7 @@ async def call_v2(client: httpx.AsyncClient, image_path: str) -> dict:
     image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
     headers = {
-        "Authorization": f"Bearer {settings.routerai_api_key}",
+        "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json",
     }
     body = {
@@ -72,11 +81,17 @@ async def call_v2(client: httpx.AsyncClient, image_path: str) -> dict:
             ],
         }],
         "temperature": 0.0,
-        "max_tokens": 8000,
-        "response_format": {"type": "json_object"},
+        # Локальная — thinking-модель: запас на длинный JSON
+        "max_tokens": 16000 if USE_LOCAL else 8000,
     }
+    if not USE_LOCAL:
+        body["response_format"] = {"type": "json_object"}
+    else:
+        # Локальный сервер (unsloth-studio): response_format не поддержан;
+        # thinking выключён — иначе reasoning съедает бюджет токенов.
+        body["chat_template_kwargs"] = {"enable_thinking": False}
 
-    response = await client.post(settings.routerai_api_url, headers=headers, json=body)
+    response = await client.post(API_URL, headers=headers, json=body)
     response.raise_for_status()
     data = response.json()
     text = data["choices"][0]["message"].get("content", "") or ""
@@ -99,6 +114,8 @@ async def main():
 
     valid_zones = set(FURNITURE_DEFAULTS.keys())
     results = []
+
+    print(f"Маршрут: {ROUTE} | модель: {MODEL}")
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
         for i, img_path in enumerate(images, 1):
@@ -140,6 +157,8 @@ async def main():
 
             results.append({
                 "file": img_path.name,
+                "route": ROUTE,
+                "model": MODEL,
                 "zone": zone,
                 "zone_ok": zone_ok,
                 "total_width_mm": total,

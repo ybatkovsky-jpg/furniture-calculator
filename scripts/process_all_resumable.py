@@ -18,7 +18,7 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 from app.services.image_analyzer import GeminiImageAnalyzer, RecognizedModule
-from app.services.full_pipeline import PipelineResult, RoomSpec
+from app.services.full_pipeline import PipelineResult, RoomSpec, _calculate_quality
 from app.services.template_filler import fill_template_from_pipeline
 from app.services.project_spec import load_project_spec
 
@@ -148,11 +148,13 @@ async def main():
                 continue
             modules = dict_to_modules(entry['modules'])
             zone = entry.get('zone') or f"Стр.{entry['page']}"
-            rooms.append(RoomSpec(
+            room = RoomSpec(
                 room_name=zone, page=entry['page'], zone_type=entry.get('zone'),
                 modules=modules, materials=entry.get('materials', []),
                 confidence=entry.get('confidence', 'medium'),
-            ))
+            )
+            _calculate_quality(room)  # QC-скор и флаги для листа «Контроль качества»
+            rooms.append(room)
         
         if rooms:
             result = PipelineResult(success=True, project_name=project_name, rooms=rooms)

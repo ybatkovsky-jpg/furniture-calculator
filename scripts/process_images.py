@@ -26,7 +26,7 @@ logging.basicConfig(
 )
 
 from app.services.image_analyzer import GeminiImageAnalyzer, RecognitionResult
-from app.services.full_pipeline import PipelineResult, RoomSpec
+from app.services.full_pipeline import PipelineResult, RoomSpec, _calculate_quality
 from app.services.template_filler import fill_template_from_pipeline
 
 TEMPLATE = ROOT / "templates" / "Таблица для расчетов пустая.xlsx"
@@ -107,6 +107,7 @@ async def process_images(image_paths: list[str], output_name: str = "Расче�
                     materials=materials,
                     confidence=confidence,
                 )
+                _calculate_quality(room)  # QC-скор и флаги для листа «Контроль качества»
                 rooms.append(room)
                 
                 print(f"   ✅ {room_name}: {len(modules)} модулей ({method})")

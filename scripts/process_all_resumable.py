@@ -1,8 +1,15 @@
 """
-Обработка ВСЕХ страниц с сохранением прогресса.
-Можно прервать и продолжить — результаты кешируются в JSON.
+Пакетный прогон всех изображений из каталога с сохранением прогресса.
+Можно прервать и продолжить — результаты кешируются в output/pages_cache.json.
+
+Использование:
+    python scripts/process_all_resumable.py [--images DIR] [--spec PATH]
+                                            [--project NAME] [--out PATH]
+
+По умолчанию берёт input_images/ в корне проекта, без спецификации,
+имя проекта — «Проект из чертежей», Excel — output/Расчет_ПОЛНЫЙ_ВСЕ.xlsx.
 """
-import asyncio, sys, json, logging, time
+import asyncio, sys, json, logging, time, argparse
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -15,11 +22,22 @@ from app.services.full_pipeline import PipelineResult, RoomSpec
 from app.services.template_filler import fill_template_from_pipeline
 from app.services.project_spec import load_project_spec
 
-IMAGES_DIR = Path(r"D:\БИЗНЕС\ПРО МЕБЕЛЬ\furniture-calculator\input_images")
-CACHE_FILE = Path(__file__).resolve().parent.parent / "output" / "pages_cache.json"
-SPEC = Path(r"D:\БИЗНЕС\ПРО МЕБЕЛЬ\ПРОЕКТЫ\АНДЕЛИС\project_spec.yaml")
-TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "Таблица для расчетов пустая.xlsx"
-OUTPUT = Path(__file__).resolve().parent.parent / "output" / "Расчет_ПОЛНЫЙ_ВСЕ.xlsx"
+ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_IMAGES_DIR = ROOT / "input_images"
+CACHE_FILE = ROOT / "output" / "pages_cache.json"
+DEFAULT_TEMPLATE = ROOT / "templates" / "Таблица для расчетов пустая.xlsx"
+DEFAULT_OUTPUT = ROOT / "output" / "Расчет_ПОЛНЫЙ_ВСЕ.xlsx"
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description="Пакетный прогон изображений → Excel-смета (с кэшем)")
+    p.add_argument("--images", type=Path, default=DEFAULT_IMAGES_DIR,
+                   help="каталог с картинками (default: input_images/)")
+    p.add_argument("--spec", type=Path, default=None,
+                   help="project_spec.yaml проекта (default: без спецификации)")
+    p.add_argument("--project", default="Проект из чертежей", help="имя проекта в Excel")
+    p.add_argument("--out", type=Path, default=DEFAULT_OUTPUT, help="путь выходного .xlsx")
+    return p.parse_args()
 
 
 def load_cache() -> dict:
@@ -81,9 +99,14 @@ async def process_page(analyzer, img_path: Path, page_num: int) -> dict:
 
 
 async def main():
-    images = sorted(IMAGES_DIR.glob("*.jpg"))
+    args = parse_args()
+    images_dir, spec_path, project_name, output_path = (
+        args.images, args.spec, args.project, args.out)
+    template_path = DEFAULT_TEMPLATE
+
+    images = sorted(images_dir.glob("*.jpg"))
     if not images:
-        print("❌ Нет картинок"); return
+        print(f"❌ Нет картинок в {images_dir}"); return
     
     cache = load_cache()
     analyzer = GeminiImageAnalyzer()
@@ -132,16 +155,16 @@ async def main():
             ))
         
         if rooms:
-            result = PipelineResult(success=True, project_name="Рокоссовского 59-79", rooms=rooms)
-            spec = load_project_spec(str(SPEC)) if SPEC.exists() else None
-            OUTPUT.parent.mkdir(exist_ok=True)
-            fill_template_from_pipeline(result, str(TEMPLATE), str(OUTPUT), project_spec=spec)
+            result = PipelineResult(success=True, project_name=project_name, rooms=rooms)
+            spec = load_project_spec(str(spec_path)) if spec_path and spec_path.exists() else None
+            output_path.parent.mkdir(exist_ok=True)
+            fill_template_from_pipeline(result, str(template_path), str(output_path), project_spec=spec)
             
             total_mods = sum(sum(m.quantity for m in r.modules) for r in rooms)
             total_drw = sum(sum(1 for m in r.modules if m.drawers) for r in rooms)
             print(f"\n{'='*60}")
             print(f"✅ {len(rooms)} помещений, {total_mods} модулей, {total_drw} с ящиками")
-            print(f"📊 {OUTPUT}")
+            print(f"📊 {output_path}")
             print(f"{'='*60}")
         else:
             print("❌ Модули не найдены")

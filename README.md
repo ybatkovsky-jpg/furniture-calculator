@@ -122,12 +122,12 @@ furniture-calculator/
 │       ├── price_manager.py       # Импорт/экспорт прайса
 │       └── kp_generator.py        # Генерация PDF КП
 ├── scripts/                       # CLI-скрипты пайплайна
-│   ├── process_all_resumable.py   # Возобновляемый прогон (с места остановки)
-│   ├── process_ensemble.py        # Ансамблевый прогон
-│   ├── process_facades.py         # Анализ фасадов
-│   ├── run_scale_bbox.py          # Калибровка масштаба
-│   ├── check_phases.py / import_price.py / process_images.py / …
-│   └── dev/                       # Вспомогательные dev-скрипты
+│   ├── process_images.py          # Прогон отдельных картинок → Excel (local-first)
+│   ├── process_all_resumable.py   # Пакетный прогон каталога с кэшем (--images/--spec/--project/--out)
+│   ├── run_quick.py               # Smoke-прогон PDF → Excel (5 стр.)
+│   ├── check_phases.py            # Валидатор фаз пайплайна (59 проверок)
+│   ├── import_price.py            # Импорт прайса
+│   └── dev/                       # dev-инструменты (v2_validate_all.py — валидатор промпта на эталонах)
 ├── templates/
 │   ├── row_mapping.json                 # Маппинг материалов → строки шаблона
 │   ├── project_spec_EXAMPLE.yaml        # Пример спецификации проекта
@@ -146,7 +146,7 @@ furniture-calculator/
 - ✅ **Parity петель** — единое правило `hinges_per_door(height, brand)` в `hardware_calc.py`: `quantity_calc` и `calc_engine` считают одинаково (FIRMAX: ≥2000→4 / 901–1999→3 / ≤900→2; BLUM/HETTICH — высотная таблица до 5); 19 тестов parity
 - ✅ **Спецификация проекта** — `project_spec.yaml`: правила авто-комплектующих и петель конкретного проекта (дедупликация позиций)
 - ✅ **Валидация на реальном проекте** — альбом «Рокоссовского 59-79»: 12/12 страниц прогнано локально, помещения определены верно на всех страницах
-- ✅ **Возобновляемый прогон** — `scripts/process_all_resumable.py` продолжает с места остановки, с QC-вердиктами по страницам
+- ✅ **Возобновляемый прогон** — `scripts/process_all_resumable.py` продолжает с места остановки (кэш в `output/pages_cache.json`); каталог картинок/spec/имя проекта/выход — параметры CLI
 
 ### Ранее (Фазы 1–5, ROADMAP v1)
 

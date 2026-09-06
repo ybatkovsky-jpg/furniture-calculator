@@ -5,8 +5,9 @@
     python process_images.py image1.jpg image2.png ...
 
 На каждую картинку:
-1. Qwen3-VL-235B (RouterAI.ru) — единый анализ: bbox + модули + материалы
-2. GLM-5V-Turbo (Z.ai) — fallback если 0 модулей
+1. Локальная Qwen3.8 (или RouterAI, если LOCAL_LLM_API_URL не задан) —
+   единый анализ: bbox + модули + материалы (UNIFIED_PROMPT_V2)
+2. analyze_drawing — fallback если 0 модулей
 3. Заполнение шаблона Excel «Таблица для расчетов пустая.xlsx»
 """
 

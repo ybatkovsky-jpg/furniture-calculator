@@ -129,34 +129,28 @@ def select_total_width(
 
     has_vlm = isinstance(vlm_width, (int, float)) and vlm_width > 0
 
-    def width_score(c: dict) -> float:
-        return min(1.0, c["w"] / 0.12)
-
-    def x_bonus(c: dict) -> float:
-        cx = c["x"] + c["w"] / 2.0
-        return max(0.0, 1.0 - abs(cx - 0.5) * 2.0)
-
-    def y_bonus(c: dict) -> float:
-        cy = c["y"] + c["h"] / 2.0
-        return 1.0 if cy >= 1.0 / 3.0 else max(0.0, cy * 3.0)
-
-    def strength(c: dict) -> float:
-        """Похожесть на цифру размерной линии: ширина + центральность."""
-        return min(1.0, width_score(c) + 0.5 * x_bonus(c) * y_bonus(c))
-
     if has_vlm:
+        # (а) OCR-число в пределах ±10% от ответа модели — согласие VLM+OCR.
+        # Близость по ЗНАЧЕНИЮ важнее позиции (число габарита может быть не по
+        # центру, напр. стр. 0011 — шкаф слева листа).
         near = [c for c in valid if abs(c["value"] - vlm_width) <= vlm_width * 0.10]
-        best_near = max(near, key=strength) if near else None
-        if best_near is not None and strength(best_near) >= 0.5:
-            # (а) близкое к VLM И похожее на цифру размерной линии
+        if near:
+            best_near = min(near, key=lambda c: abs(c["value"] - vlm_width))
             rel = abs(best_near["value"] - vlm_width) / float(vlm_width)
             proximity = max(0.0, 1.0 - rel / 0.10)
             confidence = round(0.70 + 0.25 * proximity, 3)
             return best_near["value"], confidence
 
-    # (б) vlm отсутствует или близкого «сильного» кандидата нет
-    best = max(valid, key=strength)
-    confidence = round(0.40 + 0.50 * strength(best), 3)
+    # (б) vlm отсутствует или рядом с ним нет OCR-числа:
+    # габарит по ширине — обычно КРУПНЕЙШЕЕ число на чертеже. Confidence растёт
+    # с доминированием над вторым по величине числом.
+    # (Ограничение: у высоких изделий высота может быть больше ширины — но сюда
+    # попадаем только когда модель уже дала ширину без OCR-подтверждения.)
+    best = max(valid, key=lambda c: c["value"])
+    others = [c["value"] for c in valid if c["value"] != best["value"]]
+    second = max(others) if others else 0
+    dominance = (best["value"] - second) / best["value"] if second else 0.5
+    confidence = round(min(0.95, 0.55 + 0.45 * min(1.0, dominance / 0.30)), 3)
     return best["value"], confidence
 
 
@@ -212,12 +206,24 @@ def parse_glm_dimensions(
 # ЛОКАЛЬНЫЙ TESSERACT
 # ================================================================
 
+def _configure_tesseract_cmd() -> None:
+    """Прописать tesseract.exe явно, если его нет в PATH (Windows winget-установка)."""
+    try:
+        import pytesseract
+    except Exception:
+        return
+    exe = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+    if exe.exists():
+        pytesseract.pytesseract.tesseract_cmd = str(exe)
+
+
 def _tesseract_available() -> bool:
     """Tesseract + pytesseract доступны? (проверяется один раз)."""
     global _tesseract_checked
     if _tesseract_checked is None:
         try:
             import pytesseract  # noqa: F401
+            _configure_tesseract_cmd()
             pytesseract.get_tesseract_version()
             _tesseract_checked = True
         except Exception:
@@ -236,6 +242,7 @@ def _extract_tesseract(
         from PIL import Image
     except Exception:
         return []
+    _configure_tesseract_cmd()
     try:
         image = Image.open(path)
     except Exception:

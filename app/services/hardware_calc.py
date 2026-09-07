@@ -28,8 +28,9 @@ class HardwareCalculation:
     """Результат расчёта фурнитуры."""
     hinges_total: int = 0
     drawers_total: int = 0
+    handles_total: int = 0
     total_cost: float = 0
-    breakdown: Dict[str, Dict] = None  # {"hinges": {...}, "drawers": {...}}
+    breakdown: Dict[str, Dict] = None  # {"hinges": {...}, "drawers": {...}, "handles": {...}}
 
     def __post_init__(self):
         if self.breakdown is None:

@@ -105,18 +105,28 @@ def calculate_full_cost(
             "noncash_markup": 1.13,
         }
 
-    # 1. Генерируем детали из модулей
+    # 1. Генерируем детали из модулей (оставляем для совместимости)
     modules_with_details = _generate_details_for_modules(modules)
 
-    # 2. Расчёт листов ЛДСП/МДФ
-    material_prices = _extract_material_prices(selected_materials)
-    result.sheets_calc = calculate_sheets_for_modules(
-        modules=modules_with_details,
-        material_prices=material_prices
+    # 2. ЕДИНЫЙ ИСТОЧНИК ПРАВДЫ: количество ДСП и фурнитуры считает quantity_calc
+    #    (та же логика, что в Excel: запас на раскрой, экономия смежных стенок,
+    #    ручки, направляющие). Цены по-прежнему из прайса (selected_*).
+    from app.services.quantity_calc import calculate_quantities
+    hinge_brand = DEFAULT_HINGE_BRAND
+    _hw_cfg = (selected_hardware or {}).get("hinges")
+    if isinstance(_hw_cfg, dict) and _hw_cfg.get("brand"):
+        hinge_brand = str(_hw_cfg["brand"])
+    recognized = [_dict_to_recognized_module(m) for m in modules]
+    material_names = _extract_material_names(selected_materials)
+    quantities = calculate_quantities(
+        recognized, "", material_names, hinge_brand=hinge_brand
     )
-    total_sheets = result.sheets_calc.total_sheets or 0
+
+    material_prices = _extract_material_prices(selected_materials)
+    result.sheets_calc.total_sheets = quantities.ldsp_sheets
+    result.sheets_calc.total_area_m2 = round(quantities.ldsp_area_m2, 3)
     avg_price = _get_average_sheet_price(material_prices)
-    result.material_cost = float(total_sheets * avg_price)
+    result.material_cost = float((quantities.ldsp_sheets or 0) * avg_price)
 
     # 2. Расчёт кромки
     edge_prices = _extract_edge_prices(selected_materials)
@@ -130,21 +140,29 @@ def calculate_full_cost(
     # 3. Расчёт фасадов
     result.facade_cost = _calculate_facades_cost(modules, selected_materials)
 
-    # 4. Расчёт фурнитуры
+    # 4. Расчёт фурнитуры — количество из quantity_calc (петли + ручки + ящики)
     hinge_price = _extract_hinge_price(selected_hardware)
     drawer_prices = _extract_drawer_prices(selected_hardware)
-    # Бренд петель (FIRMAX по умолчанию — «правила заказчика», общие со сметой
-    # quantity_calc); BLUM/HETTICH — высотная таблица (см. hinges_per_door).
-    hinge_brand = DEFAULT_HINGE_BRAND
-    _hw_cfg = (selected_hardware or {}).get("hinges")
-    if isinstance(_hw_cfg, dict) and _hw_cfg.get("brand"):
-        hinge_brand = str(_hw_cfg["brand"])
-    result.hardware_calc = calculate_hardware_for_modules(
-        modules=modules,
-        hinge_price=hinge_price,
-        drawer_prices=drawer_prices,
-        hinge_brand=hinge_brand,
+    handle_price = _extract_handle_price(selected_hardware)
+    drawer_avg = (sum(drawer_prices.values()) / len(drawer_prices)) if drawer_prices else 0.0
+    result.hardware_calc = HardwareCalculation()
+    result.hardware_calc.hinges_total = quantities.hinges_count
+    result.hardware_calc.drawers_total = quantities.drawers_count
+    result.hardware_calc.handles_total = quantities.handles_count
+    result.hardware_calc.total_cost = round(
+        quantities.hinges_count * hinge_price
+        + quantities.drawers_count * drawer_avg
+        + quantities.handles_count * handle_price,
+        2,
     )
+    result.hardware_calc.breakdown = {
+        "hinges": {"total_hinges": quantities.hinges_count,
+                   "cost": round(quantities.hinges_count * hinge_price, 2)},
+        "drawers": {"total_drawers": quantities.drawers_count,
+                    "cost": round(quantities.drawers_count * drawer_avg, 2)},
+        "handles": {"total_handles": quantities.handles_count,
+                    "cost": round(quantities.handles_count * handle_price, 2)},
+    }
     result.hardware_cost = float(result.hardware_calc.total_cost or 0)
 
     # 5. Расчёт стекла
@@ -235,16 +253,23 @@ def _calculate_facades_cost(modules: List[Dict], selected_materials: Dict) -> fl
             facade_price_per_m2 = float(facades["price"])
 
     for module in modules:
-        if "facades" not in module:
+        facades = module.get("facades")
+        if not facades:
             continue
 
-        for facade in module["facades"]:
-            width_m = facade.get("width_mm", 0) / 1000
-            height_m = facade.get("height_mm", 0) / 1000
-            area_m2 = width_m * height_m
-
-            # Для фасадов на заказ: цена × площадь
-            total_cost += area_m2 * facade_price_per_m2
+        # Два формата фасадов:
+        #  - dict {"count": N, "type": "doors"} (из RecognizedModule / _facades_to_modules);
+        #  - list [{width_mm, height_mm}] (из _generate_details_for_modules).
+        if isinstance(facades, dict):
+            count = int(facades.get("count", 1) or 1)
+            width_mm = (module.get("width", 0) or 0) / max(count, 1)
+            height_mm = module.get("height", 0) or 0
+            total_cost += (width_mm / 1000) * (height_mm / 1000) * count * facade_price_per_m2
+        else:
+            for facade in facades:
+                width_m = (facade.get("width_mm", 0) or 0) / 1000
+                height_m = (facade.get("height_mm", 0) or 0) / 1000
+                total_cost += width_m * height_m * facade_price_per_m2
 
     return round(total_cost, 2)
 
@@ -256,6 +281,50 @@ def _extract_hinge_price(selected_hardware: Dict) -> float:
         if isinstance(hinges, dict) and "price" in hinges and hinges["price"] is not None:
             return float(hinges["price"])
     return 0
+
+
+def _extract_handle_price(selected_hardware: Dict) -> float:
+    """Извлекает цену ручки (опционально; если не задана — 0)."""
+    hw = selected_hardware or {}
+    handles = hw.get("handles")
+    if isinstance(handles, dict) and handles.get("price") is not None:
+        return float(handles["price"])
+    if isinstance(handles, list) and handles and isinstance(handles[0], dict):
+        return float(handles[0].get("price") or 0)
+    return 0.0
+
+
+def _extract_material_names(selected_materials: Dict) -> list:
+    """Имена материалов (для quantity_calc.detect_material_properties)."""
+    names = []
+    if not isinstance(selected_materials, dict):
+        return names
+    for key in ("ldsp", "facades", "edge"):
+        v = selected_materials.get(key)
+        if isinstance(v, dict) and v.get("name"):
+            names.append(str(v["name"]))
+        elif isinstance(v, list):
+            for item in v:
+                if isinstance(item, dict) and item.get("name"):
+                    names.append(str(item["name"]))
+    return names
+
+
+def _dict_to_recognized_module(m: Dict):
+    """Преобразовать словарь модуля (из БД) в RecognizedModule для quantity_calc."""
+    from app.services.image_analyzer import RecognizedModule
+    return RecognizedModule(
+        type=m.get("type", "lower_base"),
+        width=int(m.get("width", 0) or 0),
+        depth=int(m.get("depth", 0) or 0),
+        height=int(m.get("height", 0) or 0),
+        quantity=int(m.get("quantity", 1) or 1),
+        has_glass=bool(m.get("has_glass", False)),
+        facades=m.get("facades"),
+        drawers=m.get("drawers"),
+        shelves=int(m.get("shelves", 0) or 0),
+        is_corner=bool(m.get("is_corner", False)),
+    )
 
 
 def _extract_drawer_prices(selected_hardware: Dict) -> Dict[str, float]:

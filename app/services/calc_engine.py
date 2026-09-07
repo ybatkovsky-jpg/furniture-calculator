@@ -40,6 +40,13 @@ class CalculationResult:
     accessories_cost: float = 0
     subcontractor_cost: float = 0
 
+    # Количества прочих позиций из quantity_calc (для показа в смете)
+    hdf_sheets: int = 0
+    led_strip_m: float = 0
+    gola_vertical_m: float = 0
+    gola_horizontal_m: float = 0
+    countertop_length_m: float = 0
+
     # Детальные расчёты
     sheets_calc: SheetCalculation = None
     edge_calc: EdgeCalculation = None
@@ -70,7 +77,8 @@ def calculate_full_cost(
     selected_hardware: Dict[str, Any],
     glass_items: List[Dict],
     discount_info: Optional[DiscountInfo] = None,
-    settings: Optional[Dict] = None
+    settings: Optional[Dict] = None,
+    zone_type: Optional[str] = None,
 ) -> CalculationResult:
     """
     Полный расчёт стоимости заказа.
@@ -118,8 +126,10 @@ def calculate_full_cost(
         hinge_brand = str(_hw_cfg["brand"])
     recognized = [_dict_to_recognized_module(m) for m in modules]
     material_names = _extract_material_names(selected_materials)
+    if not zone_type:
+        zone_type = _infer_zone_type(modules)
     quantities = calculate_quantities(
-        recognized, "", material_names, hinge_brand=hinge_brand
+        recognized, "", material_names, zone_type=zone_type, hinge_brand=hinge_brand
     )
 
     material_prices = _extract_material_prices(selected_materials)
@@ -127,6 +137,13 @@ def calculate_full_cost(
     result.sheets_calc.total_area_m2 = round(quantities.ldsp_area_m2, 3)
     avg_price = _get_average_sheet_price(material_prices)
     result.material_cost = float((quantities.ldsp_sheets or 0) * avg_price)
+
+    # Количества прочих позиций (ХДФ, подсветка, GOLA, столешница) — для показа в смете
+    result.hdf_sheets = quantities.hdf_sheets
+    result.led_strip_m = quantities.led_strip_m
+    result.gola_vertical_m = quantities.gola_vertical_m
+    result.gola_horizontal_m = quantities.gola_horizontal_m
+    result.countertop_length_m = quantities.countertop_length_m
 
     # 2. Расчёт кромки
     edge_prices = _extract_edge_prices(selected_materials)
@@ -325,6 +342,13 @@ def _dict_to_recognized_module(m: Dict):
         shelves=int(m.get("shelves", 0) or 0),
         is_corner=bool(m.get("is_corner", False)),
     )
+
+
+def _infer_zone_type(modules: List[Dict]) -> Optional[str]:
+    """Грубая прикидка типа помещения: верхние базы → кухня (включает авто-GOLA/LED/столешницу)."""
+    if any((m.get("type") or "") == "upper_base" for m in modules):
+        return "Кухня"
+    return None
 
 
 def _extract_drawer_prices(selected_hardware: Dict) -> Dict[str, float]:

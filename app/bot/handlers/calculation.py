@@ -110,6 +110,18 @@ def _format_estimate_text(calculation: Calculation, result) -> str:
     if result.facade_cost > 0:
         lines.append(f"Фасады: {result.facade_cost:,.0f} ₽")
 
+    if getattr(result, "hdf_sheets", 0) > 0:
+        lines.append(f"ХДФ (задние стенки): {result.hdf_sheets} листов")
+
+    if getattr(result, "countertop_length_m", 0) > 0:
+        lines.append(f"Столешница: {result.countertop_length_m:.1f} м")
+
+    if getattr(result, "gola_horizontal_m", 0) > 0 or getattr(result, "gola_vertical_m", 0) > 0:
+        lines.append(f"GOLA: гор. {result.gola_horizontal_m:.1f} м + верт. {result.gola_vertical_m:.1f} м")
+
+    if getattr(result, "led_strip_m", 0) > 0:
+        lines.append(f"Подсветка (LED): {result.led_strip_m:.1f} м")
+
     if result.hardware_cost > 0:
         lines.append(f"Фурнитура: {result.hardware_cost:,.0f} ₽")
 

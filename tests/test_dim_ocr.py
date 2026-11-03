@@ -95,6 +95,31 @@ def test_near_vlm_no_replace_needed_same_value():
     assert conf >= 0.7
 
 
+@pytest.mark.parametrize("page, candidates, vlm, expected", [
+    # Реальный вывод Tesseract по листам альбома (см. temp/dim_candidates.json):
+    # кухня в развороте — модель удвоила ширину (9360), OCR читает 4860 и 2430;
+    # санузел — модель дала бред 2581, OCR — 1584 против 911/905.
+    (
+        "0002 угловая кухня",
+        [_c(4860, x=0.48, y=0.10, w=0.012), _c(4860, x=0.48, y=0.42, w=0.012),
+         _c(2430, x=0.19, y=0.23, w=0.011), _c(1830, x=0.58, y=0.43, w=0.011),
+         _c(1764, x=0.17, y=0.24, w=0.011)],
+        9360, 4860,
+    ),
+    (
+        "0011 санузел",
+        [_c(1584, x=0.15, y=0.34, w=0.012), _c(911, x=0.18, y=0.35, w=0.008),
+         _c(905, x=0.43, y=0.10, w=0.009), _c(685, x=0.30, y=0.10, w=0.009)],
+        2581, 1584,
+    ),
+])
+def test_real_album_candidates_calibration(page, candidates, vlm, expected):
+    """Заморозка калибровки на реальных OCR-кандидатах альбома."""
+    value, conf = select_total_width(candidates, vlm)
+    assert value == expected, page
+    assert conf >= 0.7, page
+
+
 # ════════════════════════════════════════════════════════════════════
 # parse_glm_dimensions — парсер ответа GLM-OCR
 # ════════════════════════════════════════════════════════════════════

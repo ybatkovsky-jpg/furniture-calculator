@@ -103,14 +103,19 @@ def select_total_width(
 
     Правила:
     (а) если vlm_width задан (>0): среди кандидатов в пределах ±10% от
-        vlm_width выбирается самый «похожий на цифру размерной линии»
-        (наибольшая ширина строки + позиция в середине нижних 2/3
-        изображения); confidence 0.70..0.95 обратно пропорциональна
-        отклонению от vlm_width.
-    (б) если vlm_width отсутствует ИЛИ близкого кандидата нет / он слабый:
-        выбирается кандидат с наибольшим x-размахом/центральностью;
-        confidence растёт с «силой» кандидата (≥0.7 только для явной
-        цифры размерной линии — широкой и центральной в нижних 2/3).
+        vlm_width берётся самый правдоподобный как «цифра размерной линии»
+        (см. `_dim_line_quality`: центральность, ширина строки, низ листа,
+        повтор числа). Confidence учитывает и близость к vlm_width, и
+        качество кандидата; слабое число (вертикальный/угловой размер) рядом
+        с ответом модели не принимается — оно исключается из пула.
+    (б) если vlm_width отсутствует ИЛИ близких кандидатов нет / все слабые:
+        выбирается КРУПНЕЙШЕЕ число (габарит обычно крупнее всех деталей),
+        confidence растёт с доминированием над вторым по величине.
+
+    Именно значение, а не позиция, решает в (б): настоящий габарит может
+    стоять не по центру листа (стр. 0011 — шкаф слева). Гейт качества
+    работает только там, где есть близкое к модели число, — чтобы не
+    доверять краевому вертикальному размеру, случайно близкому по значению.
 
     Returns:
         (значение_мм, confidence 0..1) или (None, 0) если кандидатов нет.
@@ -129,25 +134,79 @@ def select_total_width(
 
     has_vlm = isinstance(vlm_width, (int, float)) and vlm_width > 0
 
+    # Повтор одного и того же числа на листе — признак настоящего габарита
+    value_counts: dict = {}
+    for c in valid:
+        value_counts[c["value"]] = value_counts.get(c["value"], 0) + 1
+    quality = {
+        id(c): _dim_line_quality(c, value_counts[c["value"]]) for c in valid
+    }
+    best_quality = max(quality.values())
+
     if has_vlm:
         # (а) OCR-число в пределах ±10% от ответа модели — согласие VLM+OCR.
         # Близость по ЗНАЧЕНИЮ важнее позиции (число габарита может быть не по
         # центру, напр. стр. 0011 — шкаф слева листа).
         near = [c for c in valid if abs(c["value"] - vlm_width) <= vlm_width * 0.10]
         if near:
-            best_near = min(near, key=lambda c: abs(c["value"] - vlm_width))
-            rel = abs(best_near["value"] - vlm_width) / float(vlm_width)
-            proximity = max(0.0, 1.0 - rel / 0.10)
-            confidence = round(0.70 + 0.25 * proximity, 3)
-            return best_near["value"], confidence
+            best_near = max(
+                near,
+                key=lambda c: (quality[id(c)], -abs(c["value"] - vlm_width)),
+            )
+            q_near = quality[id(best_near)]
+            # Слабое число (у края/вертикальная цифра) не может подтверждать
+            # габарит, если рядом есть заметно более правдоподобная цифра.
+            if q_near >= 0.5 * best_quality:
+                rel = abs(best_near["value"] - vlm_width) / float(vlm_width)
+                proximity = max(0.0, 1.0 - rel / 0.10)
+                confidence = (0.70 + 0.25 * proximity) * (0.60 + 0.40 * q_near)
+                return best_near["value"], round(min(0.95, confidence), 3)
 
-    # (б) vlm отсутствует или рядом с ним нет OCR-числа:
+            # Исключаем слабые «соседи» модели из пула — иначе ветка (б)
+            # выберет их как самое крупное число (кверк: 2490 бьёт 1581).
+            weak_values = {
+                c["value"] for c in near if quality[id(c)] < 0.5 * best_quality
+            }
+            pool = [c for c in valid if c["value"] not in weak_values]
+            if not pool:
+                # Слабое единственное число — отдаём его, но с низким
+                # доверием: вызывающий код не станет заменять габарит модели.
+                return best_near["value"], round(min(0.69, 0.35 + 0.35 * q_near), 3)
+            return _largest_with_dominance(pool)
+
+    # (б) vlm отсутствует или рядом с ним нет правдоподобного OCR-числа:
     # габарит по ширине — обычно КРУПНЕЙШЕЕ число на чертеже. Confidence растёт
     # с доминированием над вторым по величине числом.
     # (Ограничение: у высоких изделий высота может быть больше ширины — но сюда
     # попадаем только когда модель уже дала ширину без OCR-подтверждения.)
-    best = max(valid, key=lambda c: c["value"])
-    others = [c["value"] for c in valid if c["value"] != best["value"]]
+    return _largest_with_dominance(valid)
+
+
+def _dim_line_quality(c: dict, duplicates: int = 1) -> float:
+    """Похожесть кандидата на цифру РАЗМЕРНОЙ ЛИНИИ габарита (0..1).
+
+    Компоненты (веса):
+      0.50 — центральность по горизонтали (габарит обычно в центре листа,
+             вертикальный размер — у края);
+      0.25 — ширина строки (у габарита она длиннее, чем у мелкой детали);
+      0.15 — нижняя половина листа (размерные линии габарита там);
+      0.10 — повтор числа на листе (габарит указан дважды: план + развёртка).
+    """
+    centrality = 1.0 - min(1.0, abs(c["x"] - 0.5) / 0.5)
+    width = min(1.0, max(0.0, c["w"]) / 0.06)
+    vertical = 1.0 if c["y"] >= 0.30 else max(0.0, c["y"] / 0.30)
+    dup = 1.0 if duplicates >= 2 else 0.0
+    return round(0.50 * centrality + 0.25 * width + 0.15 * vertical + 0.10 * dup, 3)
+
+
+def _largest_with_dominance(
+    candidates: List[dict],
+) -> Tuple[Optional[int], float]:
+    """Крупнейшее число + confidence по доминированию над вторым по величине."""
+    if not candidates:
+        return None, 0.0
+    best = max(candidates, key=lambda c: c["value"])
+    others = [c["value"] for c in candidates if c["value"] != best["value"]]
     second = max(others) if others else 0
     dominance = (best["value"] - second) / best["value"] if second else 0.5
     confidence = round(min(0.95, 0.55 + 0.45 * min(1.0, dominance / 0.30)), 3)

@@ -14,6 +14,7 @@
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 import logging
+import re
 
 from app.services.cost_calc import calculate_cost, CostBreakdown, DiscountInfo
 from app.services.sheet_calc import calculate_sheets_for_modules, SheetCalculation
@@ -154,8 +155,8 @@ def calculate_full_cost(
     )
     result.edge_cost = float(result.edge_calc.total_cost or 0)
 
-    # 3. Расчёт фасадов
-    result.facade_cost = _calculate_facades_cost(modules, selected_materials)
+    # 3. Расчёт фасадов (по нормализованным модулям — ручная схема тоже видна)
+    result.facade_cost = _calculate_facades_cost(recognized, selected_materials)
 
     # 4. Расчёт фурнитуры — количество из quantity_calc (петли + ручки + ящики)
     hinge_price = _extract_hinge_price(selected_hardware)
@@ -258,8 +259,13 @@ def _extract_edge_prices(selected_materials: Dict) -> Dict[str, float]:
     return prices
 
 
-def _calculate_facades_cost(modules: List[Dict], selected_materials: Dict) -> float:
-    """Расчёт стоимости фасадов."""
+def _calculate_facades_cost(modules, selected_materials: Dict) -> float:
+    """Расчёт стоимости фасадов по НОРМАЛИЗОВАННЫМ модулям (RecognizedModule).
+
+    Площадь одной двери считается по той же формуле, что в quantity_calc
+    (зазор 3 мм по ширине на дверь и 4 мм по высоте), чтобы смета в чате и
+    Excel не расходились. Модули без фасадов (кровать/стол/техника) пропускаются.
+    """
     total_cost = 0
 
     # Цена фасадов из selected_materials
@@ -270,23 +276,15 @@ def _calculate_facades_cost(modules: List[Dict], selected_materials: Dict) -> fl
             facade_price_per_m2 = float(facades["price"])
 
     for module in modules:
-        facades = module.get("facades")
-        if not facades:
+        facades = getattr(module, "facades", None)
+        if not isinstance(facades, dict) or facades.get("count", 0) <= 0:
             continue
-
-        # Два формата фасадов:
-        #  - dict {"count": N, "type": "doors"} (из RecognizedModule / _facades_to_modules);
-        #  - list [{width_mm, height_mm}] (из _generate_details_for_modules).
-        if isinstance(facades, dict):
-            count = int(facades.get("count", 1) or 1)
-            width_mm = (module.get("width", 0) or 0) / max(count, 1)
-            height_mm = module.get("height", 0) or 0
-            total_cost += (width_mm / 1000) * (height_mm / 1000) * count * facade_price_per_m2
-        else:
-            for facade in facades:
-                width_m = (facade.get("width_mm", 0) or 0) / 1000
-                height_m = (facade.get("height_mm", 0) or 0) / 1000
-                total_cost += width_m * height_m * facade_price_per_m2
+        count = int(facades.get("count", 1) or 1)
+        quantity = max(int(getattr(module, "quantity", 1) or 1), 1)
+        width_mm = max(int(getattr(module, "width", 0) or 0) - 3 * count, 0)
+        height_mm = max(int(getattr(module, "height", 0) or 0) - 4, 0)
+        door_area_m2 = (width_mm / count / 1000) * (height_mm / 1000)
+        total_cost += door_area_m2 * count * quantity * facade_price_per_m2
 
     return round(total_cost, 2)
 
@@ -328,20 +326,164 @@ def _extract_material_names(selected_materials: Dict) -> list:
 
 
 def _dict_to_recognized_module(m: Dict):
-    """Преобразовать словарь модуля (из БД) в RecognizedModule для quantity_calc."""
+    """Словарь модуля (из БД / распознавания / ручного ввода) → RecognizedModule.
+
+    В проекте исторически живут ДВЕ схемы модуля, и они по-разному трактуют
+    одни и те же ключи:
+
+    1. Распознавание (`image.py`, `recognition_cache.module_to_dict`) —
+       {type, width, depth, height, quantity, facades: {"count": N},
+        drawers: {"count": N}, shelves, has_glass, is_corner}, где
+       **quantity — число одинаковых корпусов**, а фасады описаны отдельно.
+    2. Ручной ввод (`bot/handlers/manual_input.py`) —
+       {type, width, depth, height, filling: "doors"|"drawers"|"shelves"|…,
+        quantity, has_glass}, где **quantity — число дверей/ящиков/полок**,
+       а ключей facades/drawers нет вовсе.
+
+    Третья, ещё более старая схема (деталировка/старые тесты) — размеры с
+    суффиксом `_mm` и `facades` списком [{width_mm, height_mm}].
+
+    Приведение здесь: `quantity` ручной схемы разворачивается в
+    `facades.count`/`drawers.count`/`shelves`, а сама quantity становится 1
+    (один корпус), иначе корпус размножался по числу дверей. Размеры
+    принимаются в обоих вариантах записи, фасады-список сводятся к
+    `{"count": len(list)}`.
+    """
     from app.services.image_analyzer import RecognizedModule
+
+    raw_filling = m.get("filling")
+    filling = raw_filling.strip().lower() if isinstance(raw_filling, str) else ""
+
+    has_glass = bool(m.get("has_glass", False))
+    quantity = _pick_int(m, ("quantity",), 1)
+    quantity = max(1, quantity)
+
+    width = _pick_dim(m, "width", "width_mm")
+    depth = _pick_dim(m, "depth", "depth_mm")
+    height = _pick_dim(m, "height", "height_mm")
+
+    facades = _normalize_facades(m.get("facades"), has_glass)
+    drawers = _normalize_drawers(m.get("drawers"))
+    shelves = max(0, _pick_int(m, ("shelves",), 0))
+
+    # Ручная схема: заполнение и количество описаны через `filling`+`quantity`,
+    # а не через facades/drawers. Разворачиваем и обнуляем множитель корпусов.
+    if filling and facades is None and drawers is None:
+        if filling == "doors":
+            facades = {"count": quantity, "type": "glass" if has_glass else "doors"}
+        elif filling == "drawers":
+            drawers = {"count": quantity}
+        elif filling == "shelves":
+            shelves = quantity
+        # lift / wine_rack — механизм/открытая вставка: фасадов-дверей нет
+        quantity = 1
+    # Если фасады заданы явно (распознавание) — доверяем им, quantity остаётся
+    # числом корпусов.
+
     return RecognizedModule(
-        type=m.get("type", "lower_base"),
-        width=int(m.get("width", 0) or 0),
-        depth=int(m.get("depth", 0) or 0),
-        height=int(m.get("height", 0) or 0),
-        quantity=int(m.get("quantity", 1) or 1),
-        has_glass=bool(m.get("has_glass", False)),
-        facades=m.get("facades"),
-        drawers=m.get("drawers"),
-        shelves=int(m.get("shelves", 0) or 0),
+        type=m.get("type") or "lower_base",
+        width=width,
+        depth=depth,
+        height=height,
+        quantity=quantity,
+        has_glass=has_glass,
+        facades=facades,
+        drawers=drawers,
+        shelves=shelves,
         is_corner=bool(m.get("is_corner", False)),
     )
+
+
+def _pick_dim(m: Dict, *keys) -> int:
+    """Размер в мм: принимает и `width`, и `width_mm`; нулевой ключ пропускает.
+
+    Ноль первого ключа не должен «затирать» значение второго: при частичной
+    миграции данных встречаются записи вида {"width": 0, "width_mm": 600}.
+    """
+    for key in keys:
+        value = _pick_int(m, (key,), 0)
+        if value > 0:
+            return value
+    return 0
+
+
+def _pick_int(m: Dict, keys, default: int) -> int:
+    """Первое непустое целое из набора ключей ("600", "600 мм", 600.0 → 600)."""
+    for key in keys:
+        if key not in m or m[key] is None:
+            continue
+        value = m[key]
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            return int(value)
+        digits = re.sub(r"[^\d]", "", str(value))
+        if digits:
+            try:
+                return int(digits)
+            except ValueError:
+                continue
+    return default
+
+
+def _normalize_facades(raw, has_glass: bool = False):
+    """Фасады → {"count": N, "type": "doors"|"glass"} (или None).
+
+    Принимает: None; dict {"count"/"quantity", "type"}; список фасадов
+    (старый формат [{width_mm, height_mm}] или список индексов и т.п.);
+    просто число.
+    """
+    if raw is None:
+        return None
+
+    if isinstance(raw, dict):
+        count = _pick_int(raw, ("count", "quantity", "n"), 1)
+        if count <= 0:
+            return None
+        ftype = raw.get("type") or ("glass" if has_glass else "doors")
+        return {"count": count, "type": str(ftype)}
+
+    if isinstance(raw, (list, tuple)):
+        if not raw:
+            return None
+        ftype = ""
+        for item in raw:
+            if isinstance(item, dict) and item.get("type"):
+                ftype = str(item["type"])
+                break
+        if not ftype:
+            ftype = "glass" if has_glass else "doors"
+        return {"count": len(raw), "type": ftype}
+
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        count = int(raw)
+        return {"count": count, "type": "doors"} if count > 0 else None
+
+    return None
+
+
+def _normalize_drawers(raw):
+    """Ящики → {"count": N, "type": ...} (или None). Список → len(списка)."""
+    if raw is None:
+        return None
+
+    if isinstance(raw, dict):
+        count = _pick_int(raw, ("count", "quantity", "n"), 1)
+        if count <= 0:
+            return None
+        out = {"count": count}
+        if raw.get("type"):
+            out["type"] = str(raw["type"])
+        return out
+
+    if isinstance(raw, (list, tuple)):
+        return {"count": len(raw)} if raw else None
+
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        count = int(raw)
+        return {"count": count} if count > 0 else None
+
+    return None
 
 
 def _infer_zone_type(modules: List[Dict]) -> Optional[str]:

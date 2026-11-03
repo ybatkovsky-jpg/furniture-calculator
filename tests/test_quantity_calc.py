@@ -302,6 +302,22 @@ def test_drawers_with_facades_still_hinged():
     assert q.hinges_count == 2
 
 
+def test_drawers_only_module_gets_handles():
+    """Модуль без дверей (ручная схема ввода): ручка на каждый ящик, петель нет."""
+    q = _calc([_mk("lower_base", 450, dr=3)], ["EGGER U702"],
+              room="Спальня", zone_type="bedroom")
+    assert q.drawers_count == 3
+    assert q.hinges_count == 0
+    assert q.handles_count == 3
+
+
+def test_drawers_with_facade_handles_not_doubled():
+    """Ящики + фасад: ручки считаются по фасаду, а не плюс по ящикам."""
+    q = _calc([_mk("lower_base", 400, fc=1, dr=3)], ["EGGER U702"],
+              room="Спальня", zone_type="bedroom")
+    assert q.handles_count == 1
+
+
 # ════════════════════════════════════════════════════════════════════
 # Количество модулей > 1 и смежные стенки
 # ════════════════════════════════════════════════════════════════════

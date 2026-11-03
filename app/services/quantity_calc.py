@@ -442,6 +442,15 @@ def calculate_quantities(
                     else:
                         q.handles_count += 2 * qty
 
+            # ── Ручки ящиков в модуле БЕЗ дверей ──
+            # Ручной ввод (bot/handlers/manual_input.py) задаёт ящики как
+            # filling="drawers" + quantity=N и НЕ задаёт facades — без этой
+            # ветки такой модуль оставался вообще без ручек (каждый выдвижной
+            # фасад имеет свою ручку). Для распознанных модулей фасады уже
+            # есть (facades.count>0), поэтому двойного счёта нет.
+            elif module.drawers and module.drawers.get("count", 0) > 0:
+                q.handles_count += int(module.drawers.get("count", 0)) * qty
+
         # ── Петли: по высоте ОДНОЙ ДВЕРИ, а не модуля ──
         # Ящики = без петель (используют боксы)
         # Встраиваемая техника = петли в комплекте, НЕ считаем

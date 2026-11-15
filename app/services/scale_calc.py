@@ -30,6 +30,7 @@ class ScaledFacade:
     bbox_x_pct: float
     bbox_w_pct: float
     is_corner: bool = False   # признак углового фасада (от модели, пробрасывается из JSON)
+    corrected: bool = False   # ширина была принудительно исправлена (P2-06)
 
 
 # Стандартные высоты по зонам (если модель не прочитала с чертежа)
@@ -90,13 +91,17 @@ def calculate_scaled_facades(
 
         width_mm = round(w_pct * scale)
 
-        # Валидация: ширина в разумных пределах
+        # Валидация: ширина в разумных пределах. P2-06: коррекция не
+        # «молчаливая» — флаг corrected уходит в модуль и в notes результата.
+        corrected = False
         if width_mm < 200:
             logger.warning(f"Фасад {zone} слишком узкий ({width_mm}мм) → корректируем до 250мм")
             width_mm = 250
+            corrected = True
         elif width_mm > 1200:
             logger.warning(f"Фасад {zone} слишком широкий ({width_mm}мм) → корректируем до 1000мм")
             width_mm = 1000
+            corrected = True
 
         height_mm = heights.get(zone, 716)
 
@@ -107,6 +112,7 @@ def calculate_scaled_facades(
             bbox_x_pct=x_pct,
             bbox_w_pct=w_pct,
             is_corner=bool(f.get("is_corner", False)),
+            corrected=corrected,
         ))
 
     # 4. Проверка: сумма ширин нижних фасадов ≈ total_width_mm

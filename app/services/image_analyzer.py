@@ -51,6 +51,7 @@ class RecognizedModule:
     is_corner: bool = False
     # Bounding box (если модель вернула)
     bbox: Optional[Dict[str, int]] = None  # {"x": int, "y": int, "w": int, "h": int}
+    notes: Optional[str] = None  # предупреждения по модулю (например, коррекция ширины)
 
 
 @dataclass
@@ -1248,6 +1249,7 @@ class GeminiImageAnalyzer:
                         len(group), carcass_width, len(group),
                     )
 
+                corrected = any(getattr(g[1], "corrected", False) for g in group)
                 modules.append(RecognizedModule(
                     type=mtype,
                     width=carcass_width,
@@ -1257,6 +1259,10 @@ class GeminiImageAnalyzer:
                     has_glass=any_glass,
                     facades={"count": len(group), "type": "glass" if any_glass else "doors"},
                     drawers={"count": drawer_count} if drawer_count > 0 else None,
+                    notes=(
+                        "Ширина фасада была вне допустимого диапазона — "
+                        "скорректирована, проверьте размер"
+                    ) if corrected else None,
                 ))
 
                 i = j
@@ -1746,10 +1752,17 @@ class GeminiImageAnalyzer:
 
         logger.info(f"Post-process: {len(result.modules)} → {len(processed)}")
 
+        # P2-06: предупреждения модулей (коррекция ширины) — в общие notes.
+        module_notes = [m.notes for m in processed if getattr(m, "notes", None)]
+        notes = result.notes
+        if module_notes:
+            joined = "; ".join(dict.fromkeys(module_notes))
+            notes = f"{notes}\n{joined}" if notes else joined
+
         return RecognitionResult(
             modules=processed,
             confidence=result.confidence,
-            notes=result.notes,
+            notes=notes,
             zone_type=result.zone_type,
             materials_mentioned=result.materials_mentioned,
         )

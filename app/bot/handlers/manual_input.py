@@ -2,6 +2,8 @@
 Обработчики для ручного ввода модулей мебели.
 """
 
+import logging
+
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -20,6 +22,8 @@ from app.db.session import get_session
 from app.models.calculation import Calculation
 from app.services.access import get_owned_calculation
 
+logger = logging.getLogger(__name__)
+
 router = Router()
 
 
@@ -30,7 +34,7 @@ async def start_manual_input(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     project_id = data.get('project_id')
 
-    print(f"DEBUG: start_manual_input - data={data}, project_id={project_id}")
+    logger.debug("start_manual_input: project_id=%s", project_id)
 
     if not project_id:
         await callback.message.answer("Ошибка: проект не найден. Начните с создания нового проекта.")

@@ -373,7 +373,10 @@ def calculate_quantities(
         sides_area      = 2 * (d_m * h_m)        # 2 боковины
         bottom_top_area = 2 * (w_m * d_m)         # дно + крыша
         back_area       = (module.width / 1000) * (module.height / 1000)  # ХДФ без пропила
-        shelf_count     = max(module.shelves, 1 if module.type in ("lower_base", "upper_base") else 0)
+        shelf_count     = max(
+            module.shelves,
+            rules.shelf_default if module.type in ("lower_base", "upper_base") else 0,
+        )
         shelf_area      = w_m * d_m * shelf_count
 
         ldsp_per_module = sides_area + bottom_top_area + shelf_area
@@ -389,7 +392,10 @@ def calculate_quantities(
         sides_perimeter      = 2 * (2 * (d_m + h_m))   # 2 боковины
         bottom_top_perimeter = 2 * (2 * (w_m + d_m))   # дно + крыша
         shelf_perimeter      = shelf_count * (2 * (w_m + d_m))
-        back_perimeter       = 2 * ((module.width/1000) + (module.height/1000))  # задняя стенка
+        back_perimeter = (
+            2 * ((module.width / 1000) + (module.height / 1000))
+            if rules.back_wall_in_edge else 0.0
+        )
 
         total_perimeter = (sides_perimeter + bottom_top_perimeter + shelf_perimeter + back_perimeter) * qty
 
@@ -461,10 +467,10 @@ def calculate_quantities(
                 # Gola и push-to-open — без ручек; обычные петли — с ручками
                 # По умолчанию считаем что ручки нужны (Gola отсеивается отдельно — см. ниже)
                 for _ in range(fc):
-                    if module.height <= 1200:
-                        q.handles_count += 1 * qty
+                    if module.height <= rules.handles_tall_threshold_mm:
+                        q.handles_count += rules.handles_short_door * qty
                     else:
-                        q.handles_count += 2 * qty
+                        q.handles_count += rules.handles_tall_door * qty
 
             # ── Ручки ящиков в модуле БЕЗ дверей ──
             # Ручной ввод (bot/handlers/manual_input.py) задаёт ящики как

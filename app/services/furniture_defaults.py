@@ -29,6 +29,13 @@ class FurnitureRules:
     # Система дверей: "hinged" (распашные, нужны петли) или "sliding" (купе)
     door_system: str = "hinged"
 
+    # P2-07: эвристики, вынесенные в профиль зоны (подтверждает технолог).
+    shelf_default: int = 1              # полок в базе/верхнем шкафу, если AI не указал
+    handles_short_door: int = 1         # ручек на дверь ≤ порога
+    handles_tall_door: int = 2          # ручек на высокую дверь
+    handles_tall_threshold_mm: int = 1200
+    back_wall_in_edge: bool = True      # задняя стенка входит в периметр кромки
+
     # Фасады по умолчанию есть?
     has_facades: bool = True
 

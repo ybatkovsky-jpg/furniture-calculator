@@ -12,6 +12,7 @@
 Добавлена валидация размеров модулей (DIMENSION_LIMITS).
 """
 
+import asyncio
 import json
 import logging
 import base64
@@ -570,6 +571,35 @@ def _merge_adjacent_modules(modules: List["RecognizedModule"]) -> List["Recogniz
     return result
 
 
+# Статусы, на которых имеет смысл повторить запрос (перегрузка/троттлинг)
+_RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+
+def _retry_delay(attempt: int, response=None) -> float:
+    """Пауза перед повтором: Retry-After сервера, иначе 5 → 15 → 30 секунд."""
+    if response is not None:
+        header = (getattr(response, "headers", {}) or {}).get("Retry-After")
+        if header:
+            try:
+                return min(60.0, max(1.0, float(header)))
+            except (TypeError, ValueError):
+                pass
+    return (5.0, 15.0, 30.0)[min(attempt, 2)]
+
+
+def _is_retryable_error(error: Exception) -> bool:
+    """Повторяем только временные сбои.
+
+    НЕ повторяем:
+    - `ConnectError` (никто не слушает порт) — постоянное состояние: локальный
+      сервер выключен, повторы лишь тормозят переход к следующему провайдеру;
+    - `TimeoutException` — 180 с уже потрачены; если облако не ответило за это
+      время, дешевле сразу попробовать следующего провайдера, чем ждать ещё
+      2×180 с (был случай: лист «кровать» висел 9 минут на трёх таймаутах).
+    """
+    return isinstance(error, (httpx.ReadError, httpx.RemoteProtocolError))
+
+
 class GeminiImageAnalyzer:
     """
     Анализатор изображений чертежей через Vision LLM.
@@ -598,11 +628,20 @@ class GeminiImageAnalyzer:
         self.local_llm_key = settings.local_llm_api_key
         self.local_vision_model = settings.local_vision_model
 
+        # DeepSeek Vision (облако, OpenAI-совместимый API)
+        self.deepseek_key = getattr(settings, "deepseek_api_key", "")
+        self.deepseek_url = getattr(
+            settings, "deepseek_api_url", "https://api.deepseek.com/v1/chat/completions"
+        )
+        self.deepseek_model = getattr(settings, "deepseek_vision_model", "deepseek-flash")
+
         self.client: Optional[httpx.AsyncClient] = None
 
         providers = []
         if self.local_llm_url:
             providers.append(f"Local ({self.local_vision_model})")
+        if self.deepseek_key:
+            providers.append(f"DeepSeek ({self.deepseek_model})")
         providers.append("Z.ai")
         if self.routerai_key:
             providers.append("RouterAI.ru")
@@ -639,7 +678,7 @@ class GeminiImageAnalyzer:
         По умолчанию — локальная модель (если настроена), иначе
         FALLBACK_MODEL (glm-5v-turbo через Z.ai).
         """
-        model = model or (self.local_vision_model if self.local_llm_url else self.FALLBACK_MODEL)
+        model = model or (self._unified_targets() or [("", self.FALLBACK_MODEL)])[0][1]
         provider = self._detect_provider(model)
 
         logger.info(f"🔄 Fallback: {model} ({provider})")
@@ -912,10 +951,11 @@ class GeminiImageAnalyzer:
         Returns:
             (modules, zone_type, materials, confidence[, meta])
         """
-        use_local = bool(self.local_llm_url)
-        MODEL = self.local_vision_model if use_local else "qwen/qwen3-vl-235b-a22b-thinking"
-
-        logger.info(f"🎯 Единый анализ: {MODEL} ({'local' if use_local else 'RouterAI'})")
+        targets = self._unified_targets()
+        logger.info(
+            "🎯 Единый анализ: "
+            + ", ".join(f"{provider}:{model}" for provider, model in targets)
+        )
 
         try:
             client = await self._get_client()
@@ -948,33 +988,9 @@ class GeminiImageAnalyzer:
                 ]
             }]
 
-            headers = {
-                "Authorization": f"Bearer {(self.local_llm_key if use_local else self.routerai_key)}",
-                "Content-Type": "application/json",
-            }
-
-            body = {
-                "model": MODEL,
-                "messages": messages,
-                "temperature": 0.0,
-                # Локальная — thinking-модель: запас на длинный JSON
-                "max_tokens": 16000 if use_local else 8000,
-            }
-            if not use_local:
-                body["response_format"] = {"type": "json_object"}
-            else:
-                # Локальный сервер (unsloth-studio): response_format не поддержан —
-                # JSON извлекается через _extract_json. Thinking выключен: иначе
-                # reasoning съедает бюджет токенов и засоряет ответ рассуждениями.
-                body["chat_template_kwargs"] = {"enable_thinking": False}
-
-            url = self._get_api_url("local" if use_local else "routerai", MODEL)
-            response = await client.post(url, headers=headers, json=body)
-            response.raise_for_status()
-            response_data = response.json()
-
-            msg = response_data["choices"][0]["message"]
-            response_text = msg.get("content", "") or ""
+            # Запрос с фолбэком по провайдерам: упавший/пустой провайдер
+            # пропускается, а не обнуляет весь расчёт.
+            response_text = await self._unified_request(client, targets, messages)
 
             # Парсим JSON
             cleaned = self._extract_json(response_text)
@@ -1283,7 +1299,7 @@ class GeminiImageAnalyzer:
             "model": model,
             "messages": messages,
             "temperature": 0.0,              # детерминированный вывод для чертежей
-            "max_tokens": 8000,
+            "max_tokens": 32000 if provider == "deepseek" else 8000,
         }
         if provider == "local":
             # Локальный сервер (unsloth-studio): response_format не поддержан —
@@ -1301,7 +1317,10 @@ class GeminiImageAnalyzer:
         url = self._get_api_url(provider, model)
 
         # 6. Отправляем запрос
-        response = await client.post(url, headers=headers, json=body)
+        # Таймаут на запрос: локальная 27B считает медленно (до 15 мин),
+        # облако обязано ответить за 3 минуты — иначе висим на мёртвом сокете.
+        timeout = 900.0 if provider == "local" else 180.0
+        response = await client.post(url, headers=headers, json=body, timeout=timeout)
         response.raise_for_status()
         response_data = response.json()
 
@@ -1337,12 +1356,148 @@ class GeminiImageAnalyzer:
     # ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
     # -----------------------------------------------------------
 
+    # -----------------------------------------------------------
+    # ВЫБОР ПРОВАЙДЕРА ДЛЯ ЕДИНОГО АНАЛИЗА (с фолбэком)
+    # -----------------------------------------------------------
+
+    def _unified_targets(self) -> List[tuple]:
+        """Порядок (провайдер, модель) для единого анализа чертежа.
+
+        `VISION_PROVIDER` задаёт ПЕРВОГО провайдера, остальные остаются
+        резервом — падение облака/локала не обнуляет распознавание.
+        Пусто — авто: local → deepseek → routerai (первый живой).
+
+        Фолбэк особенно важен, когда локальный сервер (192.168.1.133) выключен:
+        раньше любой локальный адрес в .env уводил все попытки в мёртвый сокет,
+        и до облачных провайдеров дело не доходило.
+        """
+        available: List[tuple] = []
+        if self.local_llm_url:
+            available.append(("local", self.local_vision_model))
+        if self.deepseek_key:
+            available.append(("deepseek", self.deepseek_model))
+        if self.routerai_key:
+            available.append(("routerai", self.PRIMARY_MODEL))
+
+        forced = (settings.vision_provider or "").strip().lower()
+        if forced in ("local", "deepseek", "routerai"):
+            first = [t for t in available if t[0] == forced]
+            if first:
+                return first + [t for t in available if t[0] != forced]
+            logger.warning(
+                f"VISION_PROVIDER={forced}, но провайдер не настроен (нет ключа/URL) — "
+                "использую авто-порядок"
+            )
+        return available
+
+    def _unified_body(self, provider: str, model: str, messages: list) -> dict:
+        """Тело запроса под конкретного провайдера.
+
+        Различия принципиальные (проверено на альбоме):
+        - local (unsloth-studio): response_format не поддержан, thinking
+          выключается через chat_template_kwargs, ответ — длинный JSON;
+        - deepseek: ОБЯЗАТЕЛЬНО response_format=json_object (иначе reasoning
+          съедает весь бюджет и content пуст) и max_tokens 32000 — на
+          многоракурсных листах 16000 не хватает (0011 обрывался);
+        - routerai/zai: response_format + 8000, как было.
+        """
+        body = {"model": model, "messages": messages, "temperature": 0.0}
+        if provider == "local":
+            body["max_tokens"] = 16000
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        elif provider == "deepseek":
+            body["max_tokens"] = 32000
+            body["response_format"] = {"type": "json_object"}
+        else:
+            body["max_tokens"] = 8000
+            body["response_format"] = {"type": "json_object"}
+        return body
+
+    async def _unified_request(
+        self,
+        client: httpx.AsyncClient,
+        targets: List[tuple],
+        messages: list,
+        max_retries: int = 2,
+    ) -> str:
+        """Запрос к первому живому провайдеру; возвращает текст ответа.
+
+        Провайдер считается негодным, если запрос упал, вернул не-200 или
+        ответ без JSON — тогда пробуем следующего. Если не ответил никто,
+        поднимаем последнюю ошибку (её поймает analyze_page).
+
+        Для 429/5xx делаем до `max_retries` повторов с backoff: облачные API
+        (DeepSeek) под нагрузкой отдают 503 на серии тяжёлых запросов с
+        картинкой и большим max_tokens — без повтора страница молча терялась
+        (прогон альбома: 6 из 12 страниц «не распознаны» из-за одного 503).
+        """
+        last_error: Optional[Exception] = None
+
+        for provider, model in targets:
+            body = self._unified_body(provider, model, messages)
+            url = self._get_api_url(provider, model)
+            headers = {
+                "Authorization": f"Bearer {self._get_api_key(provider)}",
+                "Content-Type": "application/json",
+            }
+            # Таймаут на запрос — свой: локальная 27B считает медленно (до 15 мин),
+            # облако обязано ответить за 3 минуты, иначе висим на мёртвом сокете.
+            request_timeout = 900.0 if provider == "local" else 180.0
+
+            for attempt in range(max_retries + 1):
+                try:
+                    response = await client.post(
+                        url, headers=headers, json=body, timeout=request_timeout
+                    )
+                    if response.status_code in _RETRYABLE_STATUSES and attempt < max_retries:
+                        delay = _retry_delay(attempt, response)
+                        logger.warning(
+                            f"🎯 {provider}: HTTP {response.status_code}, повтор "
+                            f"{attempt + 1}/{max_retries} через {delay:.0f}с"
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+
+                    response.raise_for_status()
+                    data = response.json()
+                    msg = data["choices"][0]["message"]
+                    text = msg.get("content", "") or ""
+                    if not self._extract_json(text):
+                        raise ValueError(
+                            f"пустой ответ без JSON (finish_reason="
+                            f"{data['choices'][0].get('finish_reason')})"
+                        )
+                    logger.info(f"🎯 Ответ получен: {provider} ({model})")
+                    return text
+
+                except Exception as e:  # noqa: BLE001 — переходим к следующему
+                    last_error = e
+                    retryable = _is_retryable_error(e)
+                    if retryable and attempt < max_retries:
+                        delay = _retry_delay(attempt)
+                        logger.warning(
+                            f"🎯 {provider}: {type(e).__name__}: {str(e)[:120]} — "
+                            f"повтор {attempt + 1}/{max_retries} через {delay:.0f}с"
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+
+                    logger.warning(
+                        f"🎯 {provider} ({model}) не дал ответа: "
+                        f"{type(e).__name__}: {str(e)[:200]}"
+                    )
+                    break
+
+        raise last_error or RuntimeError("ни один vision-провайдер не ответил")
+
     def _detect_provider(self, model: str) -> str:
         """Определить провайдера по имени модели."""
         # Локальный сервер — проверка ПЕРВАЯ: имя содержит "qwen",
         # иначе модель ошибочно ушла бы в RouterAI
         if self.local_llm_url and model == self.local_vision_model:
             return "local"
+        if "deepseek" in model.lower():
+            return "deepseek"
         if "glm" in model.lower() and "z-ai" not in model.lower():
             return "zai"      # GLM без префикса → Z.ai
         if "z-ai" in model.lower():
@@ -1355,6 +1510,8 @@ class GeminiImageAnalyzer:
         """Получить API ключ для провайдера."""
         if provider == "local":
             return self.local_llm_key or ""
+        if provider == "deepseek":
+            return self.deepseek_key or ""
         if provider == "zai":
             return self.zai_key or ""
         elif provider == "routerai":
@@ -1367,6 +1524,8 @@ class GeminiImageAnalyzer:
         """Получить URL эндпоинта."""
         if provider == "local":
             return f"{self.local_llm_url}/chat/completions"
+        if provider == "deepseek":
+            return self.deepseek_url
         if provider == "zai":
             return "https://api.z.ai/api/paas/v4/chat/completions"
         elif provider == "routerai":

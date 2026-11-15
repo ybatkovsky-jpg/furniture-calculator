@@ -65,6 +65,31 @@ class Settings(BaseSettings):
         description="Имя модели на локальном сервере"
     )
 
+    # DeepSeek Vision (OpenAI-совместимый API, облако). DeepSeek-V4.1-Flash
+    # принимает изображения. Два обязательных условия (проверено на альбоме):
+    #   1) response_format={"type":"json_object"} — иначе reasoning съедает весь
+    #      бюджет и JSON не доходит (finish_reason=length, content пуст);
+    #   2) max_tokens ≈ 32000 — на сложных многоракурсных листах (0011) 16000
+    #      не хватает: модель рассуждает до 16000 токенов и обрывается.
+    deepseek_api_key: str = Field(default="", description="Ключ DeepSeek API (vision)")
+    deepseek_api_url: str = Field(
+        default="https://api.deepseek.com/v1/chat/completions",
+        description="URL эндпоинта DeepSeek (OpenAI-совместимый)"
+    )
+    deepseek_vision_model: str = Field(
+        default="deepseek-flash",
+        description="Vision-модель DeepSeek (deepseek-flash = DeepSeek-V4.1-Flash, "
+                    "input: text+image)"
+    )
+
+    # Принудительный провайдер распознавания. Пусто — авто: local → deepseek →
+    # routerai (первый живой). Значение — это ПЕРВЫЙ провайдер, остальные
+    # остаются резервом, чтобы падение облака/локала не обнуляло смету.
+    vision_provider: str = Field(
+        default="",
+        description="local | deepseek | routerai — приоритетный провайдер распознавания",
+    )
+
     # OCR-заземление размерных линий: числа с чертежа читает OCR
     # (GLM-OCR/Tesseract), а не догадка VLM — ground truth для total_width_mm.
     # False — конвейер работает как раньше (только ответ модели).

@@ -98,10 +98,9 @@ def test_unfilled_item_goes_to_proche_with_price():
         if str(ws.cell(r, 1).value or "").startswith("ПРОЧЕЕ")
     )
     item_row = header_row + 1
-    # Новая строка вошла в диапазон себестоимости.
-    formula = ws.cell(cost_row, 5).value
-    end_row = int(formula.rsplit("F", 1)[1].rstrip(")"))
-    assert item_row <= end_row
+    # Новая строка вошла в себестоимость (значение, не формула — P2-16).
+    assert ws.cell(cost_row, 5).value == 15_000
+    assert ws.cell(item_row, 6).value == 15_000
     # И цена/количество записаны.
     assert ws.cell(item_row, 4).value == 3000
     assert ws.cell(item_row, 5).value == 5
@@ -111,8 +110,8 @@ def test_unfilled_item_goes_to_proche_with_price():
     from app.services.template_filler import _apply_pricing_policy
 
     assert _apply_pricing_policy(ws, PricingPolicy.from_config()) is True
-    # «ИЗГОТОВЛЕНИЕ» идёт сразу после «СЕБЕСТОИМОСТЬ».
-    assert f"E{cost_row}" in ws.cell(cost_row + 1, 5).value
+    # «ИЗГОТОВЛЕНИЕ» идёт сразу после «СЕБЕСТОИМОСТЬ» и считается от неё.
+    assert ws.cell(cost_row + 1, 5).value == 12_000
 
 
 def test_unfilled_without_price_stays_in_problems():

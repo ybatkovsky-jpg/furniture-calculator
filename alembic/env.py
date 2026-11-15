@@ -11,6 +11,7 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 
 from app.config import settings
+from app.db.urls import sync_database_url
 from app.models import Base
 
 config = context.config
@@ -22,9 +23,7 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 # Alembic работает синхронным драйвером, а приложение — асинхронным.
-_sync_url = settings.database_url.replace("+aiosqlite", "").replace(
-    "+asyncpg", "+psycopg2"
-)
+_sync_url = sync_database_url(settings.database_url)
 config.set_main_option("sqlalchemy.url", _sync_url)
 
 

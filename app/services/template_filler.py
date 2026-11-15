@@ -14,6 +14,7 @@ from pathlib import Path
 from openpyxl import Workbook
 
 from app.config import settings
+from app.domain.money import money_float, rub_float
 from app.services.full_pipeline import PipelineResult, RoomSpec
 from app.services.project_spec import (
     ProjectSpec,
@@ -405,6 +406,13 @@ def fill_template_from_pipeline(
                         db_price = _find_db_price(db_prices, keywords, unit)
                         if db_price is not None:
                             new_ws.cell(row=row_num, column=4).value = db_price
+                    # P2-16: пишем значение, а не формулу — openpyxl data_only
+                    # не увидит кэш, а формулы в Excel по плану не живут.
+                    price_value = new_ws.cell(row=row_num, column=4).value
+                    if isinstance(price_value, (int, float)):
+                        new_ws.cell(row=row_num, column=6).value = money_float(
+                            final_value * float(price_value)
+                        )
                     filled_rows.append((row_num, keywords[0], final_value, unit))
                     logger.debug(
                         f"  {sheet_name}: R{row_num} «{keywords[0][:40]}...» → "
@@ -940,14 +948,23 @@ def _append_unfilled_rows(ws, items: list[dict], db_prices: list[dict]) -> list[
         ws.cell(row=row, column=1).value = item.get("material", "Прочее")
         ws.cell(row=row, column=4).value = price
         ws.cell(row=row, column=5).value = quantity
-        ws.cell(row=row, column=6).value = f"=D{row}*E{row}"
+        ws.cell(row=row, column=6).value = money_float(quantity * price)
         item["added_to_extra"] = True
         added.append(item)
 
     cost_row = _find_row_by_label(ws, "СЕБЕСТОИМОСТЬ")
     if cost_row:
-        ws.cell(cost_row, 5).value = f"=SUM(F3:F{cost_row - 1})"
+        ws.cell(cost_row, 5).value = money_float(
+            sum(_cell_number(ws, row, 6) for row in range(3, cost_row))
+        )
     return added
+
+
+def _cell_number(ws, row: int, column: int) -> float:
+    value = ws.cell(row=row, column=column).value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return 0.0
 
 
 def _find_row_by_label(ws, label: str, start: int = 1) -> int | None:
@@ -992,35 +1009,42 @@ def _apply_pricing_policy(ws, policy) -> bool:
         logger.warning("Строки «ИТОГО» шаблона не найдены — политика не применена")
         return False
 
-    ws.cell(manufacturing_row, 5).value = (
-        f"=ROUND({policy.manufacturing_rate}*E{cost_row},0)"
+    # P2-16: пишем вычисленные значения, а не формулы. Excel-файл больше не
+    # зависит от пересчёта при открытии, а openpyxl data_only видит цифры.
+    cost = money_float(sum(_cell_number(ws, row, 6) for row in range(3, cost_row)))
+    manufacturing = rub_float(cost * policy.manufacturing_rate)
+    installation = rub_float(cost * policy.installation_rate)
+    measurement = rub_float(policy.measurement_fee)
+    delivery = rub_float(policy.delivery_fee)
+    design = rub_float(manufacturing * policy.design_rate)
+    overhead = rub_float(cost * policy.overhead_rate)
+    subtotal = rub_float(
+        cost + manufacturing + installation + measurement + delivery + design + overhead
     )
-    ws.cell(installation_row, 5).value = (
-        f"=ROUND({policy.installation_rate}*E{cost_row},0)"
-    )
-    ws.cell(measurement_row, 5).value = policy.measurement_fee
-    ws.cell(delivery_row, 5).value = policy.delivery_fee
-    ws.cell(design_row, 5).value = (
-        f"=ROUND({policy.design_rate}*E{manufacturing_row},0)"
-    )
-    ws.cell(overhead_row, 5).value = (
-        f"=ROUND({policy.overhead_rate}*E{cost_row},0)"
-    )
-    ws.cell(subtotal_row, 5).value = (
-        f"=ROUND(SUM(E{cost_row}:E{overhead_row}),0)"
-    )
-    ws.cell(profit_row, 5).value = f"=ROUND({policy.profit_rate}*E{subtotal_row},0)"
-    ws.cell(total_row, 5).value = f"=ROUND(E{profit_row}+E{subtotal_row},0)"
-    ws.cell(tech_row, 5).value = (
-        f"=ROUND(E{total_row}*{policy.tech_director_rate},0)"
-    )
-    ws.cell(manager_row, 5).value = (
-        f"=ROUND(E{total_row}*{policy.manager_rate},0)"
-    )
-    ws.cell(cash_row, 5).value = (
-        f"=ROUND(E{total_row}+E{tech_row}+E{manager_row},0)"
-    )
-    ws.cell(noncash_row, 5).value = f"=E{cash_row}*{policy.noncash_markup}"
+    profit = rub_float(subtotal * policy.profit_rate)
+    total_with_profit = rub_float(subtotal + profit)
+    tech = rub_float(total_with_profit * policy.tech_director_rate)
+    manager = rub_float(total_with_profit * policy.manager_rate)
+    cash = rub_float(total_with_profit + tech + manager)
+    noncash = money_float(cash * policy.noncash_markup)
+
+    for row, value in (
+        (cost_row, cost),
+        (manufacturing_row, manufacturing),
+        (installation_row, installation),
+        (measurement_row, measurement),
+        (delivery_row, delivery),
+        (design_row, design),
+        (overhead_row, overhead),
+        (subtotal_row, subtotal),
+        (profit_row, profit),
+        (total_row, total_with_profit),
+        (tech_row, tech),
+        (manager_row, manager),
+        (cash_row, cash),
+        (noncash_row, noncash),
+    ):
+        ws.cell(row=row, column=5).value = value
     return True
 
 

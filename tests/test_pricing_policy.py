@@ -114,20 +114,33 @@ def test_excel_financial_section_uses_same_policy():
     )
     wb = load_workbook(ROOT / "templates" / "Таблица для расчетов пустая.xlsx")
     ws = wb["Рассчет"]
+    ws["F3"] = 100_000  # имитируем себестоимость из строк
     assert _apply_pricing_policy(ws, policy) is True
 
-    # Строка себестоимости не должна ссылаться сама на себя.
-    cost_value = ws["E347"].value
-    assert "SUM(F3:F345)" in cost_value
-    # Коэффициенты — из policy.
-    assert "0.8*E347" in ws["E348"].value
-    assert "0.55*E347" in ws["E349"].value
-    assert "0.1*E348" in ws["E352"].value
-    assert "0.05*E347" in ws["E353"].value
-    assert "0.3*E354" in ws["E355"].value
-    # Промежуточный итог — SUM от себестоимости до прочих, без прибыли.
-    assert ws["E354"].value == "=ROUND(SUM(E347:E353),0)"
-    assert ws["E356"].value == "=ROUND(E355+E354,0)"
+    # P2-16: в Excel пишутся значения, а не формулы.
+    assert ws["E347"].value == 100_000
+    assert ws["E348"].value == 80_000      # изготовление 0.80
+    assert ws["E349"].value == 55_000      # монтаж 0.55
+    assert ws["E352"].value == 8_000       # проектировка 0.10 от изготовления
+    assert ws["E353"].value == 5_000       # прочие 0.05
+    assert ws["E354"].value == 257_000     # промежуточный итог
+    assert ws["E355"].value == 77_100      # прибыль 0.30
+    assert ws["E359"].value == 339_112     # наличка (как в baseline плана)
+    assert ws["E360"].value == round(339_112 * 1.13, 2)
+
+
+def test_excel_values_are_readable_without_recalc(tmp_path):
+    """P2-16: data_only=True видит итог без открытия Excel."""
+    wb = load_workbook(ROOT / "templates" / "Таблица для расчетов пустая.xlsx")
+    ws = wb["Рассчет"]
+    ws["F3"] = 50_000
+    assert _apply_pricing_policy(ws, PricingPolicy.from_config()) is True
+    path = tmp_path / "quote.xlsx"
+    wb.save(path)
+
+    reread = load_workbook(path, data_only=True)["Рассчет"]
+    assert reread["E359"].value and reread["E359"].value > 0
+    assert reread["E360"].value == round(reread["E359"].value * 1.13, 2)
 
 
 def test_golden_cost_matches_excel_formula_chain():

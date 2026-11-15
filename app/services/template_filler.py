@@ -10,22 +10,21 @@
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 from openpyxl import Workbook
 
 from app.config import settings
 from app.services.full_pipeline import PipelineResult, RoomSpec
+from app.services.project_spec import (
+    ProjectSpec,
+    apply_spec_to_quantities,
+    load_project_spec,
+    print_spec_summary,
+)
 from app.services.quantity_calc import (
     MaterialQuantities,
     calculate_quantities,
     detect_material_properties,
-)
-from app.services.project_spec import (
-    ProjectSpec,
-    load_project_spec,
-    apply_spec_to_quantities,
-    print_spec_summary,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,6 +37,7 @@ logger = logging.getLogger(__name__)
 # множитель применяется к значению из MaterialQuantities перед записью в ячейку
 # Загружается из templates/row_mapping.json (обязательный файл)
 import json as _json_mod
+
 _row_config_path = Path(__file__).parent.parent.parent / "templates" / "row_mapping.json"
 if not _row_config_path.exists():
     raise FileNotFoundError(
@@ -45,14 +45,14 @@ if not _row_config_path.exists():
     )
 with open(_row_config_path, "r", encoding="utf-8") as _f:
     _data = _json_mod.load(_f)
-ROW_MAPPING: List[Tuple[List[str], str, str, float]] = [
+ROW_MAPPING: list[tuple[list[str], str, str, float]] = [
     (item["keywords"], item["field"], item.get("unit", ""), item.get("multiplier", 1.0))
     for item in _data.get("mappings", [])
 ]
 logger.info(f"📋 ROW_MAPPING из JSON: {len(ROW_MAPPING)} строк")
 
 
-def _find_row_for_material(ws, keywords: List[str]) -> Optional[int]:
+def _find_row_for_material(ws, keywords: list[str]) -> int | None:
     """
     Найти номер строки в листе по ключевым словам в колонках A (Наименование)
     и B (Цвет). Ищет точное совпадение, затем нечёткое (fuzzy).
@@ -74,8 +74,8 @@ def _find_row_for_material(ws, keywords: List[str]) -> Optional[int]:
 
 
 def _find_row_for_material_fuzzy(
-    ws, keywords: List[str], threshold: float = 0.75
-) -> Optional[int]:
+    ws, keywords: list[str], threshold: float = 0.75
+) -> int | None:
     """
     Fallback: нечёткий поиск через SequenceMatcher.
     Используется когда точный поиск не дал результата.
@@ -108,9 +108,9 @@ def _find_row_for_material_fuzzy(
 
 def _build_quantity_map(
     q: MaterialQuantities,
-    materials: List[str],
+    materials: list[str],
     room_name: str,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Построить словарь {ключ_поля: значение} на основе MaterialQuantities
     и информации о материалах/помещении.
@@ -287,7 +287,7 @@ def fill_template_from_pipeline(
     pipeline_result: PipelineResult,
     template_path: str,
     output_path: str,
-    project_spec: Optional[ProjectSpec] = None,
+    project_spec: ProjectSpec | None = None,
     pricing_policy=None,
 ) -> str:
     """
@@ -361,10 +361,9 @@ def fill_template_from_pipeline(
             n_added = apply_spec_to_quantities(
                 project_spec, q, room.room_name, applied_spec_items
             )
-            if n_added > 0:
-                # Если spec добавил GOLA — убираем ручки
-                if q.gola_horizontal_pcs > 0 or q.gola_vertical_pcs > 0:
-                    q.handles_count = 0
+            # Если spec добавил GOLA — убираем ручки
+            if n_added > 0 and (q.gola_horizontal_pcs > 0 or q.gola_vertical_pcs > 0):
+                q.handles_count = 0
 
         # Строим мапу quantities
         qty_map = _build_quantity_map(q, room.materials, room.room_name)
@@ -456,8 +455,8 @@ def fill_template_from_pipeline(
     # openpyxl этого не умеет, а data_only=True до пересчёта покажет None).
     try:
         wb.calculation.fullCalcOnLoad = True
-    except Exception:  # noqa: BLE001 — не критично для выгрузки
-        pass
+    except Exception:
+        logger.debug("Не удалось включить fullCalcOnLoad", exc_info=True)
 
     # ── Удаляем служебные листы шаблона ──
     _remove_template_sheets(wb)
@@ -506,7 +505,7 @@ def _add_quality_sheet(wb: Workbook, pipeline_result: PipelineResult):
     - Quality Score (0..1), флаги
     - Рекомендация оператору (🔴🟡🟢)
     """
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Alignment, Font, PatternFill
 
     sheet_name = "✅ Контроль качества"
 
@@ -607,7 +606,7 @@ MODULE_TYPE_LABELS_RU = {
 }
 
 
-def _module_ru_name(mtype: Optional[str]) -> str:
+def _module_ru_name(mtype: str | None) -> str:
     """Тип модуля → русское название (для оператора)."""
     return MODULE_TYPE_LABELS_RU.get(mtype, mtype or "?")
 
@@ -849,8 +848,7 @@ def _load_db_prices() -> list[dict]:
     if not url.startswith(prefix):
         return []
     db_path = url[len(prefix):]
-    if db_path.startswith("./"):
-        db_path = db_path[2:]
+    db_path = db_path.removeprefix("./")
     try:
         con = sqlite3.connect(db_path)
     except sqlite3.Error:
@@ -870,7 +868,7 @@ def _load_db_prices() -> list[dict]:
     ]
 
 
-def _find_db_price(prices: list[dict], keywords: list[str], unit: str) -> Optional[float]:
+def _find_db_price(prices: list[dict], keywords: list[str], unit: str) -> float | None:
     """Найти цену в прайсе по ключевым словам строки и совместимой единице."""
     wanted_unit = _normalize_unit(unit)
     keys = [" ".join(str(k).replace("ё", "е").casefold().split()) for k in keywords]
@@ -952,7 +950,7 @@ def _append_unfilled_rows(ws, items: list[dict], db_prices: list[dict]) -> list[
     return added
 
 
-def _find_row_by_label(ws, label: str, start: int = 1) -> Optional[int]:
+def _find_row_by_label(ws, label: str, start: int = 1) -> int | None:
     """Найти строку финансовой секции по подписи в колонке D."""
     for row in range(start, min(ws.max_row, 400) + 1):
         value = ws.cell(row=row, column=4).value
@@ -1026,11 +1024,10 @@ def _apply_pricing_policy(ws, policy) -> bool:
     return True
 
 
-def _update_summary(wb: Workbook, result: PipelineResult, rooms: List[RoomSpec]):
+def _update_summary(wb: Workbook, result: PipelineResult, rooms: list[RoomSpec]):
     """Обновить сводный лист (если есть)."""
     if "СВОДКА" not in [ws.title for ws in wb.worksheets]:
         return
-    pass
 
 
 def _add_suggestions_section(ws, q: MaterialQuantities):
@@ -1066,7 +1063,7 @@ async def run_pipeline_and_fill_template(
     template_path: str,
     output_path: str = "Расчет_заполненный.xlsx",
     max_pages: int = 20,
-    spec_path: str = None,
+    spec_path: str | None = None,
 ) -> str:
     """
     Запустить полный цикл: PDF → AI-конвейер → спецификация → заполнение шаблона.
@@ -1081,7 +1078,7 @@ async def run_pipeline_and_fill_template(
     Returns:
         путь к заполненному Excel-файлу
     """
-    from app.services.full_pipeline import run_pipeline, print_result
+    from app.services.full_pipeline import print_result, run_pipeline
 
     print(f"🚀 Запуск конвейера: {Path(pdf_path).name}")
     print(f"   Макс. страниц для анализа: {max_pages}")

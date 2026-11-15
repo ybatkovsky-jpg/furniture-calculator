@@ -15,7 +15,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from openpyxl import load_workbook
 from sqlalchemy import select
@@ -126,12 +126,12 @@ _DIMENSIONS_RE = re.compile(r"(\d{3,4})\s*[*×xх]\s*(\d{2,4})")
 _COIL_RE = re.compile(r"бухт\w*[^\d]{0,5}(\d+(?:[.,]\d+)?)\s*м", re.IGNORECASE)
 
 
-def looks_like_edge(name: Optional[Any]) -> bool:
+def looks_like_edge(name: Any | None) -> bool:
     """«МДФ ETERNO 1*22», «EGGER 0,8*19» — это кромка, а не плита."""
     return bool(_EDGE_NAME_RE.search(str(name or "")))
 
 
-def detect_brand(name: str, category: str) -> Optional[str]:
+def detect_brand(name: str, category: str) -> str | None:
     """Бренд позиции для выбора в боте (категории важнее первого слова).
 
     UI выбирает петли по бренду BOYARD/BLUM/HETTICH и ящики по
@@ -184,7 +184,7 @@ class ImportStats:
     rejected: int = 0
     deactivated: int = 0
 
-    def as_dict(self) -> Dict[str, int]:
+    def as_dict(self) -> dict[str, int]:
         return {
             "created": self.created,
             "updated": self.updated,
@@ -194,7 +194,7 @@ class ImportStats:
         }
 
 
-def normalize_text(value: Optional[Any]) -> str:
+def normalize_text(value: Any | None) -> str:
     if value is None:
         return ""
     text = str(value).strip()
@@ -210,7 +210,7 @@ def normalize_text(value: Optional[Any]) -> str:
     return text.strip()
 
 
-def parse_number(value: Any) -> Optional[float]:
+def parse_number(value: Any) -> float | None:
     """Число из ячейки цены.
 
     Допускает «1 250,50», «1250.5 ₽», но не вытаскивает цифры из текста:
@@ -237,7 +237,7 @@ def parse_number(value: Any) -> Optional[float]:
         return None
 
 
-def detect_category_from_text(value: Optional[Any]) -> Optional[str]:
+def detect_category_from_text(value: Any | None) -> str | None:
     """Категория по тексту: выигрывает самый специфичный (высокий приоритет).
 
     «КРОМКА К ЛДСП» содержит и «кромк», и «лдсп»; раньше побеждал ЛДСП,
@@ -246,14 +246,14 @@ def detect_category_from_text(value: Optional[Any]) -> Optional[str]:
     text = normalize_text(value)
     if not text:
         return None
-    best: Optional[tuple[int, str]] = None
+    best: tuple[int, str] | None = None
     for marker, category, priority in CATEGORY_RULES:
         if marker in text and (best is None or priority > best[0]):
             best = (priority, category)
     return best[1] if best else None
 
 
-def normalize_unit(value: Optional[Any]) -> Optional[str]:
+def normalize_unit(value: Any | None) -> str | None:
     """Единица из ячейки/заголовка → enum или None."""
     text = normalize_text(value)
     if not text:
@@ -269,10 +269,10 @@ def normalize_unit(value: Optional[Any]) -> Optional[str]:
 
 
 def detect_price_unit(
-    name: Optional[Any],
-    category: Optional[Any],
-    header: Optional[str],
-    unit_cell: Optional[Any],
+    name: Any | None,
+    category: Any | None,
+    header: str | None,
+    unit_cell: Any | None,
 ) -> str:
     """Единица измерения: явная ячейка → заголовок цены → категория.
 
@@ -311,7 +311,7 @@ def detect_price_unit(
     return DEFAULT_PRICE_UNIT
 
 
-def detect_thickness_mm(name: Optional[Any], category: Optional[Any]) -> Optional[float]:
+def detect_thickness_mm(name: Any | None, category: Any | None) -> float | None:
     """Толщина кромки из явного шаблона названия (P0-07).
 
     «Кромка 0.8*22» → 0.8, «Кромка 2*19» → 2.0, «Кромка ПВХ 0.4» → 0.4.
@@ -369,9 +369,8 @@ def guess_header_row(sheet) -> tuple[int, dict[str, int]]:
             if not cell_text:
                 continue
             for name, patterns in header_patterns.items():
-                if any(pattern in cell_text for pattern in patterns):
-                    if name not in mapping:
-                        mapping[name] = index
+                if any(pattern in cell_text for pattern in patterns) and name not in mapping:
+                    mapping[name] = index
         if "name" in mapping and "price" in mapping:
             return row_index, mapping
 
@@ -396,7 +395,7 @@ def is_section_header(row: list[Any]) -> bool:
     )
 
 
-def _item_key(name: str, category: str, brand: Optional[str]):
+def _item_key(name: str, category: str, brand: str | None):
     """Идентичность позиции для поиска/деактивации (как в запросе импорта)."""
     return (name, category, brand or "")
 
@@ -412,15 +411,15 @@ def _sheet_bounds(sheet) -> tuple[int, int]:
             sheet.calculate_dimension(force=True)
         )
         return int(max_row), int(max_col)
-    except Exception:  # noqa: BLE001 — пустой/битый лист
+    except Exception:  # noqa: BLE001
         return 0, 0
 
 
 async def import_price_from_xlsx(
     path: str,
     session: AsyncSession,
-    changed_by: Optional[str] = None,
-) -> Dict[str, int]:
+    changed_by: str | None = None,
+) -> dict[str, int]:
     """Импорт прайса из XLSX в базу данных.
 
     Возвращает {"created", "updated", "skipped", "rejected", "deactivated"}.

@@ -10,9 +10,8 @@
 - Шканты и эксцентрики (если используется система минификс)
 """
 
-import math
 import logging
-from typing import List
+import math
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -118,7 +117,7 @@ def calculate_fasteners(
 
 
 def calculate_fasteners_from_modules(
-    modules: List,
+    modules: list,
     room_name: str = "",
 ) -> FastenerQuantities:
     """

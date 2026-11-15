@@ -26,9 +26,9 @@ import dataclasses
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def _cache_path(image_path, prompt_text) -> Path:
     return CACHE_DIR / f"{image_key(image_path)}_{prompt_version(prompt_text)}.json"
 
 
-def load(image_path, prompt_text) -> Optional[dict]:
+def load(image_path, prompt_text) -> dict | None:
     """Прочитать запись кэша.
 
     Промах (файла нет) или повреждённый JSON → None: трактуем как промах,
@@ -64,11 +64,11 @@ def load(image_path, prompt_text) -> Optional[dict]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            raise ValueError("корень кэша — не объект")
+            raise TypeError("корень кэша — не объект")
         return data
     except FileNotFoundError:
         return None
-    except (json.JSONDecodeError, ValueError, OSError) as exc:
+    except (json.JSONDecodeError, ValueError, TypeError, OSError) as exc:
         logger.warning("Повреждённый кэш %s (%s) — трактуем как промах", path.name, exc)
         return None
 
@@ -83,7 +83,7 @@ def save(image_path, prompt_text, data: dict, approved: bool, attempts: int) -> 
         "data": data,
         "approved": bool(approved),
         "attempts": int(attempts),
-        "saved_at": datetime.now(timezone.utc).isoformat(),
+        "saved_at": datetime.now(UTC).isoformat(),
     }
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = CACHE_DIR / f"{ik}_{pv}.json"
@@ -95,13 +95,13 @@ def save(image_path, prompt_text, data: dict, approved: bool, attempts: int) -> 
     return path
 
 
-def approve(image_path, prompt_text) -> Optional[dict]:
+def approve(image_path, prompt_text) -> dict | None:
     """Пометить существующую запись кэша approved=True."""
     path = _cache_path(image_path, prompt_text)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            raise ValueError("корень кэша — не объект")
+            raise TypeError("корень кэша — не объект")
         data["approved"] = True
         path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -109,7 +109,7 @@ def approve(image_path, prompt_text) -> Optional[dict]:
         return data
     except FileNotFoundError:
         return None
-    except (json.JSONDecodeError, ValueError, OSError) as exc:
+    except (json.JSONDecodeError, ValueError, TypeError, OSError) as exc:
         logger.warning("Не удалось подтвердить кэш %s: %s", path.name, exc)
         return None
 
@@ -137,7 +137,7 @@ def dict_to_module(data: dict):
     from app.services.image_analyzer import RecognizedModule
 
     if not isinstance(data, dict):
-        raise ValueError(f"Данные модуля — не объект: {type(data).__name__}")
+        raise TypeError(f"Данные модуля — не объект: {type(data).__name__}")
     fields = {f.name for f in dataclasses.fields(RecognizedModule)}
     payload = {k: v for k, v in data.items() if k in fields}
     required = {"type", "width", "depth", "height"}
@@ -148,12 +148,12 @@ def dict_to_module(data: dict):
     return RecognizedModule(**payload)
 
 
-def modules_to_dicts(modules: List[Any]) -> List[dict]:
+def modules_to_dicts(modules: list[Any]) -> list[dict]:
     """Список RecognizedModule → список dict'ов для data кэша."""
     return [module_to_dict(m) for m in modules]
 
 
-def dicts_to_modules(items: List[dict]) -> List[Any]:
+def dicts_to_modules(items: list[dict]) -> list[Any]:
     """Список dict'ов из кэша → список RecognizedModule.
 
     Битые элементы пропускаются с предупреждением (кэш не должен ронять конвейер).

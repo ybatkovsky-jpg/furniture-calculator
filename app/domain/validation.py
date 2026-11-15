@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import math
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 
 class PricingError(ValueError):
@@ -32,9 +32,9 @@ def validate_cost_components(components: Iterable[tuple[str, float]]) -> None:
 
 
 def validate_discount_inputs(
-    discount_type: Optional[str],
+    discount_type: str | None,
     discount_value: float,
-    markup_type: Optional[str],
+    markup_type: str | None,
     markup_value: float,
     designer_bonus_rate: float,
 ) -> None:
@@ -73,9 +73,9 @@ def validate_discount_inputs(
 
 
 def validate_discount_against_base(
-    discount_type: Optional[str],
+    discount_type: str | None,
     discount_value: float,
-    markup_type: Optional[str],
+    markup_type: str | None,
     markup_value: float,
     total_base: float,
 ) -> None:

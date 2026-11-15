@@ -2,8 +2,10 @@
 Модель для настроек расчётов.
 """
 
-from sqlalchemy import Column, Integer, String, Float, DateTime
 from datetime import datetime
+
+from sqlalchemy import Column, DateTime, Float, Integer, String
+
 from app.models.base import Base
 
 

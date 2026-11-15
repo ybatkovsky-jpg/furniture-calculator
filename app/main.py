@@ -6,14 +6,25 @@
 
 import asyncio
 import logging
-from logging.handlers import RotatingFileHandler
 import os
+from logging.handlers import RotatingFileHandler
 
+from app.bot.bot import bot, dp, setup_bot_commands
+from app.bot.handlers import (
+    calculation_router,
+    discounts_router,
+    image_router,
+    kp_router,
+    manual_input_router,
+    materials_router,
+    nav_router,
+    price_router,
+    project_router,
+    start_router,
+)
+from app.bot.middlewares import AllowlistMiddleware
 from app.config import settings
 from app.db import init_db
-from app.bot.bot import bot, dp, setup_bot_commands
-from app.bot.middlewares import AllowlistMiddleware
-from app.bot.handlers import start_router, price_router, project_router, image_router, manual_input_router, materials_router, calculation_router, discounts_router, kp_router, nav_router
 
 # Логирование
 # Уровень берётся из LOG_LEVEL (по умолчанию INFO — DEBUG слишком шумный для прода,
@@ -76,7 +87,7 @@ async def main():
     # 3. Устанавливаем команды бота
     try:
         await setup_bot_commands()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.warning(f"⚠ Ошибка при установке команд: {e}")
 
     # 4. Удаляем вебхуки (если были)

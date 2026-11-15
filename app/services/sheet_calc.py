@@ -10,7 +10,6 @@
 """
 
 import math
-from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 
 
@@ -20,7 +19,7 @@ class SheetCalculation:
     total_sheets: int = 0
     total_area_m2: float = 0
     utilization_rate: float = 0.85
-    breakdown: Dict[str, Dict] = field(default_factory=dict)  # {материал: {"sheets": кол-во, "area_m2": площадь, "cost": стоимость}}
+    breakdown: dict[str, dict] = field(default_factory=dict)  # {материал: {"sheets": кол-во, "area_m2": площадь, "cost": стоимость}}
 
 
 SHEET_DIMENSIONS = {
@@ -33,8 +32,8 @@ SHEET_DIMENSIONS = {
 
 
 def calculate_sheets_for_modules(
-    modules: List[Dict],
-    material_prices: Optional[Dict[str, float]] = None,
+    modules: list[dict],
+    material_prices: dict[str, float] | None = None,
     sheet_type: str = "standard"
 ) -> SheetCalculation:
     """
@@ -95,7 +94,7 @@ def calculate_sheets_for_area(
     total_area_m2: float,
     material_price: float = 0,
     sheet_type: str = "standard"
-) -> Dict:
+) -> dict:
     """
     Расчёт листов для заданной площади.
 

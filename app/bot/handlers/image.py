@@ -8,17 +8,17 @@
 import logging
 from pathlib import Path
 
-from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery
+from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import CallbackQuery, Message
+from sqlalchemy import select
 
 from app.bot.keyboards.inline import recognition_result_keyboard
-from app.services.image_analyzer import GeminiImageAnalyzer, RecognitionResult
-from app.services.access import get_owned_project
 from app.db.session import get_session
 from app.models import Calculation
-from sqlalchemy import select
+from app.services.access import get_owned_project
+from app.services.image_analyzer import GeminiImageAnalyzer, RecognitionResult
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ async def process_photo(message: Message, state: FSMContext, bot: Bot):
         # Показываем результат
         await show_recognition_result(message, result, state, project_id)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.error(f"Ошибка обработки фото: {e}")
         await message.answer("❌ Произошла ошибка при обработке фото. Попробуйте ещё раз.")
         await state.set_state(ImageRecognitionState.waiting_for_photo)
@@ -174,7 +174,7 @@ async def process_pdf_album(message: Message, state: FSMContext, bot: Bot):
     try:
         await bot.download(document, destination=pdf_path)
         result = await pipeline.process(pdf_path)
-    except Exception as exc:  # noqa: BLE001 — показываем причину оператору
+    except Exception as exc:
         logger.exception("PDF pipeline failed")
         await status.edit_text(f"❌ Не удалось обработать PDF: {exc}")
         return

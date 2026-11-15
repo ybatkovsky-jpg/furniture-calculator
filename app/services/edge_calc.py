@@ -9,7 +9,6 @@
 Для каждой детали определяем видимые/скрытые торцы и считаем метраж.
 """
 
-from typing import Dict, List, Optional
 from dataclasses import dataclass
 
 
@@ -17,8 +16,8 @@ from dataclasses import dataclass
 class EdgePreset:
     """Пресет кромления."""
     name: str
-    visible_edge: Optional[str]  # толщина для видимых торцов ("0.8", "2", etc)
-    hidden_edge: Optional[str]   # толщина для скрытых торцов ("0.4", "0.8", None)
+    visible_edge: str | None  # толщина для видимых торцов ("0.8", "2", etc)
+    hidden_edge: str | None   # толщина для скрытых торцов ("0.4", "0.8", None)
     description: str
 
 
@@ -49,7 +48,7 @@ EDGE_PRESETS = {
 class EdgeCalculation:
     """Результат расчёта кромки."""
     total_cost: float = 0
-    breakdown: Dict[str, Dict] = None  # {толщина: {"length_m": метры, "cost": стоимость}}
+    breakdown: dict[str, dict] = None  # {толщина: {"length_m": метры, "cost": стоимость}}
 
     def __post_init__(self):
         if self.breakdown is None:
@@ -57,9 +56,9 @@ class EdgeCalculation:
 
 
 def calculate_edge_for_modules(
-    modules: List[Dict],
+    modules: list[dict],
     edge_preset: str = "kitchen_standard",
-    edge_prices: Optional[Dict[str, float]] = None
+    edge_prices: dict[str, float] | None = None
 ) -> EdgeCalculation:
     """
     Расчёт кромки для списка модулей.
@@ -115,7 +114,7 @@ def calculate_edge_for_modules(
     return result
 
 
-def _get_detail_edges(detail: Dict, module: Dict) -> Dict[str, float]:
+def _get_detail_edges(detail: dict, module: dict) -> dict[str, float]:
     """
     Определяет типы торцов для детали и их длины.
 
@@ -138,10 +137,10 @@ def _get_detail_edges(detail: Dict, module: Dict) -> Dict[str, float]:
 
 
 def calculate_edge_for_detail(
-    detail: Dict,
+    detail: dict,
     preset_name: str = "kitchen_standard",
-    edge_prices: Optional[Dict[str, float]] = None
-) -> Dict[str, float]:
+    edge_prices: dict[str, float] | None = None
+) -> dict[str, float]:
     """
     Расчёт кромки для одной детали.
 

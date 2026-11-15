@@ -2,17 +2,27 @@
 Обработчик скидок/наценок/бонуса дизайнера.
 """
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
+
+from app.bot.handlers.calculation import (
+    _extract_discount_info,
+    _format_estimate_text,
+    show_estimate,
+)
 from app.db.session import get_session
 from app.services.access import get_owned_calculation
+from app.services.calc_engine import calculate_full_cost
 from app.services.cost_calc import DiscountInfo, calculate_cost
 from app.services.pricing_policy import load_default_policy
-from app.services.calc_engine import calculate_full_cost
-from app.bot.handlers.calculation import _extract_discount_info, show_estimate, _format_estimate_text
 
 router = Router()
 

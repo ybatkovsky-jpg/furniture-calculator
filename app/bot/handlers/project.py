@@ -2,9 +2,9 @@
 Обработчики для создания и управления проектами.
 """
 
-from aiogram import Router, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.bot.states.project import ProjectCreationStates
 from app.db.session import get_session
@@ -141,8 +141,8 @@ async def choose_manual_input(callback, state: FSMContext):
         return
 
     # Создаём расчёт для проекта
-    from app.models.calculation import Calculation
     from app.db.session import get_session
+    from app.models.calculation import Calculation
 
     async for session in get_session():
         # P1-14: нельзя создать расчёт в чужом проекте.

@@ -12,7 +12,7 @@ GOLA, LED, столешницу, крепёж. Здесь каждая пози�
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from app.domain.money import money_float, quantity_float, rub_float
 from app.services.glass_calc import GlassCalculation
@@ -35,7 +35,7 @@ def _to_float(value: Any) -> float:
         return 0.0
 
 
-def _price_from(selection: Any) -> Optional[float]:
+def _price_from(selection: Any) -> float | None:
     """Цена из выбранной позиции (dict) или списка позиций."""
     if isinstance(selection, dict):
         price = selection.get("price", selection.get("unit_price"))
@@ -125,7 +125,7 @@ def _edge_price_map(selection: Any) -> dict[float, float]:
     return {round(thickness_value, 2): price}
 
 
-def _drawer_unit_price(selection: Any) -> Optional[float]:
+def _drawer_unit_price(selection: Any) -> float | None:
     """Цена ящика: UI хранит dict, старые данные — list (P0-02)."""
     return _price_from(selection)
 
@@ -134,9 +134,9 @@ def build_cost_lines(
     quantities: MaterialQuantities,
     selected_materials: dict[str, Any],
     selected_hardware: dict[str, Any],
-    price_book: Optional[dict[str, float]] = None,
-    glass_calc: Optional[GlassCalculation] = None,
-    glass_items: Optional[list] = None,
+    price_book: dict[str, float] | None = None,
+    glass_calc: GlassCalculation | None = None,
+    glass_items: list | None = None,
 ) -> CostLineResult:
     """Собрать полный набор строк себестоимости из количеств."""
     result = CostLineResult()
@@ -149,7 +149,7 @@ def build_cost_lines(
         name: str,
         quantity: float,
         unit: str,
-        price: Optional[float],
+        price: float | None,
         source: str,
         block: bool = True,
         min_price: float = 0.0,

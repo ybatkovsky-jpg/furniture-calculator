@@ -15,7 +15,6 @@ Python считает:
 """
 
 import logging
-from typing import Dict, List, Optional
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -42,12 +41,12 @@ DEFAULT_HEIGHTS = {
 
 
 def calculate_scaled_facades(
-    facades_data: List[Dict],
+    facades_data: list[dict],
     total_width_mm: float,
-    lower_height_mm: Optional[int] = None,
-    upper_height_mm: Optional[int] = None,
-    penal_height_mm: Optional[int] = None,
-) -> List[ScaledFacade]:
+    lower_height_mm: int | None = None,
+    upper_height_mm: int | None = None,
+    penal_height_mm: int | None = None,
+) -> list[ScaledFacade]:
     """
     Вычислить реальные размеры фасадов по bbox-процентам.
 

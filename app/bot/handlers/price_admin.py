@@ -7,7 +7,12 @@ from aiogram import F, Router
 from aiogram.enums import ContentType
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy import or_, select
 
 from app.bot.states.price_admin import PriceAdminStates

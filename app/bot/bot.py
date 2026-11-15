@@ -3,8 +3,10 @@
 """
 
 import logging
+
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)

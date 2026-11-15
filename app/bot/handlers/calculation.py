@@ -2,9 +2,14 @@
 Обработчик расчёта стоимости и показа сметы.
 """
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from app.db.session import get_session
 from app.models.calculation import Calculation
@@ -70,8 +75,8 @@ async def start_calculation(callback: CallbackQuery, state: FSMContext):
             # Показываем смету
             await show_estimate(callback.message, calculation, result)
 
-        except Exception as e:
-            await callback.message.answer(f"Ошибка при расчёте: {str(e)}")
+        except Exception as e:  # noqa: BLE001
+            await callback.message.answer(f"Ошибка при расчёте: {e!s}")
             await callback.answer()
             return
 

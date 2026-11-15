@@ -8,7 +8,6 @@
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 from app.domain.money import money as _money
 from app.domain.money import rub as _rub
@@ -30,9 +29,9 @@ def _round_half_up(value: float, digits: int = 0) -> float:
 @dataclass
 class DiscountInfo:
     """Информация о скидке/наценке."""
-    discount_type: Optional[str] = None   # "percent" | "fixed" | None
+    discount_type: str | None = None   # "percent" | "fixed" | None
     discount_value: float = 0
-    markup_type: Optional[str] = None     # "percent" | "fixed" | None
+    markup_type: str | None = None     # "percent" | "fixed" | None
     markup_value: float = 0
     designer_bonus_enabled: bool = False
     designer_bonus_rate: float = 0.10     # 10% по умолчанию
@@ -111,7 +110,7 @@ def calculate_cost(
     delivery_fee_client: float = 10000,
     noncash_markup: float = 1.13,
     # Скидка / наценка / бонус
-    discount: Optional[DiscountInfo] = None,
+    discount: DiscountInfo | None = None,
 ) -> CostBreakdown:
     """
     Полный расчёт стоимости заказа.

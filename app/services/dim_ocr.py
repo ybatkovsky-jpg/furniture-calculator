@@ -25,7 +25,7 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 import httpx
 
@@ -51,8 +51,8 @@ GLM_PROMPT = (
 
 # Один WARNING на процесс: OCR недоступен — работаем как раньше
 _warned = False
-_tesseract_checked: Optional[bool] = None
-_client: Optional[httpx.AsyncClient] = None
+_tesseract_checked: bool | None = None
+_client: httpx.AsyncClient | None = None
 # Circuit breaker: после сбоя GLM-OCR не дёргаем сеть 10 минут
 # (иначе ReadTimeout по 180 c на каждую страницу при мёртвом API)
 _glm_dead_until: float = 0.0
@@ -62,7 +62,7 @@ _glm_dead_until: float = 0.0
 # ПУБЛИЧНОЕ API
 # ================================================================
 
-async def extract_dimension_numbers(image_path: str | Path) -> List[dict]:
+async def extract_dimension_numbers(image_path: str | Path) -> list[dict]:
     """
     Извлечь числа-кандидаты габаритов с изображения чертежа.
 
@@ -80,7 +80,7 @@ async def extract_dimension_numbers(image_path: str | Path) -> List[dict]:
 
     img_w, img_h = _image_size(path)
 
-    candidates: List[dict] = []
+    candidates: list[dict] = []
     if _tesseract_available():
         candidates = _extract_tesseract(path, img_w, img_h)
     if not candidates:
@@ -95,9 +95,9 @@ async def extract_dimension_numbers(image_path: str | Path) -> List[dict]:
 
 
 def select_total_width(
-    candidates: List[dict],
-    vlm_width: Optional[int],
-) -> Tuple[Optional[int], float]:
+    candidates: list[dict],
+    vlm_width: int | None,
+) -> tuple[int | None, float]:
     """
     Выбор числа-габарита из OCR-кандидатов (чистая функция, без сети).
 
@@ -123,7 +123,7 @@ def select_total_width(
     if not candidates:
         return None, 0.0
 
-    valid: List[dict] = []
+    valid: list[dict] = []
     for c in candidates:
         if isinstance(c, dict):
             cc = _as_candidate(c)
@@ -200,8 +200,8 @@ def _dim_line_quality(c: dict, duplicates: int = 1) -> float:
 
 
 def _largest_with_dominance(
-    candidates: List[dict],
-) -> Tuple[Optional[int], float]:
+    candidates: list[dict],
+) -> tuple[int | None, float]:
     """Крупнейшее число + confidence по доминированию над вторым по величине."""
     if not candidates:
         return None, 0.0
@@ -215,9 +215,9 @@ def _largest_with_dominance(
 
 def parse_glm_dimensions(
     payload: Any,
-    image_width: Optional[int] = None,
-    image_height: Optional[int] = None,
-) -> List[dict]:
+    image_width: int | None = None,
+    image_height: int | None = None,
+) -> list[dict]:
     """
     Устойчивый парсер ответа GLM-OCR (layout_parsing) → кандидаты чисел.
 
@@ -234,7 +234,7 @@ def parse_glm_dimensions(
     if not isinstance(payload, dict):
         return []
 
-    candidates: List[dict] = []
+    candidates: list[dict] = []
     layout = payload.get("layout_details")
     if isinstance(layout, list) and layout:
         page_sizes = _page_sizes(payload)
@@ -244,7 +244,7 @@ def parse_glm_dimensions(
         text = payload.get("md_results") or ""
         candidates = _from_md_text(text, image_width, image_height)
 
-    out: List[dict] = []
+    out: list[dict] = []
     seen = set()
     for c in candidates:
         n = _norm_candidate(
@@ -269,7 +269,7 @@ def _configure_tesseract_cmd() -> None:
     """Прописать tesseract.exe явно, если его нет в PATH (Windows winget-установка)."""
     try:
         import pytesseract
-    except Exception:
+    except Exception:  # noqa: BLE001
         return
     exe = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
     if exe.exists():
@@ -281,33 +281,33 @@ def _tesseract_available() -> bool:
     global _tesseract_checked
     if _tesseract_checked is None:
         try:
-            import pytesseract  # noqa: F401
+            import pytesseract
             _configure_tesseract_cmd()
             pytesseract.get_tesseract_version()
             _tesseract_checked = True
-        except Exception:
+        except Exception:  # noqa: BLE001
             _tesseract_checked = False
     return _tesseract_checked
 
 
 def _extract_tesseract(
     path: Path,
-    img_w: Optional[int],
-    img_h: Optional[int],
-) -> List[dict]:
+    img_w: int | None,
+    img_h: int | None,
+) -> list[dict]:
     """Числа через pytesseract image_to_data (bbox каждого слова)."""
     try:
         import pytesseract
         from PIL import Image
-    except Exception:
+    except Exception:  # noqa: BLE001
         return []
     _configure_tesseract_cmd()
     try:
         image = Image.open(path)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return []
 
-    raw: List[Tuple[int, float, float, float, float]] = []
+    raw: list[tuple[int, float, float, float, float]] = []
     seen = set()
     # psm 6 — «строки чисел»; psm 11 — разреженный текст (запасной)
     for psm in ("6", "11"):
@@ -318,6 +318,7 @@ def _extract_tesseract(
                 config=f"--psm {psm} -c tessedit_char_whitelist=0123456789.",
             )
         except Exception:
+            logger.debug("dim_ocr: image_to_data не удался", exc_info=True)
             continue
         rows = len(data.get("text") or [])
         for i in range(rows):
@@ -342,7 +343,7 @@ def _extract_tesseract(
                 seen.add(key)
                 raw.append((value, x, y, w, h))
 
-    out: List[dict] = []
+    out: list[dict] = []
     for value, x, y, w, h in raw:
         n = _norm_candidate(value, x, y, w, h, img_w, img_h)
         if n is not None:
@@ -363,9 +364,9 @@ async def _get_client() -> httpx.AsyncClient:
 
 async def _extract_glm(
     path: Path,
-    img_w: Optional[int],
-    img_h: Optional[int],
-) -> List[dict]:
+    img_w: int | None,
+    img_h: int | None,
+) -> list[dict]:
     """Числа через GLM-OCR layout_parsing (по образцу pdf_parser)."""
     global _glm_dead_until
     api_key = settings.zai_api_key or settings.openrouter_api_key
@@ -391,13 +392,13 @@ async def _extract_glm(
         try:
             detail = (e.response.text or "")[:160]
         except Exception:
-            pass
+            logger.debug("dim_ocr: не удалось прочитать тело HTTP-ошибки", exc_info=True)
         _glm_dead_until = time.monotonic() + 600.0
         _warn_once(
             f"🔤 OCR размеров: GLM-OCR HTTP {e.response.status_code}: {detail}"
         )
         return []
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         _glm_dead_until = time.monotonic() + 600.0
         _warn_once(f"🔤 OCR размеров: GLM-OCR недоступен ({type(e).__name__}: {e})")
         return []
@@ -459,7 +460,7 @@ def _to_data_url(path: Path) -> str:
             data = buf.getvalue()
             mime = "image/jpeg"
     except Exception:
-        pass  # не удалось обработать — шлём оригинал
+        logger.debug("dim_ocr: не удалось подготовить изображение — шлём оригинал", exc_info=True)
 
     return f"data:{mime};base64,{base64.b64encode(data).decode()}"
 
@@ -468,8 +469,8 @@ def _to_data_url(path: Path) -> str:
 # ПАРСИНГ ОТВЕТА GLM-OCR
 # ================================================================
 
-def _page_sizes(payload: dict) -> List[Tuple[Optional[int], Optional[int]]]:
-    sizes: List[Tuple[Optional[int], Optional[int]]] = []
+def _page_sizes(payload: dict) -> list[tuple[int | None, int | None]]:
+    sizes: list[tuple[int | None, int | None]] = []
     data_info = payload.get("data_info") or {}
     for page in data_info.get("pages") or []:
         if isinstance(page, dict):
@@ -479,12 +480,12 @@ def _page_sizes(payload: dict) -> List[Tuple[Optional[int], Optional[int]]]:
 
 def _from_layout_details(
     layout: list,
-    page_sizes: List[Tuple[Optional[int], Optional[int]]],
-    img_w: Optional[int],
-    img_h: Optional[int],
-) -> List[dict]:
+    page_sizes: list[tuple[int | None, int | None]],
+    img_w: int | None,
+    img_h: int | None,
+) -> list[dict]:
     """Элементы layout_details: content + bbox_2d каждого числа."""
-    out: List[dict] = []
+    out: list[dict] = []
     # один page-список элементов либо список страниц
     pages = [layout] if (layout and isinstance(layout[0], dict)) else layout
     for page_idx, page in enumerate(pages):
@@ -510,18 +511,18 @@ def _from_layout_details(
 
 def _bbox_to_xywh(
     bbox,
-    page_w: Optional[int],
-    page_h: Optional[int],
-    img_w: Optional[int],
-    img_h: Optional[int],
-) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    page_w: int | None,
+    page_h: int | None,
+    img_w: int | None,
+    img_h: int | None,
+) -> tuple[float | None, float | None, float | None, float | None]:
     """bbox [x0,y0,x1,y1] (или [x,y,w,h]) → (x, y, w, h) в долях 0..1."""
     try:
         a, b, c, d = (float(v) for v in bbox[:4])
     except (TypeError, ValueError):
         return None, None, None, None
 
-    def to01(v: float, dim: Optional[int]) -> Optional[float]:
+    def to01(v: float, dim: int | None) -> float | None:
         if dim and v > 1.0:
             v = v / dim
         elif v > 1.0 and v <= 100.0:
@@ -538,11 +539,11 @@ def _bbox_to_xywh(
 
 def _from_md_text(
     text: str,
-    img_w: Optional[int],
-    img_h: Optional[int],
-) -> List[dict]:
+    img_w: int | None,
+    img_h: int | None,
+) -> list[dict]:
     """Числа из md_results: JSON из prompt (устойчиво) → regex-фолбэк."""
-    out: List[dict] = []
+    out: list[dict] = []
     obj = _extract_json_object(text)
     if obj is not None:
         entries = _json_number_entries(obj)
@@ -565,18 +566,18 @@ def _from_md_text(
     return out
 
 
-def _extract_json_object(text: str) -> Optional[Any]:
+def _extract_json_object(text: str) -> Any | None:
     """Устойчивое извлечение JSON из ответа модели (markdown-обёртка и проза)."""
     if not text:
         return None
     t = text.strip()
-    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", t, re.S)
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", t, re.DOTALL)
     if fence:
         t = fence.group(1).strip()
     try:
         return json.loads(t)
     except Exception:
-        pass
+        logger.debug("dim_ocr: JSON не распарсился целиком, ищем фрагмент", exc_info=True)
     for open_ch, close_ch in (("{", "}"), ("[", "]")):
         start = t.find(open_ch)
         if start == -1:
@@ -591,14 +592,14 @@ def _extract_json_object(text: str) -> Optional[Any]:
                 if depth == 0:
                     try:
                         return json.loads(t[start:i + 1])
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         break
         end = t.rfind(close_ch)
         if end > start:
             try:
                 return json.loads(t[start:end + 1])
             except Exception:
-                pass
+                logger.debug("dim_ocr: фрагмент JSON не распарсился", exc_info=True)
     return None
 
 
@@ -608,7 +609,7 @@ _NUMBER_LIST_KEYS = (
 )
 
 
-def _json_number_entries(obj: Any) -> List[dict]:
+def _json_number_entries(obj: Any) -> list[dict]:
     """Найти список записей чисел в произвольном JSON-объекте."""
     if isinstance(obj, list):
         return [e for e in obj if isinstance(e, dict)]
@@ -634,19 +635,19 @@ def _json_number_entries(obj: Any) -> List[dict]:
 # УТИЛИТЫ
 # ================================================================
 
-def _image_size(path: Path) -> Tuple[Optional[int], Optional[int]]:
+def _image_size(path: Path) -> tuple[int | None, int | None]:
     try:
         from PIL import Image
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None, None
     try:
         with Image.open(path) as img:
             return img.width, img.height
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None, None
 
 
-def _as_candidate(c: dict) -> Optional[dict]:
+def _as_candidate(c: dict) -> dict | None:
     """Нормализация записи кандидата для select_total_width."""
     v = _to_int(c.get("value"))
     if v is None or not (MIN_DIM_MM <= v <= MAX_DIM_MM):
@@ -671,15 +672,15 @@ def _norm_candidate(
     y: Any,
     w: Any,
     h: Any,
-    img_w: Optional[int],
-    img_h: Optional[int],
-) -> Optional[dict]:
+    img_w: int | None,
+    img_h: int | None,
+) -> dict | None:
     """Кандидат → нормализованный dict (0..1) с фильтром 200..8000."""
     v = _to_int(value)
     if v is None or not (MIN_DIM_MM <= v <= MAX_DIM_MM):
         return None
 
-    def to01(val: Any, dim: Optional[int], default: float) -> float:
+    def to01(val: Any, dim: int | None, default: float) -> float:
         f = _to_float(val)
         if f is None:
             return default
@@ -699,7 +700,7 @@ def _norm_candidate(
     }
 
 
-def _int_groups(text: str) -> List[int]:
+def _int_groups(text: str) -> list[int]:
     """Целые числа из текста: 3–5 цифр целиком или группы по 3–4 цифры."""
     if not text:
         return []
@@ -709,7 +710,7 @@ def _int_groups(text: str) -> List[int]:
     return [int(m.group()) for m in re.finditer(r"\d{3,4}", text)]
 
 
-def _to_int(v: Any) -> Optional[int]:
+def _to_int(v: Any) -> int | None:
     if isinstance(v, bool):
         return None
     if isinstance(v, int):
@@ -726,7 +727,7 @@ def _to_int(v: Any) -> Optional[int]:
     return None
 
 
-def _to_float(v: Any) -> Optional[float]:
+def _to_float(v: Any) -> float | None:
     if isinstance(v, bool):
         return None
     if isinstance(v, (int, float)):
@@ -741,7 +742,7 @@ def _to_float(v: Any) -> Optional[float]:
     return None
 
 
-def _first_key(d: dict, keys) -> Optional[Any]:
+def _first_key(d: dict, keys) -> Any | None:
     for k in keys:
         if k in d and d[k] is not None:
             return d[k]

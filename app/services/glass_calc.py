@@ -12,7 +12,6 @@
 MORU: считается листами, с оптимизацией укладки деталей
 """
 
-from typing import Dict, List, Optional
 from dataclasses import dataclass
 
 
@@ -21,7 +20,7 @@ class GlassCalculation:
     """Результат расчёта стекла."""
     total_area_m2: float = 0
     total_cost: float = 0
-    breakdown: List[Dict] = None  # список элементов стекла
+    breakdown: list[dict] = None  # список элементов стекла
 
     def __post_init__(self):
         if self.breakdown is None:
@@ -49,8 +48,8 @@ def calculate_glass_cost(
     width_mm: float,
     height_mm: float,
     tinting: bool = False,
-    manual_price: Optional[float] = None
-) -> Dict:
+    manual_price: float | None = None
+) -> dict:
     """
     Расчёт стоимости одного элемента стекла.
 
@@ -101,7 +100,7 @@ def calculate_glass_cost(
     }
 
 
-def calculate_glass_for_modules(modules: List[Dict]) -> GlassCalculation:
+def calculate_glass_for_modules(modules: list[dict]) -> GlassCalculation:
     """
     Расчёт стекла для всех модулей.
 

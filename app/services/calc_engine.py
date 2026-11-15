@@ -11,19 +11,19 @@
 - Финальная смета (cost_calc)
 """
 
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, field
 import logging
 import re
+from dataclasses import dataclass, field
+from typing import Any
 
 from app.domain.bom import ModuleBOM, build_bom
 from app.domain.cost_lines import CostLine, build_cost_lines
 from app.domain.nesting import NestingResult, nest_bom
-from app.services.cost_calc import calculate_cost, CostBreakdown, DiscountInfo
-from app.services.sheet_calc import SheetCalculation
+from app.services.cost_calc import CostBreakdown, DiscountInfo, calculate_cost
 from app.services.edge_calc import EdgeCalculation
-from app.services.hardware_calc import HardwareCalculation, DEFAULT_HINGE_BRAND
-from app.services.glass_calc import calculate_glass_for_modules, GlassCalculation
+from app.services.glass_calc import GlassCalculation, calculate_glass_for_modules
+from app.services.hardware_calc import DEFAULT_HINGE_BRAND, HardwareCalculation
+from app.services.sheet_calc import SheetCalculation
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +44,14 @@ class CalculationResult:
     fastener_cost: float = 0
 
     # Полные строки себестоимости (P0-02): что именно и по какой цене
-    lines: List[CostLine] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
-    missing_prices: List[str] = field(default_factory=list)
+    lines: list[CostLine] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    missing_prices: list[str] = field(default_factory=list)
     can_issue_kp: bool = True
 
     # S5-01/S5-03: деталировка и заготовка раскроя (сохраняются в quote)
-    bom: List[ModuleBOM] = field(default_factory=list)
-    nesting: Optional[NestingResult] = None
+    bom: list[ModuleBOM] = field(default_factory=list)
+    nesting: NestingResult | None = None
 
     # Количества прочих позиций из quantity_calc (для показа в смете)
     hdf_sheets: int = 0
@@ -85,14 +85,14 @@ class CalculationResult:
 
 
 def calculate_full_cost(
-    modules: List[Dict],
-    selected_materials: Dict[str, Any],
-    selected_hardware: Dict[str, Any],
-    glass_items: List[Dict],
-    discount_info: Optional[DiscountInfo] = None,
-    settings: Optional[Dict] = None,
-    zone_type: Optional[str] = None,
-    price_book: Optional[Dict[str, float]] = None,
+    modules: list[dict],
+    selected_materials: dict[str, Any],
+    selected_hardware: dict[str, Any],
+    glass_items: list[dict],
+    discount_info: DiscountInfo | None = None,
+    settings: dict | None = None,
+    zone_type: str | None = None,
+    price_book: dict[str, float] | None = None,
     has_spec: bool = False,
 ) -> CalculationResult:
     """
@@ -267,7 +267,7 @@ def calculate_full_cost(
     return result
 
 
-def _extract_material_prices(selected_materials: Dict) -> Dict[str, float]:
+def _extract_material_prices(selected_materials: dict) -> dict[str, float]:
     """Извлекает цены на материалы из selected_materials."""
     prices = {}
     if "ldsp" in selected_materials:
@@ -277,7 +277,7 @@ def _extract_material_prices(selected_materials: Dict) -> Dict[str, float]:
     return prices
 
 
-def _extract_edge_prices(selected_materials: Dict) -> Dict[str, float]:
+def _extract_edge_prices(selected_materials: dict) -> dict[str, float]:
     """Извлекает цены на кромку."""
     prices = {}
     if "edge" in selected_materials:
@@ -294,7 +294,7 @@ def _extract_edge_prices(selected_materials: Dict) -> Dict[str, float]:
     return prices
 
 
-def _calculate_facades_cost(modules, selected_materials: Dict) -> float:
+def _calculate_facades_cost(modules, selected_materials: dict) -> float:
     """Расчёт стоимости фасадов по НОРМАЛИЗОВАННЫМ модулям (RecognizedModule).
 
     Площадь одной двери считается по той же формуле, что в quantity_calc
@@ -324,7 +324,7 @@ def _calculate_facades_cost(modules, selected_materials: Dict) -> float:
     return round(total_cost, 2)
 
 
-def _extract_hinge_price(selected_hardware: Dict) -> float:
+def _extract_hinge_price(selected_hardware: dict) -> float:
     """Извлекает цену петель."""
     if "hinges" in selected_hardware:
         hinges = selected_hardware["hinges"]
@@ -333,7 +333,7 @@ def _extract_hinge_price(selected_hardware: Dict) -> float:
     return 0
 
 
-def _extract_handle_price(selected_hardware: Dict) -> float:
+def _extract_handle_price(selected_hardware: dict) -> float:
     """Извлекает цену ручки (опционально; если не задана — 0)."""
     hw = selected_hardware or {}
     handles = hw.get("handles")
@@ -344,7 +344,7 @@ def _extract_handle_price(selected_hardware: Dict) -> float:
     return 0.0
 
 
-def _extract_material_names(selected_materials: Dict) -> list:
+def _extract_material_names(selected_materials: dict) -> list:
     """Имена материалов (для quantity_calc.detect_material_properties)."""
     names = []
     if not isinstance(selected_materials, dict):
@@ -360,7 +360,7 @@ def _extract_material_names(selected_materials: Dict) -> list:
     return names
 
 
-def _dict_to_recognized_module(m: Dict):
+def _dict_to_recognized_module(m: dict):
     """Словарь модуля (из БД / распознавания / ручного ввода) → RecognizedModule.
 
     В проекте исторически живут ДВЕ схемы модуля, и они по-разному трактуют
@@ -429,7 +429,7 @@ def _dict_to_recognized_module(m: Dict):
     )
 
 
-def _pick_dim(m: Dict, *keys) -> int:
+def _pick_dim(m: dict, *keys) -> int:
     """Размер в мм: принимает и `width`, и `width_mm`; нулевой ключ пропускает.
 
     Ноль первого ключа не должен «затирать» значение второго: при частичной
@@ -442,7 +442,7 @@ def _pick_dim(m: Dict, *keys) -> int:
     return 0
 
 
-def _pick_int(m: Dict, keys, default: int) -> int:
+def _pick_int(m: dict, keys, default: int) -> int:
     """Первое непустое целое из набора ключей ("600", "600 мм", 600.0 → 600)."""
     for key in keys:
         if key not in m or m[key] is None:
@@ -521,14 +521,14 @@ def _normalize_drawers(raw):
     return None
 
 
-def _infer_zone_type(modules: List[Dict]) -> Optional[str]:
+def _infer_zone_type(modules: list[dict]) -> str | None:
     """Грубая прикидка типа помещения: верхние базы → кухня (включает авто-GOLA/LED/столешницу)."""
     if any((m.get("type") or "") == "upper_base" for m in modules):
         return "Кухня"
     return None
 
 
-def _extract_drawer_prices(selected_hardware: Dict) -> Dict[str, float]:
+def _extract_drawer_prices(selected_hardware: dict) -> dict[str, float]:
     """Извлекает цены на ящики."""
     prices = {}
     if "drawers" in selected_hardware:
@@ -541,7 +541,7 @@ def _extract_drawer_prices(selected_hardware: Dict) -> Dict[str, float]:
     return prices
 
 
-def _derive_glass_items(modules: List[Dict]) -> List[Dict]:
+def _derive_glass_items(modules: list[dict]) -> list[dict]:
     """Стеклянные фасады → элементы стекла по геометрии дверей (P1-19).
 
     Ручной ввод и распознавание передают только `has_glass`, без размеров.
@@ -549,7 +549,7 @@ def _derive_glass_items(modules: List[Dict]) -> List[Dict]:
     (высота − 4 мм) — те же зазоры, что в quantity_calc. Тип «clear»;
     цена берётся из glass_calc.
     """
-    items: List[Dict] = []
+    items: list[dict] = []
     for module in modules or []:
         if not module.get("has_glass"):
             continue
@@ -577,7 +577,7 @@ def _derive_glass_items(modules: List[Dict]) -> List[Dict]:
     return items
 
 
-def _add_glass_to_modules(modules: List[Dict], glass_items: List[Dict]) -> List[Dict]:
+def _add_glass_to_modules(modules: list[dict], glass_items: list[dict]) -> list[dict]:
     """Добавляет стекло в модули для расчёта."""
     # Упрощённо - добавляем всё стекло в первый модуль
     if not modules or not glass_items:
@@ -588,7 +588,7 @@ def _add_glass_to_modules(modules: List[Dict], glass_items: List[Dict]) -> List[
     return modules_copy
 
 
-def _generate_details_for_modules(modules: List[Dict]) -> List[Dict]:
+def _generate_details_for_modules(modules: list[dict]) -> list[dict]:
     """Генерирует детали для модулей."""
     modules_with_details = []
 
@@ -676,7 +676,7 @@ def _generate_details_for_modules(modules: List[Dict]) -> List[Dict]:
     return modules_with_details
 
 
-def _get_average_sheet_price(material_prices: Dict[str, float]) -> float:
+def _get_average_sheet_price(material_prices: dict[str, float]) -> float:
     """Средняя цена листа."""
     if not material_prices:
         return 0

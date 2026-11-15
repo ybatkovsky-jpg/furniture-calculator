@@ -2,9 +2,9 @@
 Обработчики для выбора материалов из прайса.
 """
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 
 from app.bot.states.materials import MaterialSelectionStates
@@ -47,7 +47,7 @@ async def select_ldsp(message: Message):
         return
 
     # Создаём клавиатуру с ЛДСП
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     keyboard = []
     
     for item in ldsp_items:
@@ -146,7 +146,7 @@ async def select_facade_category(message: Message, state: FSMContext):
         await message.answer("❌ В прайсе не найдены категории фасадов.")
         return
 
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     
     keyboard = []
     category_names = {
@@ -208,7 +208,7 @@ async def process_facade_category(callback: CallbackQuery, state: FSMContext):
     await state.update_data(calculation_id=calculation_id)
     
     # Создаём клавиатуру с фасадами
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     keyboard = []
     
     for item in facade_items:
@@ -522,7 +522,7 @@ async def select_edge_automatically(message: Message, state: FSMContext):
 
 async def select_hinge_brand(message: Message, state: FSMContext):
     """Показывает выбор бренда петель."""
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     
     keyboard = [
         [InlineKeyboardButton(text="BOYARD", callback_data="hinge_brand:BOYARD")],
@@ -576,7 +576,7 @@ async def process_hinge_brand(callback: CallbackQuery, state: FSMContext):
     await state.update_data(calculation_id=calculation_id)
     
     # Создаём клавиатуру с петлями
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     keyboard = []
     
     for item in hinge_items:
@@ -702,7 +702,7 @@ async def check_for_drawers(message: Message, state: FSMContext):
 
 async def select_drawer_brand(message: Message, state: FSMContext):
     """Показывает выбор бренда системы ящиков."""
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     
     keyboard = [
         [InlineKeyboardButton(text="BOYARD СТАРТ", callback_data="drawer_brand:BOYARD СТАРТ")],
@@ -759,7 +759,7 @@ async def process_drawer_brand(callback: CallbackQuery, state: FSMContext):
     await state.update_data(calculation_id=calculation_id)
     
     # Создаём клавиатуру с ящиками
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     keyboard = []
     
     for item in drawer_items:
@@ -986,7 +986,7 @@ async def finish_material_selection(message: Message, state: FSMContext):
     summary += "\nТеперь можно запустить расчёт стоимости!"
 
     # Клавиатура для запуска расчёта
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🧮 Рассчитать стоимость", callback_data=f"calculate_cost:{calculation_id}")]

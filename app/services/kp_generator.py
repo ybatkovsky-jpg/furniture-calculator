@@ -7,17 +7,23 @@
 import logging
 import os
 from datetime import datetime
-from pathlib import Path
-from typing import List
 from decimal import Decimal
+from pathlib import Path
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import (
+    Image,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 
 from app.config import settings
 from app.models.calculation import Calculation, CommercialOffer
@@ -66,7 +72,8 @@ class KPGenerator:
                 pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
                 default_font = font_name
                 break
-            except Exception:  # noqa: BLE001 — шрифт опционален
+            except Exception:
+                logger.debug("Шрифт %s не загрузился", font_path, exc_info=True)
                 continue
         if default_font == "Helvetica":
             logger.warning("Кириллический шрифт не найден — КП может отображаться некорректно")
@@ -136,7 +143,7 @@ class KPGenerator:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
         return f"{self.kp_prefix}{timestamp}"
 
-    def _create_items_table(self, calculation: Calculation) -> List[List[str]]:
+    def _create_items_table(self, calculation: Calculation) -> list[list[str]]:
         """Создать таблицу с позициями для КП."""
         items = []
 

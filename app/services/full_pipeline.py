@@ -11,15 +11,15 @@ GLM-OCR → структура помещений → рендеринг стр�
 """
 
 import asyncio
-import tempfile
 import logging
-from pathlib import Path
-from typing import Dict, List, Optional
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import ClassVar
 
-from app.services.pdf_parser import GLMOCRParser, PDFParseResult, ParsedRoom
-from app.services.pdf_renderer import render_page, get_page_count
 from app.services.image_analyzer import GeminiImageAnalyzer, RecognitionResult
+from app.services.pdf_parser import GLMOCRParser, ParsedRoom, PDFParseResult
+from app.services.pdf_renderer import get_page_count, render_page
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ def _translate_zone_type(zone_type: str) -> str:
 NO_DOOR_ZONES = frozenset({"Детская", "Спальня", "Гостиная", "Прихожая"})
 
 
-def is_no_door_zone_page(zone_type: Optional[str], modules: List) -> bool:
+def is_no_door_zone_page(zone_type: str | None, modules: list) -> bool:
     """
     Гейт legacy-fallback: страница с мебелью БЕЗ дверец (например, кровать
     в детской) не должна уходить в analyze_drawing, который выдумывает
@@ -120,13 +120,13 @@ class RoomSpec:
     """Спецификация одного помещения."""
     room_name: str = ""
     page: int = 0
-    zone_type: Optional[str] = None      # тип помещения из AI
-    modules: List = field(default_factory=list)   # RecognizedModule
-    materials: List[str] = field(default_factory=list)
-    notes: List[str] = field(default_factory=list)
+    zone_type: str | None = None      # тип помещения из AI
+    modules: list = field(default_factory=list)   # RecognizedModule
+    materials: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
     confidence: str = ""
     quality_score: float = 0.0        # 0..1, чем выше тем лучше
-    quality_flags: List[str] = field(default_factory=list)  # предупреждения
+    quality_flags: list[str] = field(default_factory=list)  # предупреждения
 
 
 @dataclass
@@ -137,8 +137,8 @@ class PipelineResult:
     project_address: str = ""
     designer: str = ""
     total_pages: int = 0
-    rooms: List[RoomSpec] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)
+    rooms: list[RoomSpec] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
 
 class FullPipeline:
@@ -172,7 +172,7 @@ class FullPipeline:
         logger.info("📄 Шаг 1/3: GLM-OCR — чтение структуры PDF...")
         try:
             ocr_result = await self.ocr.parse_pdf(path)
-        except Exception as exc:  # noqa: BLE001 — OCR не должен валить прогон
+        except Exception as exc:  # noqa: BLE001
             logger.warning("OCR упал с исключением: %s", exc)
             ocr_result = PDFParseResult(success=False, error=str(exc))
 
@@ -200,7 +200,7 @@ class FullPipeline:
         logger.info(f"🖼️  Шаг 2/3: Рендеринг + анализ {len(pages_to_analyze)} страниц...")
 
         # ── Шаг 3: ПАРАЛЛЕЛЬНЫЙ рендеринг + Vision ──
-        room_specs: Dict[int, RoomSpec] = {}
+        room_specs: dict[int, RoomSpec] = {}
 
         # Обрабатываем страницы параллельно батчами по 3
         BATCH_SIZE = 3
@@ -380,7 +380,7 @@ class FullPipeline:
             Path(tmp_path).unlink(missing_ok=True)
 
     # Индикаторы: страница содержит чертёж (размеры, масштаб, виды)
-    DRAWING_INDICATORS = [
+    DRAWING_INDICATORS: ClassVar[list[str]] = [
         "×", "х", "мм", "mm",
         "М1:", "М 1:", "М1:50", "М1:25", "М1:10", "М1:20",
         "масштаб", "Масштаб",
@@ -392,7 +392,7 @@ class FullPipeline:
     ]
 
     # Индикаторы: страница НЕ чертёж (титул, ведомость, легенда)
-    SKIP_INDICATORS = [
+    SKIP_INDICATORS: ClassVar[list[str]] = [
         "СОДЕРЖАНИЕ", "Содержание",
         "ВЕДОМОСТЬ", "Ведомость",
         "СПЕЦИФИКАЦИЯ", "Спецификация",
@@ -406,7 +406,7 @@ class FullPipeline:
 
     def _pick_key_pages(
         self, ocr_result: PDFParseResult, total: int
-    ) -> List[int]:
+    ) -> list[int]:
         """
         Выбрать страницы с чертежами, исключая титульные, ведомости и штампы.
 
@@ -479,7 +479,7 @@ class FullPipeline:
 
     def _find_room_for_page(
         self, ocr_result: PDFParseResult, page_num: int
-    ) -> Optional[ParsedRoom]:
+    ) -> ParsedRoom | None:
         """Найти OCR-комнату для страницы по полю `page` (P2-02).
 
         Раньше искали `page=N` в raw_text, но pdf_parser кладёт туда текст
@@ -517,7 +517,7 @@ class FullPipeline:
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (module-level)
 # ================================================================
 
-def _scaled_facades_to_modules(scaled_facades) -> List:
+def _scaled_facades_to_modules(scaled_facades) -> list:
     """
     Конвертировать ScaledFacade (с bbox-вычисленными размерами) в RecognizedModule.
     """
@@ -683,7 +683,7 @@ def _calculate_quality(room: RoomSpec) -> float:
         flags.append("⚠ Модули не найдены для шкафа/гардеробной")
 
     # 2. Кромка правильно распределена? — проверяем типы модулей
-    module_types = set(m.type for m in room.modules)
+    module_types = {m.type for m in room.modules}
     if "corner" in module_types:
         corners = [m for m in room.modules if m.type == "corner"]
         non_square = [c for c in corners if c.width != c.depth]
@@ -693,7 +693,7 @@ def _calculate_quality(room: RoomSpec) -> float:
 
     # 3. Все модули одного размера — подозрительно (возможно дубликат)
     if len(room.modules) >= 3:
-        unique_sizes = set((m.width, m.depth, m.height) for m in room.modules)
+        unique_sizes = {(m.width, m.depth, m.height) for m in room.modules}
         if len(unique_sizes) == 1:
             score -= 0.15
             flags.append("⚠ Все модули одного размера — возможно дубликат")

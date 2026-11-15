@@ -7,13 +7,13 @@
 import logging
 
 from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
 )
-from aiogram.fsm.context import FSMContext
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
@@ -80,7 +80,7 @@ async def show_projects(message: Message, state: FSMContext):
                 )
             ])
             continue
-        latest = sorted(project.calculations, key=lambda c: c.id)[-1]
+        latest = max(project.calculations, key=lambda c: c.id)
         price = latest.final_price_cash or 0
         rows.append([
             InlineKeyboardButton(

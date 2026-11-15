@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +40,7 @@ class PricingPolicy:
     sheet_utilization: float = 0.85
 
     @classmethod
-    def from_config(cls) -> "PricingPolicy":
+    def from_config(cls) -> PricingPolicy:
         """Профиль из `.env`/`config.py` (fallback, если в БД профиля нет)."""
         return cls(
             manufacturing_rate=settings.manufacturing_rate,
@@ -60,7 +60,7 @@ class PricingPolicy:
         )
 
     @classmethod
-    def from_calc_settings(cls, row: Any) -> "PricingPolicy":
+    def from_calc_settings(cls, row: Any) -> PricingPolicy:
         """Профиль из строки `CalcSettings`; None-поля берутся из config."""
         base = cls.from_config()
         values = {}
@@ -109,7 +109,7 @@ class PricingPolicy:
         }
 
 
-def coerce_policy(value: Optional[Any]) -> PricingPolicy:
+def coerce_policy(value: Any | None) -> PricingPolicy:
     """Привести dict/PricingPolicy/None к PricingPolicy."""
     if isinstance(value, PricingPolicy):
         return value

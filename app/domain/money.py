@@ -21,13 +21,13 @@ def to_decimal(value: Any) -> Decimal:
     if isinstance(value, Decimal):
         return value
     if value is None:
-        return Decimal("0")
+        return Decimal(0)
     if isinstance(value, bool):
         return Decimal(int(value))
     try:
         return Decimal(str(value))
     except (InvalidOperation, ValueError):
-        return Decimal("0")
+        return Decimal(0)
 
 
 def money(value: Any) -> Decimal:
@@ -41,7 +41,7 @@ def money_float(value: Any) -> float:
 
 def rub(value: Any) -> Decimal:
     """Целые рубли: HALF_UP до рубля (используется в существующей формуле)."""
-    return to_decimal(value).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return to_decimal(value).quantize(Decimal(1), rounding=ROUND_HALF_UP)
 
 
 def rub_float(value: Any) -> float:

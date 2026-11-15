@@ -4,20 +4,20 @@
 
 import logging
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 
-from app.bot.states.manual_input import ManualInputStates
 from app.bot.keyboards.inline import (
-    get_module_type_keyboard,
-    get_width_keyboard,
     get_depth_keyboard,
-    get_height_keyboard,
     get_filling_keyboard,
     get_glass_keyboard,
-    get_module_actions_keyboard
+    get_height_keyboard,
+    get_module_actions_keyboard,
+    get_module_type_keyboard,
+    get_width_keyboard,
 )
+from app.bot.states.manual_input import ManualInputStates
 from app.db.session import get_session
 from app.models.calculation import Calculation
 from app.services.access import get_owned_calculation

@@ -13,21 +13,21 @@
 """
 
 import asyncio
-import json
-import logging
 import base64
 import io
-from typing import Dict, List, Optional, Any, Tuple
-from pathlib import Path
+import json
+import logging
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 import httpx
 from PIL import Image
 
-from app.services.scale_calc import calculate_scaled_facades, ScaledFacade
-from app.services.furniture_defaults import get_rules
-from app.services.recognition_protocol import scale_ok_meta, door_count_of
 from app.config import settings
+from app.services.furniture_defaults import get_rules
+from app.services.recognition_protocol import door_count_of, scale_ok_meta
+from app.services.scale_calc import ScaledFacade, calculate_scaled_facades
 
 logger = logging.getLogger(__name__)
 
@@ -45,24 +45,24 @@ class RecognizedModule:
     height: int        # высота в мм
     quantity: int = 1
     has_glass: bool = False
-    facades: Optional[Dict[str, Any]] = None
-    drawers: Optional[Dict[str, Any]] = None
+    facades: dict[str, Any] | None = None
+    drawers: dict[str, Any] | None = None
     shelves: int = 0
     is_corner: bool = False
     # Bounding box (если модель вернула)
-    bbox: Optional[Dict[str, int]] = None  # {"x": int, "y": int, "w": int, "h": int}
-    notes: Optional[str] = None  # предупреждения по модулю (например, коррекция ширины)
+    bbox: dict[str, int] | None = None  # {"x": int, "y": int, "w": int, "h": int}
+    notes: str | None = None  # предупреждения по модулю (например, коррекция ширины)
 
 
 @dataclass
 class RecognitionResult:
     """Результат распознавания чертежа."""
-    modules: List[RecognizedModule]
+    modules: list[RecognizedModule]
     confidence: str   # "high", "medium", "low"
-    notes: Optional[str] = None
-    zone_type: Optional[str] = None
-    materials_mentioned: List[str] = field(default_factory=list)
-    model_used: Optional[str] = None
+    notes: str | None = None
+    zone_type: str | None = None
+    materials_mentioned: list[str] = field(default_factory=list)
+    model_used: str | None = None
 
 
 @dataclass
@@ -77,12 +77,12 @@ class FacadeData:
 @dataclass
 class FacadeResult:
     """Результат распознавания фасадов."""
-    facades: List[FacadeData] = field(default_factory=list)
+    facades: list[FacadeData] = field(default_factory=list)
     confidence: str = "low"
-    zone_type: Optional[str] = None
-    materials_mentioned: List[str] = field(default_factory=list)
-    model_used: Optional[str] = None
-    notes: Optional[str] = None
+    zone_type: str | None = None
+    materials_mentioned: list[str] = field(default_factory=list)
+    model_used: str | None = None
+    notes: str | None = None
 
 
 # ================================================================
@@ -530,7 +530,7 @@ def _validate_module(module: "RecognizedModule") -> tuple:
 # ОСНОВНОЙ КЛАСС
 # ================================================================
 
-def _merge_adjacent_modules(modules: List["RecognizedModule"]) -> List["RecognizedModule"]:
+def _merge_adjacent_modules(modules: list["RecognizedModule"]) -> list["RecognizedModule"]:
     """
     Постобработка списка модулей: убрать мусор и сгруппировать дубликаты.
 
@@ -543,7 +543,7 @@ def _merge_adjacent_modules(modules: List["RecognizedModule"]) -> List["Recogniz
         return list(modules)
 
     # Группируем точные дубликаты
-    groups: Dict[str, List["RecognizedModule"]] = {}
+    groups: dict[str, list[RecognizedModule]] = {}
     for m in modules:
         key = f"{m.type}_{m.width}_{m.depth}_{m.height}"
         groups.setdefault(key, []).append(m)
@@ -637,7 +637,7 @@ class GeminiImageAnalyzer:
         )
         self.deepseek_model = getattr(settings, "deepseek_vision_model", "deepseek-flash")
 
-        self.client: Optional[httpx.AsyncClient] = None
+        self.client: httpx.AsyncClient | None = None
 
         providers = []
         if self.local_llm_url:
@@ -671,7 +671,7 @@ class GeminiImageAnalyzer:
     async def analyze_drawing(
         self,
         image_path: str | Path,
-        model: Optional[str] = None,
+        model: str | None = None,
     ) -> RecognitionResult:
         """
         Простой модульный анализ (одна модель, без ансамбля и цепочек).
@@ -699,7 +699,7 @@ class GeminiImageAnalyzer:
 
             return result
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Fallback {model} error: {type(e).__name__}: {e}")
             return RecognitionResult(
                 modules=[],
@@ -731,7 +731,7 @@ class GeminiImageAnalyzer:
             result = await self._try_analyze_facades(image_path, FACADE_MODEL, "routerai")
             result.model_used = FACADE_MODEL
             return result
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Фасадный анализ не удался: {e}")
             return FacadeResult(
                 facades=[],
@@ -828,7 +828,7 @@ class GeminiImageAnalyzer:
     async def analyze_facades_scaled(
         self,
         image_path: str | Path,
-    ) -> Tuple[List[ScaledFacade], Optional[str], List[str]]:
+    ) -> tuple[list[ScaledFacade], str | None, list[str]]:
         """
         Фасадный анализ с вычислением размеров через bbox + масштаб.
 
@@ -919,7 +919,7 @@ class GeminiImageAnalyzer:
 
             return facades, zone_type, data.get("materials", [])
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Масштабный анализ не удался: {e}")
             return [], None, []
 
@@ -932,7 +932,7 @@ class GeminiImageAnalyzer:
         self,
         image_path: str | Path,
         return_meta: bool = False,
-    ) -> Tuple[Any, ...]:
+    ) -> tuple[Any, ...]:
         """
         Единый анализ страницы чертежа.
 
@@ -1047,7 +1047,7 @@ class GeminiImageAnalyzer:
                         )
                         total_width_mm = ocr_width
                 except Exception:
-                    pass  # OCR опционален — молча пропускаем любые ошибки
+                    logger.debug("OCR габарита не удался — используем ответ модели", exc_info=True)
 
             # Если есть и габарит, и bbox-данные → точные размеры через scale_calc
             scaled_facades = []
@@ -1108,7 +1108,7 @@ class GeminiImageAnalyzer:
                 )
             return modules, zone_type, materials, confidence
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Единый анализ не удался: {type(e).__name__}: {e}")
             if return_meta:
                 return [], None, [], "low", self._build_meta([], 0, {}, None)
@@ -1116,11 +1116,11 @@ class GeminiImageAnalyzer:
 
     @staticmethod
     def _build_meta(
-        modules: List["RecognizedModule"],
+        modules: list["RecognizedModule"],
         total_width_mm,
         heights_mm,
         zone_type,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Метаданные попытки для протокола стабильности (чисто, без сети)."""
         return {
             "total_width_mm": int(total_width_mm or 0),
@@ -1132,12 +1132,12 @@ class GeminiImageAnalyzer:
 
     def _facades_to_modules(
         self,
-        scaled_facades: List,
-        zone_type: Optional[str] = None,
-        glass_indices: set = None,
-        drawer_indices: set = None,
-        drawer_counts: dict = None,
-    ) -> List[RecognizedModule]:
+        scaled_facades: list,
+        zone_type: str | None = None,
+        glass_indices: set | None = None,
+        drawer_indices: set | None = None,
+        drawer_counts: dict | None = None,
+    ) -> list[RecognizedModule]:
         """
         Python-группировка: отдельные дверцы → модули мебели.
 
@@ -1402,7 +1402,7 @@ class GeminiImageAnalyzer:
     # ВЫБОР ПРОВАЙДЕРА ДЛЯ ЕДИНОГО АНАЛИЗА (с фолбэком)
     # -----------------------------------------------------------
 
-    def _unified_targets(self) -> List[tuple]:
+    def _unified_targets(self) -> list[tuple]:
         """Порядок (провайдер, модель) для единого анализа чертежа.
 
         `VISION_PROVIDER` задаёт ПЕРВОГО провайдера, остальные остаются
@@ -1413,7 +1413,7 @@ class GeminiImageAnalyzer:
         раньше любой локальный адрес в .env уводил все попытки в мёртвый сокет,
         и до облачных провайдеров дело не доходило.
         """
-        available: List[tuple] = []
+        available: list[tuple] = []
         if self.local_llm_url:
             available.append(("local", self.local_vision_model))
         if self.deepseek_key:
@@ -1458,7 +1458,7 @@ class GeminiImageAnalyzer:
     async def _unified_request(
         self,
         client: httpx.AsyncClient,
-        targets: List[tuple],
+        targets: list[tuple],
         messages: list,
         max_retries: int = 2,
     ) -> str:
@@ -1473,7 +1473,7 @@ class GeminiImageAnalyzer:
         картинкой и большим max_tokens — без повтора страница молча терялась
         (прогон альбома: 6 из 12 страниц «не распознаны» из-за одного 503).
         """
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
 
         for provider, model in targets:
             body = self._unified_body(provider, model, messages)
@@ -1512,7 +1512,7 @@ class GeminiImageAnalyzer:
                     logger.info(f"🎯 Ответ получен: {provider} ({model})")
                     return text
 
-                except Exception as e:  # noqa: BLE001 — переходим к следующему
+                except Exception as e:  # noqa: BLE001
                     last_error = e
                     retryable = _is_retryable_error(e)
                     if retryable and attempt < max_retries:
@@ -1648,7 +1648,7 @@ class GeminiImageAnalyzer:
         json_str = re.sub(r',\s*]', ']', json_str)
         return json_str
 
-    def _parse_result(self, data: Dict[str, Any]) -> RecognitionResult:
+    def _parse_result(self, data: dict[str, Any]) -> RecognitionResult:
         """Преобразовать JSON-ответ модели в RecognitionResult."""
         modules = []
 
@@ -1769,9 +1769,9 @@ class GeminiImageAnalyzer:
 
 
 def facades_to_modules(
-    facades: List[FacadeData],
-    zone_type: Optional[str] = None,
-) -> List[RecognizedModule]:
+    facades: list[FacadeData],
+    zone_type: str | None = None,
+) -> list[RecognizedModule]:
     """
     Сконвертировать список фасадов в список модулей для расчёта материалов.
 
@@ -1851,7 +1851,7 @@ def facades_to_modules(
 # ГЛОБАЛЬНЫЙ ЭКЗЕМПЛЯР
 # ================================================================
 
-_analyzer: Optional[GeminiImageAnalyzer] = None
+_analyzer: GeminiImageAnalyzer | None = None
 
 
 def get_analyzer() -> GeminiImageAnalyzer:

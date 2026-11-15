@@ -2,9 +2,11 @@
 Модели для управления прайсом и историей цен.
 """
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text, JSON
-from sqlalchemy.orm import relationship
 from datetime import datetime
+
+from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import relationship
+
 from app.models.base import Base
 
 

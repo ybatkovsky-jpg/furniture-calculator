@@ -16,7 +16,6 @@
 это делает функции удобными для тестов без импорта image_analyzer.
 """
 
-from typing import Dict, List, Optional
 
 # Ранг уверенности для тайбрейков (high > medium > low)
 CONF_RANK = {"high": 3, "medium": 2, "low": 1}
@@ -56,7 +55,7 @@ def door_count_of(modules) -> int:
     return total
 
 
-def door_counts_by_zone(modules) -> Dict[str, int]:
+def door_counts_by_zone(modules) -> dict[str, int]:
     """Число дверей по зонам {'lower', 'upper', 'penal'} (по типам модулей)."""
     counts = {"lower": 0, "upper": 0, "penal": 0}
     for m in modules or []:
@@ -136,7 +135,7 @@ def _agree(a: dict, b: dict) -> bool:
     return da == db
 
 
-def _best_of(pool: List[dict]) -> dict:
+def _best_of(pool: list[dict]) -> dict:
     """Лучшая попытка пула: максимум confidence (high>medium>low),
     тайбрейк — минимальная |sum − total|."""
 
@@ -146,7 +145,7 @@ def _best_of(pool: List[dict]) -> dict:
     return max(pool, key=lambda a: (rank(a), -_sum_delta(a)))
 
 
-def choose_attempt(attempts: List[dict]) -> dict:
+def choose_attempt(attempts: list[dict]) -> dict:
     """
     Приём решения по попыткам распознавания.
 
@@ -172,14 +171,14 @@ def choose_attempt(attempts: List[dict]) -> dict:
 
     scale_ok_pool = [a for a in filled if a.get("scale_ok")]
 
-    chosen: Optional[dict] = None
+    chosen: dict | None = None
     consensus = False
 
     if scale_ok_pool:
         pool = scale_ok_pool
         # Голосование: самая большая группа согласных scale_ok-попыток (размер ≥2)
         if len(pool) >= 2:
-            best_group: List[dict] = []
+            best_group: list[dict] = []
             for a in pool:
                 group = [b for b in pool if _agree(a, b)]
                 if len(group) >= 2 and len(group) > len(best_group):
@@ -202,7 +201,7 @@ def choose_attempt(attempts: List[dict]) -> dict:
 # FALLBACK «НЕТ РАЗМЕРОВ» — СРЕДНИЕ ОБЩЕПРИНЯТЫЕ РАЗМЕРЫ
 # ════════════════════════════════════════════════════════════════
 
-def build_standard_modules(zone_type, total_width_mm, door_count) -> List[dict]:
+def build_standard_modules(zone_type, total_width_mm, door_count) -> list[dict]:
     """
     Fallback «нет размеров»: честный средний размер, масштабированный
     на всю мебель.
@@ -217,8 +216,8 @@ def build_standard_modules(zone_type, total_width_mm, door_count) -> List[dict]:
     Возвращает список dict'ов RecognizedModule-полей: модули группируются
     по зоне, quantity = число дверей зоны.
     """
-    from app.services.scale_calc import DEFAULT_HEIGHTS
     from app.services.furniture_defaults import get_rules
+    from app.services.scale_calc import DEFAULT_HEIGHTS
 
     rules = get_rules(zone_type)
 

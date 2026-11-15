@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime
+from datetime import UTC, datetime
 
 from app.models.calculation import Calculation
 from app.services.calc_engine import CalculationResult
@@ -41,7 +41,7 @@ def apply_result(calculation: Calculation, result: CalculationResult) -> None:
     calculation.final_price_noncash = result.total_noncash
     calculation.quote = {
         "engine_version": "2.0",
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "zone_type": calculation.zone_type,
         "lines": [asdict(line) for line in result.lines],
         "warnings": result.warnings,

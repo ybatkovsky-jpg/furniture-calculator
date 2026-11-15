@@ -3,8 +3,8 @@
 """
 
 from aiogram import Router
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import Command
+from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 
 router = Router()
 

@@ -3,19 +3,19 @@
 """
 
 from app.models.base import Base
-from app.models.price import PriceItem, PriceHistory
-from app.models.glass import GlassType
-from app.models.project import Project
 from app.models.calculation import Calculation, CommercialOffer
+from app.models.glass import GlassType
+from app.models.price import PriceHistory, PriceItem
+from app.models.project import Project
 from app.models.settings import CalcSettings
 
 __all__ = [
     "Base",
-    "PriceItem",
-    "PriceHistory",
-    "GlassType",
-    "Project",
+    "CalcSettings",
     "Calculation",
     "CommercialOffer",
-    "CalcSettings",
+    "GlassType",
+    "PriceHistory",
+    "PriceItem",
+    "Project",
 ]

@@ -11,7 +11,6 @@
 ниже по умолчанию проверяют только владельца.
 """
 
-from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +26,7 @@ async def get_owned_calculation(
     user_id: int | str,
     *,
     with_project: bool = False,
-) -> Optional[Calculation]:
+) -> Calculation | None:
     """Вернуть расчёт, только если он принадлежит пользователю.
 
     `None` означает «нет такого расчёта ИЛИ он чужой» — вызывающий код
@@ -52,7 +51,7 @@ async def get_owned_project(
     session: AsyncSession,
     project_id: int,
     user_id: int | str,
-) -> Optional[Project]:
+) -> Project | None:
     """Вернуть проект, только если он принадлежит пользователю."""
     stmt = select(Project).where(
         Project.id == project_id,
@@ -62,7 +61,7 @@ async def get_owned_project(
     return result.scalar_one_or_none()
 
 
-def is_owner(project: Optional[Project], user_id: int | str) -> bool:
+def is_owner(project: Project | None, user_id: int | str) -> bool:
     """Синхронная проверка владельца уже загруженного проекта."""
     if project is None:
         return False

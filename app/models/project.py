@@ -2,9 +2,11 @@
 Модель для проектов клиентов.
 """
 
-from sqlalchemy import Column, Integer, String, DateTime, Text
-from sqlalchemy.orm import relationship
 from datetime import datetime
+
+from sqlalchemy import Column, DateTime, Integer, String, Text
+from sqlalchemy.orm import relationship
+
 from app.models.base import Base
 
 

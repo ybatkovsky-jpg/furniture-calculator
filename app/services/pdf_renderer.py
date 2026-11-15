@@ -6,7 +6,6 @@
 
 import logging
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 import fitz  # PyMuPDF
 
@@ -52,10 +51,10 @@ def render_page(
 
 def render_pages(
     pdf_path: str | Path,
-    pages: Optional[List[int]] = None,
+    pages: list[int] | None = None,
     dpi: int = 150,
     max_dimension: int = 2048,
-) -> List[Tuple[int, bytes]]:
+) -> list[tuple[int, bytes]]:
     """
     Отрендерить несколько страниц PDF в JPEG.
 
@@ -86,7 +85,7 @@ def render_pages(
             jpeg_bytes = render_page(pdf_path, page_num, dpi, max_dimension)
             results.append((page_num, jpeg_bytes))
             logger.debug(f"  Стр. {page_num + 1}: {len(jpeg_bytes) / 1024:.0f} KB")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Ошибка рендеринга стр. {page_num + 1}: {e}")
 
     doc.close()
@@ -103,9 +102,9 @@ def get_page_count(pdf_path: str | Path) -> int:
 
 def guess_key_pages(
     pdf_path: str | Path,
-    room_keywords: List[str],
+    room_keywords: list[str],
     ocr_md_text: str = "",
-) -> List[int]:
+) -> list[int]:
     """
     Найти ключевые страницы по названиям помещений из OCR.
 

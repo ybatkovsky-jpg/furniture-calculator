@@ -24,21 +24,19 @@
 - Ручки, плёнка ПВХ, столешница
 """
 
-import math
 import logging
-from typing import Dict, List, Optional, Tuple
+import math
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-from app.services.image_analyzer import RecognizedModule
 from app.services.furniture_defaults import get_rules
 from app.services.hardware_calc import (
-    hinges_per_door,                 # единое правило петель (parity с calc_engine)
-    estimate_facade_weight_kg,       # оценка веса фасада (BLUM/HETTICH + вес)
     DEFAULT_HINGE_BRAND,
+    estimate_facade_weight_kg,  # оценка веса фасада (BLUM/HETTICH + вес)
+    hinges_per_door,  # единое правило петель (parity с calc_engine)
 )
-
+from app.services.image_analyzer import RecognizedModule
 
 # ═══════════════════════════════════════════════════════════════════
 # РАЗМЕРЫ ЛИСТОВ ПО ПРОИЗВОДИТЕЛЮ
@@ -83,13 +81,13 @@ class MaterialQuantities:
     # ЛДСП
     ldsp_area_m2: float = 0
     ldsp_sheets: int = 0
-    ldsp_material: Optional[str] = None  # "EGGER однотон" / "EGGER текстура"
+    ldsp_material: str | None = None  # "EGGER однотон" / "EGGER текстура"
     ldsp_brand: str = ""                 # "EGGER" / "EXTRAVERT" / "LAMARTY"
 
     # МДФ (фасады)
     mdf_area_m2: float = 0
     mdf_sheets: int = 0
-    mdf_material: Optional[str] = None   # "EMDIWAY" / "EVOGLOSS" / "AGT" / etc.
+    mdf_material: str | None = None   # "EMDIWAY" / "EVOGLOSS" / "AGT" / etc.
 
     # Плёнка ПВХ (IVEGO)
     pvc_film_m2: float = 0              # площадь плёнки ПВХ для фасадов
@@ -111,7 +109,7 @@ class MaterialQuantities:
 
     # Фасады
     facades_area_m2: float = 0
-    facade_type: Optional[str] = None  # "ПВХ IVEGO" / "EMDIWAY" / "Лакокраска"
+    facade_type: str | None = None  # "ПВХ IVEGO" / "EMDIWAY" / "Лакокраска"
 
     # Ручки накладные
     handles_count: int = 0
@@ -159,11 +157,11 @@ class MaterialQuantities:
     hygienic_mat_count: int = 0       # гигиенический коврик/поддон
 
     # Эргономика / рекомендации
-    suggestions: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    suggestions: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
-def detect_material_properties(materials: List[str]) -> dict:
+def detect_material_properties(materials: list[str]) -> dict:
     """
     Единая точка определения свойств материала.
 
@@ -290,11 +288,11 @@ def _estimate_door_weight_kg(module, facade_count: int, mat_props: dict) -> floa
 
 
 def calculate_quantities(
-    modules: List[RecognizedModule],
+    modules: list[RecognizedModule],
     room_name: str = "",
-    materials: List[str] = None,
+    materials: list[str] | None = None,
     *,
-    zone_type: str = None,           # NEW: тип помещения из AI
+    zone_type: str | None = None,           # NEW: тип помещения из AI
     has_spec: bool = False,          # если есть spec.yaml — не автодобавлять
     # P1-02: платные автопозиции — opt-in. По умолчанию False: раньше кухня
     # молча получала 2+1 ящика, сушку, лоток, бутылочницу, GOLA и LED
@@ -562,7 +560,7 @@ def calculate_quantities(
 
     # ── УЧЁТ СМЕЖНЫХ СТЕНОК ──
     # Соседние модули одного типа и глубины делят боковину
-    adjacency_groups: Dict[str, List[RecognizedModule]] = {}
+    adjacency_groups: dict[str, list[RecognizedModule]] = {}
     for m in modules:
         key = f"{m.type}_{m.depth}"
         adjacency_groups.setdefault(key, []).append(m)
@@ -641,8 +639,7 @@ def calculate_quantities(
     q.edge_2_m  = math.ceil(q.edge_premium_m) + math.ceil(q.edge_2_m)
     q.edge_08_m = math.ceil(q.edge_visible_m)
     q.edge_04_m = math.ceil(q.edge_total_m - q.edge_visible_m - q.edge_premium_m)
-    if q.edge_04_m < 0:
-        q.edge_04_m = 0
+    q.edge_04_m = max(q.edge_04_m, 0)
 
     # Кромка МДФ: округляем
     q.edge_mdf_1mm_m = math.ceil(q.edge_mdf_1mm_m)
@@ -788,12 +785,12 @@ def calculate_quantities(
 
 
 def fill_template_for_room(
-    modules: List[RecognizedModule],
+    modules: list[RecognizedModule],
     room_name: str,
-    materials: List[str],
+    materials: list[str],
     *,
-    zone_type: str = None,
-) -> List[Tuple[str, str, str, float, float]]:
+    zone_type: str | None = None,
+) -> list[tuple[str, str, str, float, float]]:
     """
     Заполнить позиции шаблона для одного помещения.
 

@@ -19,7 +19,6 @@
 Штанги: круглая D25, прямоугольная антискользящая
 """
 
-from typing import Dict, List, Optional
 from dataclasses import dataclass
 
 
@@ -30,7 +29,7 @@ class HardwareCalculation:
     drawers_total: int = 0
     handles_total: int = 0
     total_cost: float = 0
-    breakdown: Dict[str, Dict] = None  # {"hinges": {...}, "drawers": {...}, "handles": {...}}
+    breakdown: dict[str, dict] = None  # {"hinges": {...}, "drawers": {...}, "handles": {...}}
 
     def __post_init__(self):
         if self.breakdown is None:
@@ -46,7 +45,7 @@ class HardwareCalculation:
 #   ≥2000 → 4; 901..1999 → 3; ≤900 → 2.
 # BLUM/HETTICH — высотная таблица (используется, когда вес фасада неизвестен):
 #   >1600 → 5; 1200..1600 → 4; 900..1200 → 3; <900 → 2.
-HINGE_RULES_BY_BRAND: Dict[str, tuple] = {
+HINGE_RULES_BY_BRAND: dict[str, tuple] = {
     "FIRMAX": ((2000, 4), (901, 3), (0, 2)),
     "BLUM": ((1601, 5), (1200, 4), (900, 3), (0, 2)),
     "HETTICH": ((1601, 5), (1200, 4), (900, 3), (0, 2)),
@@ -70,7 +69,7 @@ DEFAULT_HINGE_BRAND = "FIRMAX"
 #   900–1600 мм: 3–4 базовых → +1, если >20 кг
 #   >1600 мм:   5 базовых → 6, если >20 кг
 # FIRMAX — «правила заказчика»: только по высоте, вес НЕ учитывается никогда.
-HINGE_WEIGHT_RULES_BY_BRAND: Dict[str, tuple] = {
+HINGE_WEIGHT_RULES_BY_BRAND: dict[str, tuple] = {
     "FIRMAX": (),
     "BLUM": ((900, 20.0), (0, 18.0)),
     "HETTICH": ((900, 20.0), (0, 18.0)),
@@ -80,7 +79,7 @@ HINGE_WEIGHT_RULES_BY_BRAND: Dict[str, tuple] = {
 def hinges_per_door(
     door_height_mm: float,
     brand: str = DEFAULT_HINGE_BRAND,
-    door_weight_kg: float = None,
+    door_weight_kg: float | None = None,
 ) -> int:
     """Сколько петель ставить на ОДНУ дверь высотой door_height_mm.
 
@@ -131,7 +130,7 @@ def _heavy_facade_bonus(door_height_mm: float, door_weight_kg: float, brand_key:
 # Источник: справочные плотности плит/материалов:
 #   ЛДСП ~680–700 кг/м³, МДФ ~750–800 кг/м³, стекло ~2500 кг/м³.
 # Берём середину диапазона: ЛДСП 700, МДФ 780, стекло 2500.
-FACADE_MATERIAL_DENSITY_KG_M3: Dict[str, float] = {
+FACADE_MATERIAL_DENSITY_KG_M3: dict[str, float] = {
     "ldsp": 700.0,    # ЛДСП (в т.ч. ПВХ-фасады на ЛДСП)
     "mdf": 780.0,     # МДФ (в т.ч. крашеный/EMDIWAY)
     "glass": 2500.0,  # стекло
@@ -140,7 +139,7 @@ FACADE_MATERIAL_DENSITY_KG_M3: Dict[str, float] = {
 # Типовая толщина фасада (мм) по материалу — используется ТОЛЬКО для оценки
 # веса, когда точная толщина фасада не вводится в смете. Реальные фасады:
 # ЛДСП-фасады 16мм, МДФ-фасады 18мм, стекло 4мм (в раме может быть толще).
-FACADE_DEFAULT_THICKNESS_MM: Dict[str, float] = {
+FACADE_DEFAULT_THICKNESS_MM: dict[str, float] = {
     "ldsp": 16.0,
     "mdf": 18.0,
     "glass": 4.0,
@@ -175,9 +174,9 @@ def _facade_material_key(material: str) -> str:
 def estimate_facade_weight_kg(
     width_mm: float,
     height_mm: float,
-    thickness_mm: float = None,
-    density_kg_m3: float = None,
-    material: str = None,
+    thickness_mm: float | None = None,
+    density_kg_m3: float | None = None,
+    material: str | None = None,
 ) -> float:
     """Оценка веса ОДНОГО фасада (кг) по габаритам и материалу.
 
@@ -219,10 +218,10 @@ def estimate_facade_weight_kg(
 
 
 def calculate_hinges_for_modules(
-    modules: List[Dict],
+    modules: list[dict],
     hinge_price: float = 0,
     brand: str = DEFAULT_HINGE_BRAND
-) -> Dict:
+) -> dict:
     """
     Расчёт петель для модулей с фасадами.
 
@@ -279,9 +278,9 @@ def calculate_hinges_for_modules(
 
 
 def calculate_drawers_for_modules(
-    modules: List[Dict],
-    drawer_prices: Optional[Dict[str, float]] = None
-) -> Dict:
+    modules: list[dict],
+    drawer_prices: dict[str, float] | None = None
+) -> dict:
     """
     Расчёт ящиков для модулей.
 
@@ -345,9 +344,9 @@ def calculate_drawers_for_modules(
 
 
 def calculate_hardware_for_modules(
-    modules: List[Dict],
+    modules: list[dict],
     hinge_price: float = 0,
-    drawer_prices: Optional[Dict[str, float]] = None,
+    drawer_prices: dict[str, float] | None = None,
     hinge_brand: str = DEFAULT_HINGE_BRAND
 ) -> HardwareCalculation:
     """
@@ -393,7 +392,7 @@ def calculate_lifts(
     upper_module_count: int,
     lift_type: str = "dtc_top_stay",
     has_glass_facades: bool = False,
-) -> Dict:
+) -> dict:
     """
     Рассчитать подъёмники для верхних баз.
 
@@ -443,8 +442,8 @@ ROD_PRICES = {
 
 
 def calculate_rods(
-    modules: List[Dict],
-) -> Dict:
+    modules: list[dict],
+) -> dict:
     """
     Рассчитать штанги для гардеробных и пеналов.
 

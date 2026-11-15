@@ -18,12 +18,12 @@ GLM-OCR (Z.ai) — специализированная OCR-модель (0.9B �
     # result.materials — все найденные материалы
 """
 
-import re
-import logging
 import base64
-from typing import Dict, List, Optional, Any
-from pathlib import Path
+import logging
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, ClassVar
 
 import httpx
 
@@ -42,9 +42,9 @@ class ParsedRoom:
     name: str = ""                          # "Кухня", "Шкаф в прихожей"
     page: int = 0
     description: str = ""                   # текстовое описание
-    dimensions: List[str] = field(default_factory=list)   # ["600×560×840", "3000×600"]
-    materials: List[str] = field(default_factory=list)    # ["EGGER H1379", "МДФ"]
-    notes: List[str] = field(default_factory=list)        # примечания
+    dimensions: list[str] = field(default_factory=list)   # ["600×560×840", "3000×600"]
+    materials: list[str] = field(default_factory=list)    # ["EGGER H1379", "МДФ"]
+    notes: list[str] = field(default_factory=list)        # примечания
     raw_text: str = ""
 
 
@@ -53,18 +53,18 @@ class ParsedTable:
     """Распознанная таблица."""
     page: int = 0
     caption: str = ""
-    headers: List[str] = field(default_factory=list)
-    rows: List[List[str]] = field(default_factory=list)
+    headers: list[str] = field(default_factory=list)
+    rows: list[list[str]] = field(default_factory=list)
 
 
 @dataclass
 class ParsedSpec:
     """Одна спецификация (модуль мебели с размерами)."""
     name: str = ""
-    width_mm: Optional[int] = None
-    depth_mm: Optional[int] = None
-    height_mm: Optional[int] = None
-    material: Optional[str] = None
+    width_mm: int | None = None
+    depth_mm: int | None = None
+    height_mm: int | None = None
+    material: str | None = None
     quantity: int = 1
     room: str = ""
     raw_line: str = ""
@@ -74,13 +74,13 @@ class ParsedSpec:
 class PDFParseResult:
     """Результат парсинга PDF через GLM-OCR."""
     success: bool = False
-    rooms: List[ParsedRoom] = field(default_factory=list)
-    specifications: List[ParsedSpec] = field(default_factory=list)
-    tables: List[ParsedTable] = field(default_factory=list)
-    materials: List[str] = field(default_factory=list)
-    dimensions_found: List[str] = field(default_factory=list)
+    rooms: list[ParsedRoom] = field(default_factory=list)
+    specifications: list[ParsedSpec] = field(default_factory=list)
+    tables: list[ParsedTable] = field(default_factory=list)
+    materials: list[str] = field(default_factory=list)
+    dimensions_found: list[str] = field(default_factory=list)
     pages_processed: int = 0
-    error: Optional[str] = None
+    error: str | None = None
 
 
 # ================================================================
@@ -97,7 +97,7 @@ class GLMOCRParser:
     API_URL = "https://api.z.ai/api/paas/v4/layout_parsing"
 
     # Ключевые слова материалов для поиска
-    MATERIAL_KEYWORDS = [
+    MATERIAL_KEYWORDS: ClassVar[list[str]] = [
         "EGGER", "LAMARTY", "EXTRAVERT", "EMDIWAY", "ТОМЛЕСДРЕВ",
         "ЛДСП", "МДФ", "ХДФ", "ДСП", "шпон", "акрил", "пластик",
         "BLUM", "BOYARD", "HETTICH", "FIRMAX", "TANDEMBOX", "LEGRABOX",
@@ -106,7 +106,7 @@ class GLMOCRParser:
 
     def __init__(self):
         self.api_key = settings.zai_api_key or settings.openrouter_api_key
-        self.client: Optional[httpx.AsyncClient] = None
+        self.client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self.client is None:
@@ -151,7 +151,7 @@ class GLMOCRParser:
         except httpx.HTTPStatusError as e:
             logger.error(f"GLM-OCR HTTP {e.response.status_code}")
             return PDFParseResult(success=False, error=f"HTTP {e.response.status_code}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"GLM-OCR error: {e}")
             return PDFParseResult(success=False, error=str(e))
 
@@ -180,7 +180,7 @@ class GLMOCRParser:
             response.raise_for_status()
             return self._parse_response(response.json(), path.name)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"GLM-OCR image error: {e}")
             return PDFParseResult(success=False, error=str(e))
 
@@ -188,7 +188,7 @@ class GLMOCRParser:
     # ПАРСИНГ ОТВЕТА
     # -----------------------------------------------------------
 
-    def _parse_response(self, data: Dict[str, Any], source_name: str) -> PDFParseResult:
+    def _parse_response(self, data: dict[str, Any], source_name: str) -> PDFParseResult:
         """Главный парсер ответа GLM-OCR."""
         result = PDFParseResult()
 
@@ -229,7 +229,7 @@ class GLMOCRParser:
     # ПАРСИНГ СЕКЦИЙ (ПОМЕЩЕНИЙ)
     # -----------------------------------------------------------
 
-    def _parse_room_sections(self, md: str) -> List[ParsedRoom]:
+    def _parse_room_sections(self, md: str) -> list[ParsedRoom]:
         """
         Разбить Markdown на секции по заголовкам ##.
         Каждый ## — это новое помещение.
@@ -280,7 +280,7 @@ class GLMOCRParser:
     # ПАРСИНГ HTML-ТАБЛИЦ
     # -----------------------------------------------------------
 
-    def _parse_html_tables(self, md: str) -> List[ParsedTable]:
+    def _parse_html_tables(self, md: str) -> list[ParsedTable]:
         """
         Извлечь HTML-таблицы из Markdown.
         GLM-OCR возвращает таблицы в формате <table border="1">...</table>.
@@ -332,8 +332,8 @@ class GLMOCRParser:
     # -----------------------------------------------------------
 
     def _parse_specifications(
-        self, md: str, rooms: List[ParsedRoom]
-    ) -> List[ParsedSpec]:
+        self, md: str, rooms: list[ParsedRoom]
+    ) -> list[ParsedSpec]:
         """Извлечь спецификации модулей с размерами."""
         specs = []
         clean_text = re.sub(r'<[^>]+>', '', md)  # убираем HTML
@@ -409,7 +409,7 @@ class GLMOCRParser:
                 return name
         return "Модуль"
 
-    def _find_room_for_line(self, line: str, rooms: List[ParsedRoom]) -> str:
+    def _find_room_for_line(self, line: str, rooms: list[ParsedRoom]) -> str:
         """Определить, к какому помещению относится строка (эвристика)."""
         # Ищем упоминание комнаты в самой строке
         room_keywords = {
@@ -429,7 +429,7 @@ class GLMOCRParser:
     # ИЗВЛЕЧЕНИЕ РАЗМЕРОВ
     # -----------------------------------------------------------
 
-    def _extract_all_dimensions(self, md: str) -> List[str]:
+    def _extract_all_dimensions(self, md: str) -> list[str]:
         """Извлечь все размеры из Markdown."""
         clean = re.sub(r'<[^>]+>', '', md)
         patterns = [
@@ -443,7 +443,7 @@ class GLMOCRParser:
         # Уникальные, сохраняя порядок
         return list(dict.fromkeys(found))
 
-    def _extract_dimensions_from_text(self, text: str) -> List[str]:
+    def _extract_dimensions_from_text(self, text: str) -> list[str]:
         """Извлечь размеры из текстового блока."""
         return self._extract_all_dimensions(text)
 
@@ -451,11 +451,11 @@ class GLMOCRParser:
     # ИЗВЛЕЧЕНИЕ МАТЕРИАЛОВ
     # -----------------------------------------------------------
 
-    def _extract_all_materials(self, md: str) -> List[str]:
+    def _extract_all_materials(self, md: str) -> list[str]:
         """Извлечь все упоминания материалов."""
         return self._extract_materials_from_text(md)
 
-    def _extract_materials_from_text(self, text: str) -> List[str]:
+    def _extract_materials_from_text(self, text: str) -> list[str]:
         """Извлечь материалы из текста."""
         found = set()
         text_upper = text.upper()
@@ -469,7 +469,7 @@ class GLMOCRParser:
                     found.add(snippet if len(snippet) < 40 else kw)
         return sorted(found)
 
-    def _find_material(self, line: str) -> Optional[str]:
+    def _find_material(self, line: str) -> str | None:
         """Найти материал в одной строке."""
         materials = self._extract_materials_from_text(line)
         return materials[0] if materials else None
@@ -478,7 +478,7 @@ class GLMOCRParser:
     # ПРИМЕЧАНИЯ
     # -----------------------------------------------------------
 
-    def _extract_notes(self, text: str) -> List[str]:
+    def _extract_notes(self, text: str) -> list[str]:
         """Извлечь примечания (нумерованные списки, требования)."""
         notes = []
         # Нумерованные пункты: "1. ", "2. ", ...
@@ -498,7 +498,7 @@ class GLMOCRParser:
 # ГЛОБАЛЬНЫЙ ЭКЗЕМПЛЯР
 # ================================================================
 
-_ocr_parser: Optional[GLMOCRParser] = None
+_ocr_parser: GLMOCRParser | None = None
 
 
 def get_ocr_parser() -> GLMOCRParser:

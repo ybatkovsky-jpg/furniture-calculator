@@ -5,7 +5,6 @@
 Код quantity_calc не нужно править — он читает правила отсюда.
 """
 
-from typing import Dict, Optional
 from dataclasses import dataclass
 
 
@@ -59,7 +58,7 @@ class FurnitureRules:
 # ТАБЛИЦА СТАНДАРТОВ ПО ТИПАМ ПОМЕЩЕНИЙ
 # ═══════════════════════════════════════════════════════════════════
 
-FURNITURE_DEFAULTS: Dict[str, FurnitureRules] = {
+FURNITURE_DEFAULTS: dict[str, FurnitureRules] = {
     # ── Кухня ──
     "Кухня": FurnitureRules(
         default_depth_lower=560, default_depth_upper=320,
@@ -198,13 +197,13 @@ MODULE_TYPES = {
 }
 
 
-def get_rules(zone_type: Optional[str]) -> FurnitureRules:
+def get_rules(zone_type: str | None) -> FurnitureRules:
     """Получить правила расчёта для типа помещения."""
     if not zone_type:
         return FurnitureRules()
     return FURNITURE_DEFAULTS.get(zone_type, FurnitureRules())
 
 
-def get_family(zone_type: Optional[str]) -> str:
+def get_family(zone_type: str | None) -> str:
     """Получить семейство помещения (kitchen/wardrobe/living/open/...)."""
     return get_rules(zone_type).family

@@ -2,8 +2,10 @@
 Модель для типов стекла и их характеристик.
 """
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, JSON
 from datetime import datetime
+
+from sqlalchemy import JSON, Column, DateTime, Float, Integer, String
+
 from app.models.base import Base
 
 

@@ -2,7 +2,9 @@
 Обработчик генерации и отправки коммерческих предложений (КП).
 """
 
-from aiogram import Router, F
+import logging
+
+from aiogram import F, Router
 from aiogram.types import CallbackQuery, FSInputFile
 from sqlalchemy import select
 
@@ -11,6 +13,8 @@ from app.models.calculation import Calculation, CommercialOffer
 from app.models.project import Project
 from app.services.access import get_owned_calculation
 from app.services.kp_generator import kp_generator
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -94,7 +98,7 @@ async def download_kp(callback: CallbackQuery):
                 )
 
                 # Показать кнопки для дальнейших действий
-                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
                 keyboard = InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="📤 Отправить клиенту", callback_data=f"send_kp:{kp_record.id}")],
                     [InlineKeyboardButton(text="🔄 Создать вариант", callback_data=f"create_variant:{calculation.id}")],
@@ -107,15 +111,13 @@ async def download_kp(callback: CallbackQuery):
                 )
 
             except Exception as e:
-                await status_message.edit_text(f"❌ Ошибка при генерации PDF: {str(e)}")
-                # Можно добавить логирование ошибки
-                import logging
-                logging.error(f"PDF generation error: {e}", exc_info=True)
+                await status_message.edit_text(f"❌ Ошибка при генерации PDF: {e!s}")
+                logger.exception("Ошибка генерации PDF")
 
     except ValueError:
         await callback.message.answer("❌ Ошибка: некорректный ID расчёта.")
-    except Exception as e:
-        await callback.message.answer(f"❌ Произошла ошибка: {str(e)}")
+    except Exception as e:  # noqa: BLE001
+        await callback.message.answer(f"❌ Произошла ошибка: {e!s}")
 
     await callback.answer()
 

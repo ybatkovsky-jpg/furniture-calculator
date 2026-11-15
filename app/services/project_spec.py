@@ -8,9 +8,8 @@
 """
 
 import logging
-from pathlib import Path
-from typing import List, Optional
 from dataclasses import dataclass, field
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +37,14 @@ class ProjectSpec:
     """Загруженная спецификация проекта."""
     project_name: str = ""
     project_address: str = ""
-    items: List[SpecItem] = field(default_factory=list)
+    items: list[SpecItem] = field(default_factory=list)
 
     @property
     def total_items(self) -> int:
         return len(self.items)
 
 
-def load_project_spec(spec_path: str | Path) -> Optional[ProjectSpec]:
+def load_project_spec(spec_path: str | Path) -> ProjectSpec | None:
     """
     Загрузить спецификацию проекта из YAML.
 
@@ -67,7 +66,7 @@ def load_project_spec(spec_path: str | Path) -> Optional[ProjectSpec]:
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.error(f"Ошибка чтения YAML: {e}")
         return None
 
@@ -269,7 +268,7 @@ def _parse_section(spec: ProjectSpec, data: dict, room: str):
 
 
 def apply_spec_to_quantities(
-    spec: Optional[ProjectSpec],
+    spec: ProjectSpec | None,
     materials_qty,  # MaterialQuantities
     room_name: str = "",
     applied_items: set | None = None,
@@ -299,9 +298,10 @@ def apply_spec_to_quantities(
         notes_lower = (item.notes or "").lower()
 
         # Фильтр по комнате: применяем только если комната совпадает
-        if "кухн" in notes_lower or "kitchen" in notes_lower or "остров" in notes_lower:
-            if not is_kitchen:
-                continue
+        if (
+            "кухн" in notes_lower or "kitchen" in notes_lower or "остров" in notes_lower
+        ) and not is_kitchen:
+            continue
 
         # Применяем к quantities — ВСЕГДА добавляем, оператор явно указал
         if "петли" in item.name.lower() and "холодильник" in item.name.lower():
@@ -396,7 +396,7 @@ def apply_spec_to_quantities(
     return added
 
 
-def print_spec_summary(spec: Optional[ProjectSpec]):
+def print_spec_summary(spec: ProjectSpec | None):
     """Вывести сводку загруженной спецификации."""
     if spec is None or not spec.items:
         print("📋 Спецификация проекта: НЕ ЗАГРУЖЕНА")

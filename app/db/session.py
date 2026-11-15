@@ -2,10 +2,12 @@
 Конфигурация SQLAlchemy сессий для асинхронной работы с БД.
 """
 
+from collections.abc import AsyncGenerator
+
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 from app.config import settings
-from typing import AsyncGenerator
 
 # Создаём асинхронный движок SQLite
 engine = create_async_engine(

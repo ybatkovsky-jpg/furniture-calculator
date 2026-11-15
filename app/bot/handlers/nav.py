@@ -20,7 +20,9 @@ from sqlalchemy.orm import selectinload
 from app.bot.handlers.calculation import show_estimate
 from app.config import settings
 from app.db.session import get_session
+from app.domain.catalog import build_catalog
 from app.models.calculation import Calculation
+from app.models.price import PriceItem
 from app.models.project import Project
 from app.services.access import get_owned_calculation
 from app.services.calc_engine import calculate_full_cost
@@ -227,7 +229,13 @@ async def show_settings(message: Message):
     """«Настройки»: показать действующие коэффициенты и компанию."""
     async for session in get_session():
         policy = await load_default_policy(session)
+        result = await session.execute(
+            select(PriceItem).where(PriceItem.is_active == 1)
+        )
+        catalog = build_catalog(result.scalars().all())
         break
+    counts = catalog.counts()
+    kinds = ", ".join(f"{kind}: {count}" for kind, count in sorted(counts.items()))
     await message.answer(
         "⚙️ Действующие коэффициенты:\n"
         f"• изготовление: {policy.manufacturing_rate:.2f}\n"
@@ -239,5 +247,6 @@ async def show_settings(message: Message):
         f"• замер: {policy.measurement_fee:.0f} ₽\n"
         f"• доставка: {policy.delivery_fee:.0f} ₽\n"
         f"• безнал: ×{policy.noncash_markup:.2f}\n\n"
+        f"Каталог (активные позиции): {kinds}\n\n"
         f"Компания: {settings.company_name}, {settings.company_phone}"
     )

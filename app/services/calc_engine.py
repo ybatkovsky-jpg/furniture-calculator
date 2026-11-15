@@ -18,6 +18,7 @@ import re
 
 from app.domain.bom import ModuleBOM, build_bom
 from app.domain.cost_lines import CostLine, build_cost_lines
+from app.domain.nesting import NestingResult, nest_bom
 from app.services.cost_calc import calculate_cost, CostBreakdown, DiscountInfo
 from app.services.sheet_calc import SheetCalculation
 from app.services.edge_calc import EdgeCalculation
@@ -48,8 +49,9 @@ class CalculationResult:
     missing_prices: List[str] = field(default_factory=list)
     can_issue_kp: bool = True
 
-    # S5-01: деталировка до отдельной детали (сохраняется в quote)
+    # S5-01/S5-03: деталировка и заготовка раскроя (сохраняются в quote)
     bom: List[ModuleBOM] = field(default_factory=list)
+    nesting: Optional[NestingResult] = None
 
     # Количества прочих позиций из quantity_calc (для показа в смете)
     hdf_sheets: int = 0
@@ -177,6 +179,16 @@ def calculate_full_cost(
     result.missing_prices = list(lines_result.missing)
     result.can_issue_kp = lines_result.can_issue_kp
     result.bom = build_bom(modules)
+    # S5-03: раскрой по габариту листа выбранного бренда ЛДСП.
+    from app.services.quantity_calc import SHEET_LDSP_BY_BRAND
+
+    ldsp_sheet = SHEET_LDSP_BY_BRAND.get(
+        quantities.ldsp_brand, SHEET_LDSP_BY_BRAND["default"]
+    )
+    result.nesting = nest_bom(
+        result.bom,
+        sheet_sizes={"ЛДСП": (ldsp_sheet["width_mm"], ldsp_sheet["height_mm"])},
+    )
     # P1-17: тип фасада не выбран — КП не выпускаем до явного выбора.
     if any("Тип фасада не выбран" in warning for warning in quantities.warnings):
         result.can_issue_kp = False

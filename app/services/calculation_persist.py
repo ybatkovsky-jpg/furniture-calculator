@@ -48,6 +48,7 @@ def apply_result(calculation: Calculation, result: CalculationResult) -> None:
         "missing_prices": result.missing_prices,
         "can_issue_kp": result.can_issue_kp,
         "bom": [asdict(module_bom) for module_bom in result.bom],
+        "nesting": asdict(result.nesting) if result.nesting else None,
         "cost_price": breakdown.cost_price,
         "discount_amount": breakdown.discount_amount,
         "total_base_cash": breakdown.total_base_cash,

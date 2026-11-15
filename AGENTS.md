@@ -203,7 +203,8 @@ confidence по доминированию над вторым. Проверен
   видит итог без пересчёта; формулы в Excel больше не живут.
 - **S5-04**: подготовлен путь PostgreSQL — `docker-compose.postgres.yml`,
   `app/db/urls.py` (asyncpg → psycopg для Alembic), `docs/postgres.md`,
-  драйверы в requirements. **Не проверено:** Docker-демон выключен,
+  драйверы в requirements. **Не проверено:** 2026-11-15 Docker Desktop запущен,
+  но движок отвечает `500` на `/version`; контейнер PostgreSQL не поднят,
   миграции/тесты на PostgreSQL не прогонялись.
 - **Осталось:** поднять PostgreSQL и пройти чек-лист `docs/postgres.md`
   (миграции, перенос данных, нагрузка, роли/бэкап) — без этого S5-04 не закрыт.

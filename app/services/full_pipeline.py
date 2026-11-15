@@ -274,28 +274,32 @@ class FullPipeline:
             # 1. Расчёт оценки качества
             _calculate_quality(room)
 
-            # 2. Кросс-валидация: сравниваем OCR-размеры и Vision-модули
+            # 2. Кросс-валидация: ширины модулей должны встречаться в OCR-размерах.
+            # P2-04: раньше сравнивали ЧИСЛО размерных линий с числом модулей —
+            # сравнение ничего не значило и давало ложные флаги.
             if room.modules:
                 ocr_room = self._find_room_for_page(ocr_result, room.page - 1)
                 if ocr_room and ocr_room.dimensions:
-                    ocr_dim_count = len(ocr_room.dimensions)
-                    vision_mod_count = len(room.modules)
-                    diff = abs(ocr_dim_count - vision_mod_count)
+                    import re
 
-                    if diff >= 3:
-                        room.quality_score = max(0, room.quality_score - 0.2)
+                    ocr_numbers = {
+                        int(value)
+                        for dim in ocr_room.dimensions
+                        for value in re.findall(r"\d{2,4}", str(dim))
+                    }
+                    unmatched = [
+                        m for m in room.modules
+                        if m.width and not any(abs(m.width - n) <= 5 for n in ocr_numbers)
+                    ]
+                    if unmatched:
+                        penalty = min(0.3, 0.1 * len(unmatched))
+                        room.quality_score = max(0.0, room.quality_score - penalty)
                         room.quality_flags.append(
-                            f"⚠ Расхождение OCR/Vision: OCR={ocr_dim_count} размеров, "
-                            f"Vision={vision_mod_count} модулей"
+                            f"⚠ OCR не подтверждает ширину {len(unmatched)} модулей"
                         )
                         logger.warning(
-                            f"{room.room_name}: OCR={ocr_dim_count} размеров, "
-                            f"Vision={vision_mod_count} модулей — проверьте!"
-                        )
-                    elif diff >= 1:
-                        room.quality_score = max(0, room.quality_score - 0.1)
-                        room.quality_flags.append(
-                            f"Небольшое расхождение OCR/Vision: OCR={ocr_dim_count}, Vision={vision_mod_count}"
+                            "%s: OCR-размеры не подтверждают ширину %d модулей",
+                            room.room_name, len(unmatched),
                         )
 
         # Сводка качества

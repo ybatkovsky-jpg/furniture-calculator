@@ -74,6 +74,61 @@ def test_db_price_matches_keywords_and_unit():
     assert _find_db_price(prices, ["EGGER 0,8*19"], "листов") is None
 
 
+def test_unfilled_item_goes_to_proche_with_price():
+    """P1-18: ненайденная строка с ценой в прайсе попадает в «ПРОЧЕЕ»."""
+    from openpyxl import load_workbook
+    from app.services.template_filler import _append_unfilled_rows, _find_row_by_label
+
+    wb = load_workbook(ROOT / "templates" / "Таблица для расчетов пустая.xlsx")
+    ws = wb["Рассчет"]
+    prices = [{"name": "Столешница ЛДСП", "category": "Столешницы", "price": 3000, "unit": "м"}]
+    items = [{
+        "room": "Кухня",
+        "material": "Столешница",
+        "expected_value": "5 м",
+        "field": "countertop_length_m",
+        "keywords": ["Столешница"],
+    }]
+    added = _append_unfilled_rows(ws, items, prices)
+
+    assert len(added) == 1 and items[0]["added_to_extra"] is True
+    cost_row = _find_row_by_label(ws, "СЕБЕСТОИМОСТЬ")
+    header_row = next(
+        r for r in range(1, ws.max_row + 1)
+        if str(ws.cell(r, 1).value or "").startswith("ПРОЧЕЕ")
+    )
+    item_row = header_row + 1
+    # Новая строка вошла в диапазон себестоимости.
+    formula = ws.cell(cost_row, 5).value
+    end_row = int(formula.rsplit("F", 1)[1].rstrip(")"))
+    assert item_row <= end_row
+    # И цена/количество записаны.
+    assert ws.cell(item_row, 4).value == 3000
+    assert ws.cell(item_row, 5).value == 5
+
+    # Финансовая секция после вставки пересобирается и не ломается.
+    from app.services.pricing_policy import PricingPolicy
+    from app.services.template_filler import _apply_pricing_policy
+
+    assert _apply_pricing_policy(ws, PricingPolicy.from_config()) is True
+    # «ИЗГОТОВЛЕНИЕ» идёт сразу после «СЕБЕСТОИМОСТЬ».
+    assert f"E{cost_row}" in ws.cell(cost_row + 1, 5).value
+
+
+def test_unfilled_without_price_stays_in_problems():
+    from openpyxl import load_workbook
+    from app.services.template_filler import _append_unfilled_rows
+
+    wb = load_workbook(ROOT / "templates" / "Таблица для расчетов пустая.xlsx")
+    ws = wb["Рассчет"]
+    items = [{
+        "room": "Кухня", "material": "Неизвестно",
+        "expected_value": "1 шт", "keywords": ["неизвестно"],
+    }]
+    assert _append_unfilled_rows(ws, items, []) == []
+    assert "added_to_extra" not in items[0]
+
+
 def test_mapping_does_not_share_edge_mdf_field():
     """Шесть строк шаблона больше не используют одно поле."""
     data = json.loads((ROOT / "templates" / "row_mapping.json").read_text(encoding="utf-8"))

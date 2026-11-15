@@ -373,6 +373,7 @@ def fill_template_from_pipeline(
         # P0-06/P2-17: одно поле — не более одной строки; одна строка — не более
         # одного значения. Иначе дубли маппинга писали объём в 5 строк.
         filled_rows = []
+        room_unfilled: list[dict] = []
         written_fields: set[str] = set()
         written_row_numbers: set[int] = set()
         for keywords, field, unit, multiplier in ROW_MAPPING:
@@ -411,16 +412,27 @@ def fill_template_from_pipeline(
                         f"{final_value} {unit}"
                     )
                 else:
-                    # Строка не найдена — собираем для отчёта
-                    unfilled_items.append({
+                    # Строка не найдена — попробуем добавить в «ПРОЧЕЕ» с
+                    # ценой из прайса (P1-18), иначе оставим в «Проблемах».
+                    room_unfilled.append({
                         "room": sheet_name,
                         "material": " + ".join(keywords[:2]),
                         "expected_value": f"{value * multiplier} {unit}",
                         "field": field,
+                        "keywords": list(keywords),
                     })
                     logger.debug(
                         f"  {sheet_name}: ⚠ не найдена строка для {keywords}"
                     )
+
+        added_extra = _append_unfilled_rows(new_ws, room_unfilled, db_prices)
+        if added_extra:
+            logger.info(
+                "  %s: %d ненайденных позиций добавлены в «ПРОЧЕЕ»",
+                sheet_name,
+                len(added_extra),
+            )
+        unfilled_items.extend(room_unfilled)
 
         logger.info(
             f"✅ {sheet_name}: заполнено {len(filled_rows)} строк, "
@@ -717,7 +729,12 @@ def _add_problems_sheet(wb: Workbook, unfilled_items: list):
         ws.cell(row=i, column=1, value=item["room"])
         ws.cell(row=i, column=2, value=item["material"])
         ws.cell(row=i, column=3, value=item["expected_value"])
-        ws.cell(row=i, column=4, value="Внести вручную или добавить строку в шаблон")
+        action = (
+            "Добавлено в блок «ПРОЧЕЕ» (цена из прайса)"
+            if item.get("added_to_extra")
+            else "Цена не найдена — внести вручную"
+        )
+        ws.cell(row=i, column=4, value=action)
 
         for col in range(1, 5):
             ws.cell(row=i, column=col).fill = warn_fill
@@ -868,6 +885,71 @@ def _find_db_price(prices: list[dict], keywords: list[str], unit: str) -> Option
             continue
         return item["price"]
     return None
+
+
+def _parse_expected_quantity(text: str) -> tuple[float, str]:
+    """«5 м²» → (5.0, "м²"); «18 шт» → (18.0, "шт")."""
+    import re
+
+    match = re.match(r"\s*([\d]+(?:[.,]\d+)?)\s*(.*)$", str(text or ""))
+    if not match:
+        return 0.0, ""
+    try:
+        value = float(match.group(1).replace(",", "."))
+    except ValueError:
+        return 0.0, ""
+    return value, match.group(2).strip()
+
+
+def _append_unfilled_rows(ws, items: list[dict], db_prices: list[dict]) -> list[dict]:
+    """P1-18: ненайденные строки → блок «ПРОЧЕЕ» с ценой из прайса.
+
+    Блок вставляется ПЕРЕД финансовой секцией, поэтому попадает в
+    `СЕБЕСТОИМОСТЬ` и дальше во все коэффициенты. Позиции без цены в прайсе
+    остаются в листе «⚠ Проблемы».
+    """
+    priced = []
+    for item in items:
+        quantity, unit = _parse_expected_quantity(item.get("expected_value", ""))
+        if quantity <= 0:
+            continue
+        price = _find_db_price(db_prices, item.get("keywords", []), unit)
+        if price is None:
+            continue
+        priced.append((item, quantity, unit, price))
+
+    if not priced:
+        return []
+
+    summary_row = None
+    for row in range(1, min(ws.max_row, 500) + 1):
+        value = str(ws.cell(row=row, column=1).value or "").strip().upper()
+        if value.startswith("РАСЧЁТ СТОИМОСТИ"):
+            summary_row = row
+            break
+    if summary_row is None:
+        return []
+
+    # Вставляем ПЕРЕД заголовком «РАСЧЁТ СТОИМОСТИ». Если вставить ровно в
+    # строку заголовка, openpyxl сдвинет его merge (A:F) на вставленные строки,
+    # и ячейки D/E окажутся MergedCell.
+    insert_at = summary_row - 1
+    ws.insert_rows(insert_at, amount=len(priced) + 1)
+    ws.cell(insert_at, 1).value = "ПРОЧЕЕ (позиции из прайса)"
+    added: list[dict] = []
+    for offset, (item, quantity, _unit, price) in enumerate(priced, start=1):
+        row = insert_at + offset
+        ws.cell(row=row, column=1).value = item.get("material", "Прочее")
+        ws.cell(row=row, column=4).value = price
+        ws.cell(row=row, column=5).value = quantity
+        ws.cell(row=row, column=6).value = f"=D{row}*E{row}"
+        item["added_to_extra"] = True
+        added.append(item)
+
+    cost_row = _find_row_by_label(ws, "СЕБЕСТОИМОСТЬ")
+    if cost_row:
+        ws.cell(cost_row, 5).value = f"=SUM(F3:F{cost_row - 1})"
+    return added
 
 
 def _find_row_by_label(ws, label: str, start: int = 1) -> Optional[int]:

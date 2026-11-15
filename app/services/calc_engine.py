@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 import logging
 import re
 
+from app.domain.bom import ModuleBOM, build_bom
 from app.domain.cost_lines import CostLine, build_cost_lines
 from app.services.cost_calc import calculate_cost, CostBreakdown, DiscountInfo
 from app.services.sheet_calc import SheetCalculation
@@ -46,6 +47,9 @@ class CalculationResult:
     warnings: List[str] = field(default_factory=list)
     missing_prices: List[str] = field(default_factory=list)
     can_issue_kp: bool = True
+
+    # S5-01: деталировка до отдельной детали (сохраняется в quote)
+    bom: List[ModuleBOM] = field(default_factory=list)
 
     # Количества прочих позиций из quantity_calc (для показа в смете)
     hdf_sheets: int = 0
@@ -172,6 +176,7 @@ def calculate_full_cost(
     result.warnings = list(quantities.warnings) + list(lines_result.warnings)
     result.missing_prices = list(lines_result.missing)
     result.can_issue_kp = lines_result.can_issue_kp
+    result.bom = build_bom(modules)
     # P1-17: тип фасада не выбран — КП не выпускаем до явного выбора.
     if any("Тип фасада не выбран" in warning for warning in quantities.warnings):
         result.can_issue_kp = False

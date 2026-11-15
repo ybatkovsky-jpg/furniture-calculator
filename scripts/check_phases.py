@@ -170,19 +170,24 @@ mods_kitchen = [mk('lower_base',600,560,820,q=3), mk('upper_base',600,320,720,q=
 # v3.0: тип помещения определяется через zone_type (get_rules), а не room_name.
 # При has_spec=True авто-добавление подавляется — комплектующие приходят из spec.yaml
 # (дедупликация авто-комплектующих, commit 5a62ba5).
-q_auto = calculate_quantities(mods_kitchen, 'Кухня', ['EGGER H1379'], zone_type='kitchen')
-q_off  = calculate_quantities(mods_kitchen, 'Кухня', ['EGGER H1379'],
+# P1-02: платные автопозиции — opt-in. По умолчанию (без флагов) их НЕТ;
+# явные auto_*=True включают старый набор; has_spec подавляет и его.
+q_default = calculate_quantities(mods_kitchen, 'Кухня', ['EGGER H1379'], zone_type='kitchen')
+q_auto = calculate_quantities(mods_kitchen, 'Кухня', ['EGGER H1379'],
                                zone_type='kitchen',
-                               auto_accessories=False, auto_drawers=False, auto_led=False)
+                               auto_accessories=True, auto_drawers=True,
+                               auto_led=True, auto_gola=True)
 q_spec = calculate_quantities(mods_kitchen, 'Кухня', ['EGGER H1379'],
-                               zone_type='kitchen', has_spec=True)
+                               zone_type='kitchen', has_spec=True,
+                               auto_accessories=True, auto_drawers=True,
+                               auto_led=True, auto_gola=True)
 
-check(q_auto.drawers_count > 0, f'авто-ящики: {q_auto.drawers_count} шт')
-check(q_off.drawers_count == 0, f'без авто: drawers=0')
-check(q_auto.cutlery_tray_count > 0, f'авто-лоток: {q_auto.cutlery_tray_count} шт')
-check(q_off.cutlery_tray_count == 0, f'без авто: tray=0')
-check(q_auto.led_strip_m > 0, f'авто-LED: {q_auto.led_strip_m:.1f}м')
-check(q_off.led_strip_m == 0, f'без авто: led=0')
+check(q_default.drawers_count == 0, f'по умолчанию без авто-ящиков: {q_default.drawers_count} шт')
+check(q_default.cutlery_tray_count == 0, 'по умолчанию без авто-лотка')
+check(q_default.led_strip_m == 0, 'по умолчанию без авто-LED')
+check(q_auto.drawers_count > 0, f'явный opt-in: авто-ящики {q_auto.drawers_count} шт')
+check(q_auto.cutlery_tray_count > 0, f'явный opt-in: авто-лоток {q_auto.cutlery_tray_count} шт')
+check(q_auto.led_strip_m > 0, f'явный opt-in: авто-LED {q_auto.led_strip_m:.1f}м')
 check(q_spec.drawers_count == 0 and q_spec.cutlery_tray_count == 0 and q_spec.led_strip_m == 0,
        f'spec-режим: авто подавлено '
        f'(drawers={q_spec.drawers_count}, tray={q_spec.cutlery_tray_count}, led={q_spec.led_strip_m})')

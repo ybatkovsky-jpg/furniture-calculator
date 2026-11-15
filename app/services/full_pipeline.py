@@ -172,14 +172,27 @@ class FullPipeline:
 
         # ── Шаг 1: GLM-OCR ──
         logger.info("📄 Шаг 1/3: GLM-OCR — чтение структуры PDF...")
-        ocr_result = await self.ocr.parse_pdf(path)
-        if not ocr_result.success:
-            result.errors.append(f"OCR failed: {ocr_result.error}")
-            return result
+        try:
+            ocr_result = await self.ocr.parse_pdf(path)
+        except Exception as exc:  # noqa: BLE001 — OCR не должен валить прогон
+            logger.warning("OCR упал с исключением: %s", exc)
+            ocr_result = PDFParseResult(success=False, error=str(exc))
 
-        # Извлекаем метаданные из таблиц
-        result.project_address = self._extract_address(ocr_result)
-        result.designer = self._extract_designer(ocr_result)
+        # P1-13: OCR — опциональный шаг. Раньше любой сбой GLM-OCR обнулял
+        # весь прогон, хотя Vision мог работать без него. Продолжаем с пустой
+        # структурой: имена помещений сгенерирует Vision, страницы выберем
+        # эвристикой (все, кроме титульной/последней).
+        if not ocr_result.success:
+            logger.warning(
+                "OCR недоступен (%s) — продолжаю без OCR-структуры",
+                ocr_result.error,
+            )
+            result.errors.append(f"OCR недоступен, работаем без него: {ocr_result.error}")
+            ocr_result = PDFParseResult(success=False, error=ocr_result.error)
+        else:
+            # Извлекаем метаданные из таблиц
+            result.project_address = self._extract_address(ocr_result)
+            result.designer = self._extract_designer(ocr_result)
 
         # ── Шаг 2: Определяем ключевые страницы ──
         # Страницы с реальными чертежами (пропускаем титульные)

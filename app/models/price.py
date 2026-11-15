@@ -26,7 +26,11 @@ class PriceItem(Base):
     
     # Цена
     unit_price = Column(Float, nullable=True)  # Цена за единицу
-    price_unit = Column(String(50), default="шт")  # Единица измерения (шт, м, м², л и т.д.)
+    price_unit = Column(String(50), default="шт")  # Единица измерения (шт, м, м², лист, комплект)
+    # Толщина кромки/плиты, мм (P0-07). Отдельное поле: толщину нельзя
+    # определять поиском подстроки «2» в названии («0.8*22» → 0.8, не 2).
+    thickness_mm = Column(Float, nullable=True)
+    pack_size = Column(Float, nullable=True)  # листов/метров в упаковке, если цена за упаковку
     
     # Флаг требования ручного ввода
     requires_manual_price = Column(Integer, default=0)  # 1 = оператор должен ввести цену

@@ -11,6 +11,7 @@ from app.bot.states.materials import MaterialSelectionStates
 from app.db.session import get_session
 from app.models.price import PriceItem
 from app.models.calculation import Calculation
+from app.services.access import get_owned_calculation
 
 router = Router()
 
@@ -136,6 +137,8 @@ async def process_ldsp_selection(callback: CallbackQuery, state: FSMContext):
         'id': ldsp_item.id,
         'name': ldsp_item.name,
         'price': ldsp_item.unit_price,
+        'price_unit': ldsp_item.price_unit,
+        'thickness_mm': ldsp_item.thickness_mm,
         'brand': ldsp_item.brand
     }
     await state.update_data(
@@ -319,6 +322,8 @@ async def save_facade_selection(callback: CallbackQuery, state: FSMContext, faca
         'id': facade_item.id,
         'name': facade_item.name,
         'price': price,
+        'price_unit': facade_item.price_unit,
+        'thickness_mm': facade_item.thickness_mm,
         'category': facade_item.category,
         'brand': facade_item.brand
     }
@@ -370,6 +375,8 @@ async def process_manual_price(message: Message, state: FSMContext):
             'id': facade_item.id,
             'name': facade_item.name,
             'price': price,
+            'price_unit': facade_item.price_unit,
+            'thickness_mm': facade_item.thickness_mm,
             'category': facade_item.category,
             'brand': facade_item.brand,
             'manual_price': True
@@ -395,6 +402,8 @@ async def process_manual_price(message: Message, state: FSMContext):
             'id': edge_item.id,
             'name': edge_item.name,
             'price': price,
+            'price_unit': edge_item.price_unit,
+            'thickness_mm': edge_item.thickness_mm,
             'brand': edge_item.brand,
             'manual_price': True
         }
@@ -419,6 +428,7 @@ async def process_manual_price(message: Message, state: FSMContext):
             'id': hinge_item.id,
             'name': hinge_item.name,
             'price': price,
+            'price_unit': hinge_item.price_unit,
             'brand': hinge_item.brand,
             'manual_price': True
         }
@@ -443,6 +453,7 @@ async def process_manual_price(message: Message, state: FSMContext):
             'id': drawer_item.id,
             'name': drawer_item.name,
             'price': price,
+            'price_unit': drawer_item.price_unit,
             'brand': drawer_item.brand,
             'manual_price': True
         }
@@ -515,6 +526,8 @@ async def select_edge_automatically(message: Message, state: FSMContext):
         'id': edge_item.id,
         'name': edge_item.name,
         'price': edge_item.unit_price,
+        'price_unit': edge_item.price_unit,
+        'thickness_mm': edge_item.thickness_mm,
         'brand': edge_item.brand
     }
     await state.update_data(selected_materials=selected_materials)
@@ -663,6 +676,7 @@ async def process_hinge_selection(callback: CallbackQuery, state: FSMContext):
         'id': hinge_item.id,
         'name': hinge_item.name,
         'price': hinge_item.unit_price,
+        'price_unit': hinge_item.price_unit,
         'brand': hinge_item.brand
     }
     await state.update_data(selected_hardware=selected_hardware)
@@ -686,9 +700,14 @@ async def check_for_drawers(message: Message, state: FSMContext):
         await message.answer("❌ Ошибка: расчет не найден")
         return
 
-    # Получаем модули из расчета
+    # Получаем модули из расчета (только свой — P1-14)
+    if not message.from_user:
+        await message.answer("❌ Ошибка: пользователь не найден")
+        return
     async for session in get_session():
-        calculation = await session.get(Calculation, calculation_id)
+        calculation = await get_owned_calculation(
+            session, calculation_id, message.from_user.id
+        )
         if not calculation or not calculation.modules:
             await message.answer("❌ Ошибка: модули не найдены")
             return
@@ -844,6 +863,7 @@ async def process_drawer_selection(callback: CallbackQuery, state: FSMContext):
         'id': drawer_item.id,
         'name': drawer_item.name,
         'price': drawer_item.unit_price,
+        'price_unit': drawer_item.price_unit,
         'brand': drawer_item.brand
     }
     await state.update_data(selected_hardware=selected_hardware)
@@ -865,13 +885,15 @@ async def finish_material_selection(message: Message, state: FSMContext):
     selected_materials = data.get('selected_materials', {})
     selected_hardware = data.get('selected_hardware', {})
     
-    if not calculation_id:
+    if not calculation_id or not message.from_user:
         await message.answer("❌ Ошибка: расчет не найден")
         return
 
-    # Сохраняем выбранные материалы в базу данных
+    # Сохраняем выбранные материалы в базу данных (только свой — P1-14)
     async for session in get_session():
-        calculation = await session.get(Calculation, calculation_id)
+        calculation = await get_owned_calculation(
+            session, calculation_id, message.from_user.id
+        )
         if calculation:
             calculation.selected_materials = selected_materials
             calculation.selected_hardware = selected_hardware

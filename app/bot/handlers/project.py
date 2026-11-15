@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from app.bot.states.project import ProjectCreationStates
 from app.db.session import get_session
 from app.models.project import Project
+from app.services.access import get_owned_project
 
 router = Router()
 
@@ -144,6 +145,12 @@ async def choose_manual_input(callback, state: FSMContext):
     from app.db.session import get_session
 
     async for session in get_session():
+        # P1-14: нельзя создать расчёт в чужом проекте.
+        project = await get_owned_project(session, project_id, callback.from_user.id)
+        if project is None:
+            await callback.message.answer("Ошибка: проект не найден.")
+            await callback.answer()
+            return
         calculation = Calculation(project_id=project_id, modules=[])
         session.add(calculation)
         await session.commit()

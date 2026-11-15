@@ -16,6 +16,7 @@ from app.bot.keyboards.inline import (
 )
 from app.db.session import get_session
 from app.models.calculation import Calculation
+from app.services.access import get_owned_calculation
 
 router = Router()
 
@@ -285,7 +286,9 @@ async def process_module_action(callback: CallbackQuery, state: FSMContext):
 
         if calculation_id and current_modules:
             async for session in get_session():
-                calculation = await session.get(Calculation, calculation_id)
+                calculation = await get_owned_calculation(
+                    session, calculation_id, callback.from_user.id
+                )
                 if calculation:
                     calculation.modules = current_modules
                     await session.commit()

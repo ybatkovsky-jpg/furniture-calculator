@@ -3,8 +3,8 @@ services:
     build: .
     env_file:
       - .env
-    ports:
-      - "8000:8000"
     volumes:
       - ./data:/app/data
+      - ./pdfs:/app/pdfs
     restart: unless-stopped
+    # HTTP-порта у бота нет: он работает через Telegram polling.

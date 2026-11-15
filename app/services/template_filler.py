@@ -176,8 +176,15 @@ def _build_quantity_map(
             m["facades_m2_paint_matte"] = round(q.facades_area_m2, 1)
         elif ft == "paint_gloss":
             m["facades_m2_paint_gloss"] = round(q.facades_area_m2, 1)
-        else:
+        elif ft == "pvh":
             m["facades_m2_pvh_s"] = round(q.facades_area_m2, 1)
+        else:
+            # P1-17: тип фасада не выбран — не подставляем «ПВХ» и не
+            # добавляем площадь в ЛДСП. Пусть оператор укажет тип явно.
+            logger.warning(
+                "Тип фасада не выбран (unknown): %.1f м² не тарифицированы",
+                q.facades_area_m2,
+            )
 
     # Петли
     if q.hinges_count > 0:
@@ -257,9 +264,21 @@ def _build_quantity_map(
     if q.pvc_film_m2 > 0:
         m["pvc_film_m2"] = round(q.pvc_film_m2, 1)
 
-    # Кромка МДФ
+    # Кромка МДФ: P0-06 — одна позиция пишется ровно в одну строку шаблона.
+    # Раньше шесть записей row_mapping использовали одно поле, и цикл заполнял
+    # все найденные строки (6 м → 5 строк → 2 256 ₽ вместо 288 ₽).
     if q.edge_mdf_1mm_m > 0:
-        m["edge_mdf_1mm_m"] = q.edge_mdf_1mm_m
+        mat_props = detect_material_properties(materials or [])
+        ft = mat_props.get("facade_type")
+        mdf_edge_field = {
+            "emdiway": "edge_mdf_1mm_emdiway",
+            "emdiway_titan": "edge_mdf_1mm_emdiway",
+            "evo": "edge_mdf_1mm_evo",
+            "agt": "edge_mdf_1mm_agt",
+            "eterno": "edge_mdf_1mm_eterno",
+            "smart": "edge_mdf_1mm_smart",
+        }.get(str(ft), "edge_mdf_1mm_kromka")
+        m[mdf_edge_field] = q.edge_mdf_1mm_m
 
     # Бренд ЛДСП (для выбора правильного размера листа)
     if q.ldsp_brand:
@@ -339,14 +358,34 @@ def fill_template_from_pipeline(
         # Строим мапу quantities
         qty_map = _build_quantity_map(q, room.materials, room.room_name)
 
-        # Заполняем колонку E (Количество) в найденных строках
+        # Заполняем колонку E (Количество) в найденных строках.
+        # P0-06/P2-17: одно поле — не более одной строки; одна строка — не более
+        # одного значения. Иначе дубли маппинга писали объём в 5 строк.
         filled_rows = []
+        written_fields: set[str] = set()
+        written_row_numbers: set[int] = set()
         for keywords, field, unit, multiplier in ROW_MAPPING:
             value = qty_map.get(field)
             if value is not None and value > 0:
+                if field in written_fields:
+                    logger.warning(
+                        "Дубль маппинга: поле %s уже записано, строка %s пропущена",
+                        field,
+                        " + ".join(keywords[:2]),
+                    )
+                    continue
                 row_num = _find_row_for_material(new_ws, keywords)
+                if row_num and row_num in written_row_numbers:
+                    logger.warning(
+                        "Одна строка шаблона на два поля: R%s (%s) пропущена",
+                        row_num,
+                        field,
+                    )
+                    continue
                 if row_num:
                     final_value = value * multiplier
+                    written_fields.add(field)
+                    written_row_numbers.add(row_num)
                     # Записываем ТОЛЬКО в колонку E (5)
                     cell = new_ws.cell(row=row_num, column=5)
                     cell.value = final_value

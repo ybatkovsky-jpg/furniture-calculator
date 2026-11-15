@@ -114,7 +114,9 @@
 
 Пример: если у фасадов №2 и №3 есть горизонтальные линии внутри:
 "drawer_indices": [2, 3]
-Если ящиков нет — "drawer_indices": []
+Если в одном фасаде несколько ящиков (2–4 горизонтальные линии), укажи их
+число в drawer_counts: {"2": 3}. Если у фасада один ящик — можно не указывать.
+Если ящиков нет — "drawer_indices": [], "drawer_counts": {}
 
 ═══════════════════════════════════════
 МЕБЕЛЬ БЕЗ ДВЕРЦ (кровать, стол, диван, тумба без дверей)
@@ -232,7 +234,7 @@
 
 МАТЕРИАЛЫ: если указаны декоры (EGGER H1379, H3158 и т.п.) — перечисли в materials.
 
-Верни ТОЛЬКО валидный JSON с полями: zone_type, materials, total_width_mm, facades, has_glass_facades, drawer_indices, confidence, notes.
+Верни ТОЛЬКО валидный JSON с полями: zone_type, materials, total_width_mm, facades, has_glass_facades, drawer_indices, drawer_counts, confidence, notes.
 
 heights_mm — ОПЦИОНАЛЬНОЕ поле (ЗАДАЧА 1Б): {"lower":820,"upper":720,"penal":2500}. Включай ТОЛЬКО зоны, высоту которых прочитал с ВЕРТИКАЛЬНОЙ размерной линии. Не читается → не включай ключ (Python возьмёт стандарт).
 

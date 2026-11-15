@@ -185,7 +185,7 @@ def test_penal_depth_uses_lower_default():
 # ════════════════════════════════════════════════════════════════════
 
 def test_grouping_same_width():
-    """3 дверцы 600мм в lower → 1 модуль quantity=3."""
+    """P1-03: 3 дверцы 600мм рядом → ОДИН корпус 1800 с 3 фасадами."""
     analyzer = make_analyzer()
     facades = [
         make_facade("lower", 600),
@@ -195,12 +195,13 @@ def test_grouping_same_width():
     result = analyzer._facades_to_modules(facades)
     assert len(result) == 1
     assert result[0].type == "lower_base"
-    assert result[0].quantity == 3
-    assert result[0].width == 600
+    assert result[0].quantity == 1
+    assert result[0].width == 1800
+    assert result[0].facades == {"count": 3, "type": "doors"}
 
 
 def test_grouping_within_30mm_threshold():
-    """Ширины 599/600/601 (различие ≤30мм) → 1 модуль quantity=3."""
+    """Ширины 599/600/601 рядом → один корпус 1800, 3 фасада."""
     analyzer = make_analyzer()
     facades = [
         make_facade("lower", 599),
@@ -209,18 +210,20 @@ def test_grouping_within_30mm_threshold():
     ]
     result = analyzer._facades_to_modules(facades)
     assert len(result) == 1
-    assert result[0].quantity == 3
-    # avg = (599+600+601)//3 = 1800//3 = 600
-    assert result[0].width == 600
+    assert result[0].quantity == 1
+    assert result[0].width == 1800
+    assert result[0].facades["count"] == 3
 
 
 def test_grouping_exact_30mm_difference():
-    """Разница ровно 30мм (570 vs 600) → ОДНА группа (порог включительно)."""
+    """Разница ровно 30мм (570 vs 600) → один корпус 1170, 2 фасада."""
     analyzer = make_analyzer()
     facades = [make_facade("lower", 570), make_facade("lower", 600)]
     result = analyzer._facades_to_modules(facades)
     assert len(result) == 1
-    assert result[0].quantity == 2
+    assert result[0].quantity == 1
+    assert result[0].width == 1170
+    assert result[0].facades["count"] == 2
 
 
 def test_grouping_above_30mm_split():
@@ -232,17 +235,43 @@ def test_grouping_above_30mm_split():
     assert all(m.quantity == 1 for m in result)
 
 
-def test_avg_width_integer_division():
-    """avg_width считается целочисленным делением // (округление вниз)."""
+def test_two_door_cabinet_is_one_carcass():
+    """P1-03: 2 двери 300 → один корпус 600 (не два по 300)."""
     analyzer = make_analyzer()
-    # (600+601+602)//3 = 1803//3 = 601
+    facades = [
+        make_facade("lower", 300, idx_x_pct=0, idx_w_pct=10),
+        make_facade("lower", 300, idx_x_pct=10, idx_w_pct=10),
+    ]
+    result = analyzer._facades_to_modules(facades)
+    assert len(result) == 1
+    assert result[0].width == 600
+    assert result[0].quantity == 1
+    assert result[0].facades == {"count": 2, "type": "doors"}
+
+
+def test_drawer_block_counts_per_facade():
+    """P1-04: блок из 3 ящиков (drawer_counts) → 3 ящика, а не 1."""
+    analyzer = make_analyzer()
+    facades = [make_facade("lower", 600, idx_x_pct=0, idx_w_pct=20)]
+    result = analyzer._facades_to_modules(
+        facades,
+        drawer_indices={1},
+        drawer_counts={1: 3},
+    )
+    assert result[0].drawers == {"count": 3}
+
+
+def test_carcass_width_is_sum_of_doors():
+    """P1-03: ширина корпуса = сумма ширин дверей (600+601+602)."""
+    analyzer = make_analyzer()
     facades = [
         make_facade("lower", 600),
         make_facade("lower", 601),
         make_facade("lower", 602),
     ]
     result = analyzer._facades_to_modules(facades)
-    assert result[0].width == 601
+    assert result[0].width == 1803
+    assert result[0].facades["count"] == 3
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -405,7 +434,10 @@ def test_full_kitchen_scenario():
 
     by_type = {m.type: m for m in result}
     assert by_type["corner"].quantity == 1
-    assert by_type["lower_base"].quantity == 2
+    # P1-03: две соседние дверцы — один корпус 1200 с 2 фасадами
+    assert by_type["lower_base"].quantity == 1
+    assert by_type["lower_base"].width == 1200
+    assert by_type["lower_base"].facades["count"] == 2
     assert by_type["upper_base"].quantity == 1
     assert by_type["penal"].quantity == 1
 
@@ -424,9 +456,9 @@ def test_full_kitchen_wide_door_without_flag_not_corner():
     ]
     result = analyzer._facades_to_modules(facades, zone_type="Кухня")
     assert all(m.type != "corner" for m in result)
-    # 600+600 группируются (qty=2), 900 отдельным модулем
+    # P1-03: 600+600 — один корпус 1200 с 2 фасадами; 900 — отдельный
     by_width = {m.width: m for m in result}
-    assert by_width[600].quantity == 2
+    assert by_width[1200].facades["count"] == 2
     assert by_width[900].quantity == 1
 
 

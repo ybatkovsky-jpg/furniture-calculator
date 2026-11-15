@@ -1,0 +1,32 @@
+# Секреты и данные не попадают в образ (P0-04, P1-12)
+.env
+.env.*
+!.env.example
+
+data/
+pdfs/
+temp/
+output/
+input_images/
+backups/
+
+.git/
+.gitignore
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Тесты и инструменты разработки в runtime-образе не нужны
+tests/
+scripts/dev/
+
+# Документы и артефакты
+*.docx
+*.md

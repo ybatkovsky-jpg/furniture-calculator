@@ -8,7 +8,22 @@
 """
 
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
+
+from app.domain.validation import (
+    PricingError,
+    validate_cost_components,
+    validate_discount_against_base,
+    validate_discount_inputs,
+)
+
+
+def _round_half_up(value: float, digits: int = 0) -> float:
+    """Округление денег HALF_UP (round() в Python — банковское, P1-24)."""
+    quantum = Decimal(1).scaleb(-digits)
+    result = Decimal(str(value)).quantize(quantum, rounding=ROUND_HALF_UP)
+    return float(result)
 
 
 @dataclass
@@ -35,6 +50,7 @@ class CostBreakdown:
     countertop_cost: float = 0      # столешница + комплектующие
     accessories_cost: float = 0     # ручки, сушки, лотки, цоколь и т.д.
     subcontractor_cost: float = 0   # от подрядчиков
+    fastener_cost: float = 0        # конфирмат, опоры, подвесы, цоколь (P0-02)
 
     # === Рассчитываемые поля ===
     cost_price: float = 0           # себестоимость (сумма всего)
@@ -64,6 +80,9 @@ class CostBreakdown:
     # === Безнал ===
     final_noncash: float = 0          # итого безнал
 
+    # === Предупреждения валидатора ===
+    warnings: list[str] = field(default_factory=list)
+
 
 def calculate_cost(
     # Стоимость позиций
@@ -76,6 +95,7 @@ def calculate_cost(
     countertop_cost: float = 0,
     accessories_cost: float = 0,
     subcontractor_cost: float = 0,
+    fastener_cost: float = 0,
     # Коэффициенты
     manufacturing_rate: float = 0.80,
     installation_rate: float = 0.55,
@@ -113,6 +133,7 @@ def calculate_cost(
     countertop_cost = countertop_cost if countertop_cost is not None else 0
     accessories_cost = accessories_cost if accessories_cost is not None else 0
     subcontractor_cost = subcontractor_cost if subcontractor_cost is not None else 0
+    fastener_cost = fastener_cost if fastener_cost is not None else 0
 
     r = CostBreakdown(
         material_cost=material_cost,
@@ -124,25 +145,51 @@ def calculate_cost(
         countertop_cost=countertop_cost,
         accessories_cost=accessories_cost,
         subcontractor_cost=subcontractor_cost,
+        fastener_cost=fastener_cost,
     )
 
     disc = discount or DiscountInfo()
+
+    # 0. Валидация входов (P0-08): отрицательные стоимости, проценты > 100,
+    # одновременная скидка и наценка, ставка бонуса ≥ 1 — ошибка, а не
+    # отрицательный итог/падение.
+    validate_cost_components(
+        [
+            ("Материалы", material_cost),
+            ("Кромка", edge_cost),
+            ("Фасады", facade_cost),
+            ("Фурнитура", hardware_cost),
+            ("Стекло", glass_cost),
+            ("Подсветка", lighting_cost),
+            ("Столешница", countertop_cost),
+            ("Комплектующие", accessories_cost),
+            ("Подрядчики", subcontractor_cost),
+            ("Крепёж", fastener_cost),
+        ]
+    )
+    validate_discount_inputs(
+        disc.discount_type,
+        disc.discount_value,
+        disc.markup_type,
+        disc.markup_value,
+        disc.designer_bonus_rate,
+    )
 
     # 1. Себестоимость
     r.cost_price = (
         material_cost + edge_cost + facade_cost + hardware_cost +
         glass_cost + lighting_cost + countertop_cost +
-        accessories_cost + subcontractor_cost
+        accessories_cost + subcontractor_cost + fastener_cost
     )
 
     # 2. Производные
-    r.manufacturing = round(r.cost_price * manufacturing_rate)
-    r.installation = round(r.cost_price * installation_rate)
+    r.manufacturing = _round_half_up(r.cost_price * manufacturing_rate)
+    r.installation = _round_half_up(r.cost_price * installation_rate)
     r.measurement = measurement_fee
     r.delivery_internal = delivery_fee
     r.delivery_client = delivery_fee_client
-    r.design = round(r.manufacturing * design_rate)
-    r.overhead = round(r.cost_price * overhead_rate)
+    r.design = _round_half_up(r.manufacturing * design_rate)
+    r.overhead = _round_half_up(r.cost_price * overhead_rate)
 
     # 3. Итого
     r.subtotal = (
@@ -150,13 +197,13 @@ def calculate_cost(
         r.measurement + r.delivery_internal +
         r.design + r.overhead
     )
-    r.profit = round(r.subtotal * profit_rate)
+    r.profit = _round_half_up(r.subtotal * profit_rate)
     r.total_with_profit = r.subtotal + r.profit
 
     # Зарплаты
-    r.tech_director = round(r.total_with_profit * tech_director_rate)
-    r.manager_salary = round(r.total_with_profit * manager_rate)
-    r.designer_salary = round(r.total_with_profit * designer_rate)
+    r.tech_director = _round_half_up(r.total_with_profit * tech_director_rate)
+    r.manager_salary = _round_half_up(r.total_with_profit * manager_rate)
+    r.designer_salary = _round_half_up(r.total_with_profit * designer_rate)
 
     r.total_base_cash = (
         r.total_with_profit + r.tech_director +
@@ -164,10 +211,19 @@ def calculate_cost(
     )
 
     # 4. Скидка или наценка (взаимоисключающие)
+    validate_discount_against_base(
+        disc.discount_type,
+        disc.discount_value,
+        disc.markup_type,
+        disc.markup_value,
+        r.total_base_cash,
+    )
     r.price_after_discount = r.total_base_cash
 
     if disc.discount_type == "percent" and disc.discount_value > 0:
-        r.discount_amount = round(r.total_base_cash * disc.discount_value / 100)
+        r.discount_amount = _round_half_up(
+            r.total_base_cash * disc.discount_value / 100
+        )
         r.price_after_discount = r.total_base_cash - r.discount_amount
 
     elif disc.discount_type == "fixed" and disc.discount_value > 0:
@@ -175,7 +231,7 @@ def calculate_cost(
         r.price_after_discount = r.total_base_cash - r.discount_amount
 
     elif disc.markup_type == "percent" and disc.markup_value > 0:
-        markup = round(r.total_base_cash * disc.markup_value / 100)
+        markup = _round_half_up(r.total_base_cash * disc.markup_value / 100)
         r.discount_amount = -markup  # отрицательная скидка = наценка
         r.price_after_discount = r.total_base_cash + markup
 
@@ -187,15 +243,26 @@ def calculate_cost(
     if disc.designer_bonus_enabled and disc.designer_bonus_rate > 0:
         # Формула: финал = цена / (1 - ставка)
         # Верифицировано: 26500 / 0.9 = 29444.44
-        r.final_cash = round(
+        r.final_cash = _round_half_up(
             r.price_after_discount / (1 - disc.designer_bonus_rate), 2
         )
-        r.designer_bonus_amount = round(r.final_cash - r.price_after_discount, 2)
+        r.designer_bonus_amount = _round_half_up(
+            r.final_cash - r.price_after_discount, 2
+        )
     else:
         r.final_cash = r.price_after_discount
         r.designer_bonus_amount = 0
 
     # 6. Безнал
-    r.final_noncash = round(r.final_cash * noncash_markup, 2)
+    r.final_noncash = _round_half_up(r.final_cash * noncash_markup, 2)
+
+    # 7. Инвариант: итог не может быть отрицательным или ниже себестоимости.
+    if r.final_cash < 0:
+        raise PricingError("Итоговая цена отрицательна — проверьте скидку")
+    if r.final_cash < r.cost_price:
+        r.warnings.append(
+            "Итоговая цена ниже себестоимости: выпуск КП требует "
+            "ручного подтверждения"
+        )
 
     return r

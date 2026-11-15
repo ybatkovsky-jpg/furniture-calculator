@@ -12,6 +12,7 @@ import os
 from app.config import settings
 from app.db import init_db
 from app.bot.bot import bot, dp, setup_bot_commands
+from app.bot.middlewares import AllowlistMiddleware
 from app.bot.handlers import start_router, price_router, project_router, image_router, manual_input_router, materials_router, calculation_router, discounts_router, kp_router
 
 # Логирование
@@ -35,7 +36,16 @@ logger = logging.getLogger(__name__)
 async def main():
     """Главная функция запуска приложения."""
 
+    # 0. Проверяем критичные настройки до старта: в prod пустой
+    # ADMIN_TELEGRAM_IDS означает, что управлять прайсом некому (P0-05).
+    settings.validate_startup()
+
     logger.info("🚀 Запуск мебельного калькулятора...")
+    if not settings.admin_ids:
+        logger.warning(
+            "ADMIN_TELEGRAM_IDS пуст: админ-команды отключены (fail-closed). "
+            "Заполните список ID в .env, чтобы управлять прайсом."
+        )
 
     # 1. Создаём таблицы в БД
     try:
@@ -45,7 +55,12 @@ async def main():
         logger.error(f"✗ Ошибка при инициализации БД: {e}")
         raise
 
-    # 2. Подключаем routers (обработчики)
+    # 2. Allowlist: если ALLOWED_TELEGRAM_IDS заполнен, посторонние не пройдут
+    # дальше этого middleware (пустой список — ограничения нет).
+    dp.message.outer_middleware(AllowlistMiddleware())
+    dp.callback_query.outer_middleware(AllowlistMiddleware())
+
+    # 3. Подключаем routers (обработчики)
     dp.include_router(start_router)
     dp.include_router(price_router)
     dp.include_router(project_router)

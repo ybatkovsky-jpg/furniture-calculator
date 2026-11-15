@@ -8,12 +8,17 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from dataclasses import asdict
+from datetime import datetime
+
 from app.bot.keyboards.inline import get_discount_keyboard
 from app.db.session import get_session
 from app.models.calculation import Calculation
 from app.models.project import Project
+from app.services.access import get_owned_calculation
 from app.services.calc_engine import calculate_full_cost
 from app.services.cost_calc import DiscountInfo
+from app.services.price_book import load_price_book
 
 router = Router()
 
@@ -34,8 +39,11 @@ async def start_calculation(callback: CallbackQuery, state: FSMContext):
         return
 
     async for session in get_session():
-        # Загружаем расчёт из БД
-        calculation = await session.get(Calculation, calculation_id)
+        # Загружаем расчёт из БД, только если он принадлежит этому пользователю
+        # (P1-14: чужой id неотличим от несуществующего).
+        calculation = await get_owned_calculation(
+            session, calculation_id, callback.from_user.id
+        )
         if not calculation:
             await callback.message.answer("Ошибка: расчёт не найден в БД.")
             await callback.answer()
@@ -43,24 +51,63 @@ async def start_calculation(callback: CallbackQuery, state: FSMContext):
 
         # Запускаем расчёт
         try:
+            # P0-02: цены ХДФ/GOLA/LED/столешницы/крепежа — из активного прайса,
+            # а не заглушки. Чего нет в прайсе — попадёт в warning/missing.
+            price_book = await load_price_book(session)
             result = calculate_full_cost(
                 modules=calculation.modules or [],
                 selected_materials=calculation.selected_materials or {},
                 selected_hardware=calculation.selected_hardware or {},
                 glass_items=calculation.glass_items or [],
                 discount_info=_extract_discount_info(calculation),
-                settings=None  # используем настройки по умолчанию
+                settings=None,  # используем настройки по умолчанию
+                zone_type=calculation.zone_type,  # P1-20: не угадываем заново
+                price_book=price_book,
             )
 
-            # Сохраняем результаты в БД
+            # Сохраняем результаты в БД (P1-10: весь CostBreakdown, а не 5 полей)
+            breakdown = result.cost_breakdown
             calculation.material_cost = result.material_cost
             calculation.edge_cost = result.edge_cost
             calculation.facade_cost = result.facade_cost
             calculation.hardware_cost = result.hardware_cost
             calculation.glass_cost = result.glass_cost
-            calculation.total_base_cash = result.cost_breakdown.total_base_cash
+            calculation.lighting_cost = result.lighting_cost
+            calculation.countertop_cost = result.countertop_cost
+            calculation.accessories_cost = result.accessories_cost
+            calculation.subcontractor_cost = result.subcontractor_cost
+            calculation.fastener_cost = result.fastener_cost
+            calculation.cost_price = breakdown.cost_price
+            calculation.manufacturing = breakdown.manufacturing
+            calculation.installation = breakdown.installation
+            calculation.measurement_fee = breakdown.measurement
+            calculation.delivery_fee = breakdown.delivery_internal
+            calculation.delivery_fee_client = breakdown.delivery_client
+            calculation.design_fee = breakdown.design
+            calculation.overhead = breakdown.overhead
+            calculation.profit = breakdown.profit
+            calculation.tech_director_salary = breakdown.tech_director
+            calculation.manager_salary = breakdown.manager_salary
+            calculation.designer_salary = breakdown.designer_salary
+            calculation.total_base_cash = breakdown.total_base_cash
+            calculation.price_after_discount = breakdown.price_after_discount
+            calculation.designer_bonus_amount = breakdown.designer_bonus_amount
             calculation.final_price_cash = result.total_cash
             calculation.final_price_noncash = result.total_noncash
+            calculation.quote = {
+                "engine_version": "2.0",
+                "created_at": datetime.utcnow().isoformat(),
+                "zone_type": calculation.zone_type,
+                "lines": [asdict(line) for line in result.lines],
+                "warnings": result.warnings,
+                "missing_prices": result.missing_prices,
+                "can_issue_kp": result.can_issue_kp,
+                "cost_price": breakdown.cost_price,
+                "discount_amount": breakdown.discount_amount,
+                "total_base_cash": breakdown.total_base_cash,
+                "total_cash": result.total_cash,
+                "total_noncash": result.total_noncash,
+            }
 
             await session.commit()
 
@@ -127,6 +174,29 @@ def _format_estimate_text(calculation: Calculation, result) -> str:
 
     if result.glass_cost > 0:
         lines.append(f"Стекло: {result.glass_cost:,.0f} ₽")
+
+    if getattr(result, "fastener_cost", 0) > 0:
+        lines.append(f"Крепёж: {result.fastener_cost:,.0f} ₽")
+
+    # P0-02: видно, из каких строк собрана себестоимость и где нет цены.
+    detail_lines = [line for line in (getattr(result, "lines", None) or []) if line.quantity > 0]
+    if detail_lines:
+        lines.append("— Строки себестоимости —")
+        for line in detail_lines[:14]:
+            if line.price_source == "missing":
+                lines.append(f"⚠ {line.name}: {line.quantity:g} {line.unit} — цена не задана")
+            else:
+                lines.append(
+                    f"{line.name}: {line.quantity:g} {line.unit} × "
+                    f"{line.unit_price:,.0f} = {line.amount:,.0f} ₽"
+                )
+        if len(detail_lines) > 14:
+            lines.append(f"… ещё {len(detail_lines) - 14} строк")
+
+    for warning in getattr(result, "warnings", []) or []:
+        lines.append(f"⚠ {warning}")
+    if not getattr(result, "can_issue_kp", True):
+        lines.append("⛔ КП заблокировано: заполните цены/модели, отмеченные выше")
 
     # Разделитель
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━")

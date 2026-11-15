@@ -1,3 +1,4 @@
+import logging
 import tempfile
 from pathlib import Path
 from urllib.parse import quote_plus, unquote_plus
@@ -6,7 +7,7 @@ from aiogram import F, Router
 from aiogram.enums import ContentType
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import or_, select
 
 from app.bot.states.price_admin import PriceAdminStates
@@ -15,7 +16,19 @@ from app.db.session import AsyncSessionLocal
 from app.models.price import PriceHistory, PriceItem
 from app.services.price_manager import import_price_from_xlsx
 
+logger = logging.getLogger(__name__)
+
 router = Router()
+
+
+def _admin_denied(message_or_callback) -> bool:
+    """Единая проверка админа для сообщений и callback-ов (P0-05).
+
+    fail-closed: пустой ADMIN_TELEGRAM_IDS означает «админов нет», поэтому
+    без явно настроенного списка не выполняется ни одна админ-команда.
+    """
+    user = getattr(message_or_callback, "from_user", None)
+    return user is None or not settings.is_admin(user.id)
 
 
 def parse_price_value(value: str) -> float | None:
@@ -31,7 +44,11 @@ def parse_price_value(value: str) -> float | None:
 
 @router.message(Command("price_upload"))
 async def cmd_price_upload(message: Message, state: FSMContext):
-    if not settings.is_admin(message.from_user.id if message.from_user else 0):
+    if _admin_denied(message):
+        logger.warning(
+            "Отказ в /price_upload: user_id=%s",
+            message.from_user.id if message.from_user else None,
+        )
         await message.answer("⛔ Недостаточно прав для загрузки прайса.")
         return
     await state.set_state(PriceAdminStates.waiting_for_file)
@@ -40,6 +57,17 @@ async def cmd_price_upload(message: Message, state: FSMContext):
 
 @router.message(PriceAdminStates.waiting_for_file, F.content_type == ContentType.DOCUMENT)
 async def receive_price_document(message: Message, state: FSMContext):
+    # Повторная проверка прав: состояние могло быть выставлено другой учёткой
+    # или сохранено до перезапуска бота (P0-05).
+    if _admin_denied(message):
+        logger.warning(
+            "Отказ в загрузке прайса: user_id=%s",
+            message.from_user.id if message.from_user else None,
+        )
+        await state.clear()
+        await message.answer("⛔ Недостаточно прав для загрузки прайса.")
+        return
+
     document = message.document
     file_name = document.file_name or "price.xlsx"
     if not file_name.lower().endswith(".xlsx"):
@@ -57,6 +85,14 @@ async def receive_price_document(message: Message, state: FSMContext):
         async with AsyncSessionLocal() as session:
             result = await import_price_from_xlsx(str(target_path), session, changed_by=str(message.from_user.id))
 
+    logger.info(
+        "Импорт прайса: user_id=%s file=%s created=%s updated=%s skipped=%s",
+        message.from_user.id,
+        file_name,
+        result["created"],
+        result["updated"],
+        result["skipped"],
+    )
     await state.clear()
     await message.answer(
         f"✅ Импорт завершен. Создано: {result['created']}, обновлено: {result['updated']}, пропущено: {result['skipped']}"
@@ -70,6 +106,15 @@ async def receive_price_non_document(message: Message):
 
 @router.message(Command("price_search"))
 async def cmd_price_search(message: Message):
+    # Закупочные цены — не публичная информация (P1-14).
+    if _admin_denied(message):
+        logger.warning(
+            "Отказ в /price_search: user_id=%s",
+            message.from_user.id if message.from_user else None,
+        )
+        await message.answer("⛔ Недостаточно прав для просмотра прайса.")
+        return
+
     text = message.text or ""
     parts = text.split(maxsplit=1)
     query = parts[1].strip() if len(parts) > 1 else ""
@@ -105,11 +150,11 @@ async def cmd_price_search(message: Message):
 
 @router.message(Command("price_edit"))
 async def cmd_price_edit(message: Message):
-    # Проверяем, что пользователь существует
-    if not message.from_user:
-        await message.answer("Ошибка: пользователь не найден.")
-        return
-    if not settings.is_admin(message.from_user.id):
+    if _admin_denied(message):
+        logger.warning(
+            "Отказ в /price_edit: user_id=%s",
+            message.from_user.id if message.from_user else None,
+        )
         await message.answer("⛔ Недостаточно прав для редактирования прайса.")
         return
 
@@ -126,8 +171,10 @@ async def cmd_price_edit(message: Message):
         return
 
     new_price = parse_price_value(parts[2])
-    if new_price is None:
-        await message.answer("Ошибка: введите корректную цену, например 1250 или 1250.50.")
+    if new_price is None or new_price < 0:
+        await message.answer(
+            "Ошибка: введите корректную неотрицательную цену, например 1250 или 1250.50."
+        )
         return
 
     async with AsyncSessionLocal() as session:
@@ -150,11 +197,26 @@ async def cmd_price_edit(message: Message):
         session.add(history)
         await session.commit()
 
+    logger.info(
+        "Прайс изменён: user_id=%s item_id=%s old_price=%s new_price=%s",
+        message.from_user.id,
+        item_id,
+        old_price,
+        new_price,
+    )
     await message.answer(f"✅ Цена для позиции {item.name} обновлена до {new_price:.2f} ₽.")
 
 
 @router.message(Command("price_list"))
 async def cmd_price_list(message: Message):
+    if _admin_denied(message):
+        logger.warning(
+            "Отказ в /price_list: user_id=%s",
+            message.from_user.id if message.from_user else None,
+        )
+        await message.answer("⛔ Недостаточно прав для просмотра прайса.")
+        return
+
     async with AsyncSessionLocal() as session:
         stmt = select(PriceItem.category).distinct().where(PriceItem.is_active == 1)
         result = await session.execute(stmt)
@@ -177,7 +239,15 @@ async def cmd_price_list(message: Message):
 
 
 @router.callback_query(F.data.startswith("price_category:"))
-async def callback_price_category(callback):
+async def callback_price_category(callback: CallbackQuery):
+    if _admin_denied(callback):
+        logger.warning(
+            "Отказ в price_category: user_id=%s",
+            callback.from_user.id if callback.from_user else None,
+        )
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+
     category = unquote_plus(callback.data.split(":", 1)[1])
     async with AsyncSessionLocal() as session:
         stmt = select(PriceItem).where(

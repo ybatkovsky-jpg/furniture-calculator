@@ -171,6 +171,11 @@ class KPGenerator:
         if accessories_cost > 0:
             add_item("Аксессуары", "комплект", accessories_cost)
 
+        # Крепёж (P0-02/P1-18): конфирмат, опоры, подвесы, цоколь
+        fastener_cost = getattr(calculation, 'fastener_cost', 0) or 0
+        if fastener_cost > 0:
+            add_item("Крепёж", "комплект", fastener_cost)
+
         # Услуги
         manufacturing = getattr(calculation, 'manufacturing', 0) or 0
         add_item("Изготовление", "услуга", manufacturing)
@@ -181,7 +186,9 @@ class KPGenerator:
         measurement_fee = getattr(calculation, 'measurement_fee', 0) or 0
         add_item("Замер", "услуга", measurement_fee)
 
-        delivery_client = getattr(calculation, 'delivery_client', 0) or 0
+        # P1-10: поле называется delivery_fee_client; delivery_client не
+        # существовало, поэтому доставка в КП всегда была 0.
+        delivery_client = getattr(calculation, 'delivery_fee_client', 0) or 0
         if delivery_client > 0:
             add_item("Доставка", "услуга", delivery_client)
 
@@ -281,7 +288,12 @@ class KPGenerator:
 
         # Скидка (если есть)
         discount_text = ""
-        discount_amount = getattr(calculation, 'discount_amount', 0) or 0
+        quote = getattr(calculation, "quote", None) or {}
+        discount_amount = (
+            quote.get("discount_amount")
+            or getattr(calculation, "discount_amount", 0)
+            or 0
+        )
         discount_type = getattr(calculation, 'discount_type', None)
         discount_value = getattr(calculation, 'discount_value', 0)
         markup_type = getattr(calculation, 'markup_type', None)

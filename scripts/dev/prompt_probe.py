@@ -21,11 +21,17 @@ import httpx
 from PIL import Image, ImageEnhance, ImageFilter
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
-# Локальный vision-эндпоинт (unsloth-studio)
-API_URL = "http://192.168.1.133:8888/v1/chat/completions"
-API_KEY = "sk-unsloth-c10db5079f5c4a4a99025ea350ef28c6"
-MODEL = "orcarouter/Qwen3.8-27B-Uncensored-GGUF"
+from app.config import settings  # noqa: E402
+
+# Локальный vision-эндпоинт (unsloth-studio). Секрет — только из .env (P0-03).
+API_URL = settings.local_llm_api_url or "http://192.168.1.133:8888/v1/chat/completions"
+if not API_URL.rstrip("/").endswith("/chat/completions"):
+    API_URL = API_URL.rstrip("/") + "/chat/completions"
+API_KEY = settings.local_llm_api_key
+MODEL = settings.local_vision_model or "orcarouter/Qwen3.8-27B-Uncensored-GGUF"
 MAX_TOKENS = 1600
 
 

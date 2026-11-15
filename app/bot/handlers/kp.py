@@ -11,6 +11,8 @@ from sqlalchemy.orm import selectinload
 from app.bot.keyboards.inline import get_discount_keyboard
 from app.db.session import get_session
 from app.models.calculation import Calculation, CommercialOffer
+from app.models.project import Project
+from app.services.access import get_owned_calculation
 from app.services.kp_generator import kp_generator
 
 router = Router()
@@ -34,13 +36,26 @@ async def download_kp(callback: CallbackQuery):
         calculation_id = int(parts[1])
 
         async for session in get_session():
-            # Загрузить расчёт с проектом
-            stmt = select(Calculation).options(selectinload(Calculation.project)).where(Calculation.id == calculation_id)
-            result = await session.execute(stmt)
-            calculation = result.scalar_one_or_none()
+            # Загрузить расчёт с проектом (только свой — P1-14)
+            calculation = await get_owned_calculation(
+                session, calculation_id, callback.from_user.id, with_project=True
+            )
 
             if not calculation:
                 await callback.message.answer("❌ Расчёт не найден.")
+                await callback.answer()
+                return
+
+            # P0-02: КП не выпускается, если в смете есть строки без цены
+            # или не выбраны ручки — иначе клиент получает заниженную цену.
+            quote = calculation.quote or {}
+            if quote and not quote.get("can_issue_kp", True):
+                reasons = quote.get("missing_prices") or quote.get("warnings") or []
+                details = "\n".join(f"• {reason}" for reason in reasons[:10])
+                await callback.message.answer(
+                    "⛔ КП заблокировано: в смете есть позиции без цены.\n"
+                    + (details or "• проверьте выбор материалов и прайс")
+                )
                 await callback.answer()
                 return
 
@@ -114,6 +129,29 @@ async def send_kp_to_client(callback: CallbackQuery):
     Отправить КП клиенту (заглушка для будущей реализации).
     """
     kp_id = callback.data.split(":")[1]
+    try:
+        kp_pk = int(kp_id)
+    except ValueError:
+        await callback.answer("Некорректный ID КП", show_alert=True)
+        return
+
+    # P1-14: чужое КП не должно даже подтверждаться сообщением.
+    async for session in get_session():
+        stmt = (
+            select(CommercialOffer)
+            .join(Calculation, CommercialOffer.calculation_id == Calculation.id)
+            .join(Project, Calculation.project_id == Project.id)
+            .where(
+                CommercialOffer.id == kp_pk,
+                Project.telegram_user_id == str(callback.from_user.id),
+            )
+        )
+        offer = (await session.execute(stmt)).scalar_one_or_none()
+        if offer is None:
+            await callback.answer("КП не найдено", show_alert=True)
+            return
+        break
+
     await callback.message.answer(
         f"📤 Функция отправки КП клиенту будет реализована позже.\n"
         f"ID КП: {kp_id}"
@@ -129,18 +167,26 @@ async def create_calculation_variant(callback: CallbackQuery):
     calculation_id = int(callback.data.split(":")[1])
 
     async for session in get_session():
-        # Загрузить оригинальный расчёт
-        stmt = select(Calculation).options(selectinload(Calculation.project)).where(Calculation.id == calculation_id)
-        result = await session.execute(stmt)
-        original_calc = result.scalar_one_or_none()
+        # Загрузить оригинальный расчёт (только свой — P1-14)
+        original_calc = await get_owned_calculation(
+            session, calculation_id, callback.from_user.id, with_project=True
+        )
 
         if not original_calc:
             await callback.message.answer("❌ Оригинальный расчёт не найден.")
             await callback.answer()
             return
 
-        # Создать новый вариант
-        new_variant_name = f"Вариант {len(original_calc.project.calculations) + 1}"
+        # Создать новый вариант. Количество считаем запросом, а не ленивой
+        # коллекцией project.calculations (она давала MissingGreenlet — P2-19).
+        from sqlalchemy import func
+
+        variants_count = await session.scalar(
+            select(func.count())
+            .select_from(Calculation)
+            .where(Calculation.project_id == original_calc.project_id)
+        )
+        new_variant_name = f"Вариант {(variants_count or 0) + 1}"
 
         new_calculation = Calculation(
             project_id=original_calc.project_id,

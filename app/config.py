@@ -1,6 +1,6 @@
 """Загрузка настроек из переменных окружения и .env."""
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,25 +11,83 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,  # Settings(environment="prod") в тестах/коде
+    )
+
+    # Окружение: dev | prod. В prod приложение не стартует без ADMIN_TELEGRAM_IDS.
+    environment: str = Field(
+        default="dev",
+        validation_alias=AliasChoices("ENV", "ENVIRONMENT"),
+        description="Окружение приложения: dev | prod (env: ENV)",
     )
 
     # Telegram
     telegram_bot_token: str = Field(default="", description="Токен Telegram-бота")
 
     # Администраторы — ID через запятую, которым доступны команды управления прайсом
-    # (price_upload, price_edit). Берётся из ADMIN_TELEGRAM_IDS в .env
+    # (price_upload, price_edit). Берётся из ADMIN_TELEGRAM_IDS в .env.
+    # Пустой список = НИКТО не админ (fail-closed, P0-05).
     admin_telegram_ids: str = Field(default="", description="ID админов через запятую")
+
+    # Allowlist пользователей бота (ID через запятую). Пусто — доступ разрешён
+    # всем; заполнен — только перечисленным (плюс админам). Используется
+    # middleware в app/bot/middlewares/access.py.
+    allowed_telegram_ids: str = Field(
+        default="", description="ID пользователей, которым разрешён доступ к боту"
+    )
+
+    @staticmethod
+    def _parse_ids(raw: str) -> set[str]:
+        return {s.strip() for s in (raw or "").split(",") if s.strip()}
+
+    @property
+    def admin_ids(self) -> set[str]:
+        """Множество ID администраторов (пусто — админов нет)."""
+        return self._parse_ids(self.admin_telegram_ids)
+
+    @property
+    def allowed_ids(self) -> set[str]:
+        """Множество ID из allowlist (пусто — ограничения нет)."""
+        return self._parse_ids(self.allowed_telegram_ids)
+
+    @property
+    def is_production(self) -> bool:
+        """True для prod/production (без учёта регистра)."""
+        return self.environment.strip().lower() in {"prod", "production"}
 
     def is_admin(self, user_id: int | str) -> bool:
         """Проверить, является ли пользователь администратором.
 
-        Возвращает True, если список админов пуст (открытый режим,
-        как было исторически) ИЛИ user_id есть в ADMIN_TELEGRAM_IDS.
+        P0-05: fail-closed — при пустом ADMIN_TELEGRAM_IDS админом не является
+        НИКТО. Историческое «пусто = все админы» было уязвимостью: любой
+        пользователь мог заменить прайс и цены всех расчётов.
         """
-        if not self.admin_telegram_ids.strip():
+        return str(user_id).strip() in self.admin_ids
+
+    def is_allowed(self, user_id: int | str) -> bool:
+        """Проверить доступ пользователя к боту по allowlist.
+
+        Пустой allowlist означает «ограничения нет»: иначе после обновления
+        бот оказался бы недоступен всем, включая собственника, до заполнения
+        ALLOWED_TELEGRAM_IDS. Админы допускаются всегда.
+        """
+        allowed = self.allowed_ids
+        if str(user_id).strip() in self.admin_ids:
             return True
-        allowed = {s.strip() for s in self.admin_telegram_ids.split(",") if s.strip()}
-        return str(user_id) in allowed
+        return not allowed or str(user_id).strip() in allowed
+
+    def validate_startup(self) -> None:
+        """Проверить критичные настройки перед стартом.
+
+        В production пустой ADMIN_TELEGRAM_IDS — ошибка конфигурации: прайс
+        остался бы без единого администратора (fail-closed), и управлять им
+        было бы некому. Падаем с понятным сообщением, а не молча работаем.
+        """
+        if self.is_production and not self.admin_ids:
+            raise RuntimeError(
+                "ADMIN_TELEGRAM_IDS пуст, а ENV=prod. Заполните список ID "
+                "администраторов в .env — иначе управление прайсом недоступно."
+            )
 
     # Vision LLM — Z.ai (основной: GLM-5V-Turbo) / RouterAI.ru (ансамбль: Qwen3-VL)
     zai_api_key: str = Field(default="", description="Ключ Z.ai API (GLM-5V-Turbo, GLM-OCR)")

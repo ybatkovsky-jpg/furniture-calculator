@@ -215,8 +215,18 @@ def detect_material_properties(materials: List[str]) -> dict:
         result["surface"] = "texture"
 
     # ── Тип фасада ──
+    # Плитные МДФ-бренды различаются для выбора ОДНОЙ строки кромки в Excel
+    # (P0-06): EVO/AGT/ETERNO/SM`ART — разные поставщики.
     if "EMDIWAY" in materials_upper:
         result["facade_type"] = "emdiway_titan" if "TITAN" in materials_upper else "emdiway"
+    elif "EVOGLOSS" in materials_upper or "EVO " in materials_upper:
+        result["facade_type"] = "evo"
+    elif "AGT" in materials_upper:
+        result["facade_type"] = "agt"
+    elif "ETERNO" in materials_upper:
+        result["facade_type"] = "eterno"
+    elif "SM`ART" in materials_upper or "SMART" in materials_upper:
+        result["facade_type"] = "smart"
     elif any(kw in materials_upper for kw in ["ЛАКОКРАСКА", "МАТОВЫЙ", "МАТОВ"]):
         result["facade_type"] = "paint_matte"
     elif "ГЛЯНЕЦ" in materials_upper or "ГЛЯНЦ" in materials_upper:
@@ -287,9 +297,13 @@ def calculate_quantities(
     *,
     zone_type: str = None,           # NEW: тип помещения из AI
     has_spec: bool = False,          # если есть spec.yaml — не автодобавлять
-    auto_accessories: bool = True,   # авто-сушка, лоток, бутылочница
-    auto_drawers: bool = True,       # авто-ящики если AI не нашёл
-    auto_led: bool = True,           # авто-подсветка для кухни
+    # P1-02: платные автопозиции — opt-in. По умолчанию False: раньше кухня
+    # молча получала 2+1 ящика, сушку, лоток, бутылочницу, GOLA и LED
+    # (до +36 366 ₽ позиций, которых в проекте нет).
+    auto_accessories: bool = False,  # авто-сушка, лоток, бутылочница
+    auto_drawers: bool = False,      # авто-ящики если AI не нашёл
+    auto_led: bool = False,          # авто-подсветка для кухни
+    auto_gola: bool = False,         # авто-GOLA (профиль-ручка) для кухни
     has_refrigerator: bool = False,  # встраиваемый холодильник
     has_oven: bool = False,          # духовка
     has_dishwasher: bool = False,    # посудомойка
@@ -382,12 +396,21 @@ def calculate_quantities(
         visible_per_module = (2 * h_m + 2 * w_m)  # передние кромки боковин + дна/крыши
         visible_per_module += shelf_count * w_m   # передняя кромка каждой полки
 
-        # Кромка фасадов (видимая со всех сторон)
+        # Кромка фасадов (видимая со всех сторон).
+        # P2-08: если фасад плитный МДФ (EMDIWAY/EVOGLOSS/AGT…), его периметр
+        # уходит в кромку МДФ 1 мм ниже. Раньше он одновременно попадал
+        # и в edge_08, и в edge_mdf_1mm — двойной метраж.
+        facade_uses_mdf_edge = bool(
+            mat_props.get("mdf_needs_edge")
+            and module.facades
+            and module.facades.get("count", 0) > 0
+        )
         if module.facades and module.facades.get("count", 0) > 0:
             fc = module.facades.get("count", 1)
             fh = (module.height - 4) / 1000
             fw = (module.width / fc - 3) / 1000
-            visible_per_module += (2 * fh + 2 * fw) * fc  # периметр всех фасадов
+            if not facade_uses_mdf_edge:
+                visible_per_module += (2 * fh + 2 * fw) * fc  # периметр всех фасадов
 
         visible_total = visible_per_module * qty
         premium_total = 0  # 2мм не используется по умолчанию
@@ -559,10 +582,17 @@ def calculate_quantities(
 
     # ── ИТОГОВЫЕ РАСЧЁТЫ ──
 
-    # Фасады из ЛДСП: если не МДФ/ПВХ/лакокраска — добавляем в ЛДСП
+    # P1-17: тип фасада не выбран — НЕ добавляем площадь в ЛДСП и позже не
+    # маппим в ПВХ. Раньше «unknown» трактовался как ЛДСП-фасад здесь и как
+    # ПВХ в Excel: двойной учёт + неверная цена.
     if mat_props["facade_type"] == "unknown" and q.facades_area_m2 > 0:
-        q.ldsp_area_m2 += q.facades_area_m2 * 1.15  # +15% на облицовку кромок фасадов
-        logger.info(f"Фасады ЛДСП: +{q.facades_area_m2:.1f} м² → ЛДСП")
+        q.warnings.append(
+            "Тип фасада не выбран: укажите МДФ-плёнку, МДФ-лак, ЛДСП или стекло"
+        )
+        logger.info(
+            "Тип фасада unknown: %.2f м² не добавлены в ЛДСП (P1-17)",
+            q.facades_area_m2,
+        )
 
     # ЛДСП: листы с запасом на раскрой
     q.ldsp_sheets = max(1, math.ceil(q.ldsp_area_m2 * waste_ldsp / sheet_area_m2)) if q.ldsp_area_m2 > 0 else 0
@@ -640,7 +670,7 @@ def calculate_quantities(
         q.plinth_strips = math.ceil(lower_modules_width * 1.10 / 4)
 
     # ── Gola: вертикальные + горизонтальные (только для kitchen_family) ──
-    if rules.auto_gola and not has_spec:
+    if auto_gola and rules.auto_gola and not has_spec:
         # Горизонтальный Gola: сумма ширин нижних баз
         q.gola_horizontal_m = lower_modules_width
 
@@ -666,15 +696,16 @@ def calculate_quantities(
         # Штуки по 3 метра
         q.gola_horizontal_pcs = math.ceil(q.gola_horizontal_m / 3) if q.gola_horizontal_m > 0 else 0
 
-        # LED: если spec уже добавил LED — не дублируем блоки питания/датчики
-        if auto_led and not has_spec and q.led_strip_m == 0:
-            q.led_strip_m      = q.gola_horizontal_m * 0.7
-            if q.led_strip_m > 0:
-                led_watt = q.led_strip_m * 9.6 * 1.2  # мощность с запасом 20%
-                if q.led_power_supply == 0:
-                    q.led_power_supply = max(1, math.ceil(led_watt / 100))
-                if q.led_sensor == 0:
-                    q.led_sensor = 1
+    # LED: отдельный opt-in, не зависит от GOLA (лента идёт по длине нижних баз).
+    # Если spec уже добавил LED — не дублируем блоки питания/датчики.
+    if auto_led and rules.auto_gola and not has_spec and q.led_strip_m == 0:
+        q.led_strip_m = lower_modules_width * 0.7
+        if q.led_strip_m > 0:
+            led_watt = q.led_strip_m * 9.6 * 1.2  # мощность с запасом 20%
+            if q.led_power_supply == 0:
+                q.led_power_supply = max(1, math.ceil(led_watt / 100))
+            if q.led_sensor == 0:
+                q.led_sensor = 1
 
     # ── Отключаем ручки для Gola и push-to-open ──
     # Если есть Gola — ручки не нужны

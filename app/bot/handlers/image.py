@@ -16,6 +16,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 from app.bot.keyboards.inline import recognition_result_keyboard
 from app.services.image_analyzer import GeminiImageAnalyzer, RecognitionResult
+from app.services.access import get_owned_project
 from app.db.session import get_session
 from app.models import Project, Calculation
 from sqlalchemy import select
@@ -219,17 +220,27 @@ async def confirm_recognition(callback: CallbackQuery, state: FSMContext):
 
     # Сохраняем распознанные модули в базу данных
     async for session in get_session():
-        # Получаем проект
-        stmt = select(Project).where(Project.id == project_id)
-        result_proj = await session.execute(stmt)
-        project = result_proj.scalar_one_or_none()
+        # Получаем проект, только если он принадлежит пользователю (P1-14)
+        project = await get_owned_project(
+            session, project_id, callback.from_user.id
+        )
 
         if not project:
             await callback.answer("❌ Проект не найден")
             return
 
-        # Создаем или обновляем расчет
-        calculation = project.calculation
+        # Создаем или обновляем расчёт. Раньше здесь было project.calculation:
+        # ленивая загрузка relationship в async-сессии падала MissingGreenlet
+        # (P1-05). Берём последний расчёт явным запросом.
+        from sqlalchemy import desc
+
+        calc_result = await session.execute(
+            select(Calculation)
+            .where(Calculation.project_id == project_id)
+            .order_by(desc(Calculation.created_at), desc(Calculation.id))
+            .limit(1)
+        )
+        calculation = calc_result.scalar_one_or_none()
         if not calculation:
             calculation = Calculation(project_id=project_id)
             session.add(calculation)
@@ -252,8 +263,11 @@ async def confirm_recognition(callback: CallbackQuery, state: FSMContext):
             }
             modules_data.append(module_dict)
 
-        # Сохраняем модули
+        # Сохраняем модули и тип помещения (P1-20): раньше zone_type терялся,
+        # и расчёт угадывал «Кухня» по наличию верхних баз.
         calculation.modules = modules_data
+        if result.zone_type:
+            calculation.zone_type = result.zone_type
         await session.commit()
         break
 
@@ -263,11 +277,11 @@ async def confirm_recognition(callback: CallbackQuery, state: FSMContext):
         reply_markup=None
     )
 
-    # Очищаем состояние
-    await state.clear()
+    # P1-05: не тупик — сразу переходим к выбору материалов (раньше обещали,
+    # но не запускали). Состояние не очищаем: в нём calculation_id.
+    from app.bot.handlers.materials import start_material_selection
 
-    # Здесь можно перейти к выбору материалов
-    # await start_material_selection(callback.message, state)
+    await start_material_selection(callback.message, calculation.id, state)
 
 
 @router.callback_query(F.data == "correct_recognition")

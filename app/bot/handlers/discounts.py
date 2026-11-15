@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from app.db.session import get_session
 from app.models.calculation import Calculation
+from app.services.access import get_owned_calculation
 from app.services.cost_calc import DiscountInfo, calculate_cost
 from app.services.calc_engine import calculate_full_cost
 from app.bot.handlers.calculation import _extract_discount_info, show_estimate, _format_estimate_text
@@ -31,7 +32,9 @@ async def show_discount_menu(callback: CallbackQuery):
         return
 
     async for session in get_session():
-        calculation = await session.get(Calculation, calculation_id)
+        calculation = await get_owned_calculation(
+            session, calculation_id, callback.from_user.id
+        )
         if not calculation:
             await callback.message.answer("Ошибка: расчёт не найден.")
             await callback.answer()
@@ -71,6 +74,15 @@ async def start_discount_input(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Ошибка: неверный тип скидки")
         return
 
+    # P1-14: менять скидку можно только в своём расчёте.
+    async for session in get_session():
+        if not await get_owned_calculation(
+            session, calculation_id, callback.from_user.id
+        ):
+            await callback.answer("Расчёт не найден", show_alert=True)
+            return
+        break
+
     await state.update_data(discount_type=discount_type, calculation_id=calculation_id)
     await state.set_state(DiscountState.entering_value)
 
@@ -98,15 +110,31 @@ async def process_discount_value(message: Message, state: FSMContext):
     discount_type = data.get("discount_type")
     calculation_id = data.get("calculation_id")
 
-    if not calculation_id:
+    if not calculation_id or not message.from_user:
         await message.answer("Ошибка: расчёт не найден")
         return
 
-    # Обновляем расчёт в БД
+    # Обновляем расчёт в БД (только свой — P1-14)
     async for session in get_session():
-        calculation = await session.get(Calculation, calculation_id)
+        calculation = await get_owned_calculation(
+            session, calculation_id, message.from_user.id
+        )
         if not calculation:
             await message.answer("Ошибка: расчёт не найден")
+            return
+
+        # P0-08: проверяем границы до записи в БД, а не после расчёта.
+        base = calculation.total_base_cash or calculation.final_price_cash or 0
+        if discount_type == "percent" and value > 100:
+            await message.answer("❌ Скидка не может быть больше 100%.")
+            return
+        if discount_type == "markup_percent" and value > 100:
+            await message.answer("❌ Наценка не может быть больше 100%.")
+            return
+        if discount_type == "fixed" and value > base:
+            await message.answer(
+                f"❌ Скидка {value:,.0f} ₽ больше суммы {base:,.0f} ₽."
+            )
             return
 
         # Сбрасываем предыдущие скидки/наценки
@@ -198,7 +226,9 @@ async def toggle_designer_bonus(callback: CallbackQuery):
     calculation_id = int(parts[1])
 
     async for session in get_session():
-        calculation = await session.get(Calculation, calculation_id)
+        calculation = await get_owned_calculation(
+            session, calculation_id, callback.from_user.id
+        )
         if not calculation:
             await callback.answer("Расчёт не найден")
             return
@@ -251,7 +281,9 @@ async def remove_discount(callback: CallbackQuery):
     calculation_id = int(parts[1])
 
     async for session in get_session():
-        calculation = await session.get(Calculation, calculation_id)
+        calculation = await get_owned_calculation(
+            session, calculation_id, callback.from_user.id
+        )
         if not calculation:
             await callback.answer("Расчёт не найден")
             return
@@ -303,7 +335,9 @@ async def back_to_estimate(callback: CallbackQuery):
     calculation_id = int(parts[1])
 
     async for session in get_session():
-        calculation = await session.get(Calculation, calculation_id)
+        calculation = await get_owned_calculation(
+            session, calculation_id, callback.from_user.id
+        )
         if not calculation:
             await callback.answer("Расчёт не найден")
             return

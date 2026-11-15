@@ -77,6 +77,16 @@ class Calculation(Base):
     countertop_cost = Column(Float, default=0)  # Столешницы
     accessories_cost = Column(Float, default=0)  # Ручки, лотки и т.д.
     subcontractor_cost = Column(Float, default=0)  # От подрядчиков
+    fastener_cost = Column(Float, default=0)  # Конфирмат, опоры, подвесы, цоколь
+
+    # P1-20: тип помещения сохраняется и передаётся в расчёт (раньше угадывался
+    # по наличию верхних баз: «Кухня» для любого шкафа).
+    zone_type = Column(String(50), nullable=True)
+
+    # P0-02/P1-10: полный снимок расчёта — строки CostLine, предупреждения,
+    # признак блокировки КП, версия движка. Старые поля сохраняются для
+    # совместимости; quote читается Excel/КП.
+    quote = Column(JSON, nullable=True)
     
     # Итоговая смета
     cost_price = Column(Float, default=0)  # Себестоимость

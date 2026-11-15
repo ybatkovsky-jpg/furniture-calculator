@@ -180,10 +180,20 @@ def test_kitchen_single_lower_core():
     assert q.confirmat_count == 18
     assert q.adjustable_feet == 4
     assert q.plinth_strips == 1
-    # Gola: горизонтальный 0.6 м → 1 шт; вертикальный 2 шт
+    # P1-02: GOLA — opt-in, по умолчанию не добавляется
+    assert q.gola_horizontal_pcs == 0
+    assert q.gola_vertical_pcs == 0
+
+
+def test_gola_is_opt_in():
+    """P1-02: GOLA считается только при явном auto_gola=True."""
+    q = _calc([_mk("lower_base", 600, fc=1)], ["EGGER U702"],
+              zone_type="kitchen", auto_gola=True)
     assert q.gola_horizontal_m == pytest.approx(0.6)
     assert q.gola_horizontal_pcs == 1
     assert q.gola_vertical_pcs == 2
+    # при GOLA накладные ручки не нужны
+    assert q.handles_count == 0
 
 
 def test_default_sheet_when_brand_unknown():
@@ -210,8 +220,8 @@ def test_hinges_and_facade_area_single_door():
     q = _calc([_mk("lower_base", 600, fc=1)], ["EGGER U702"], zone_type="kitchen")
     assert q.facades_area_m2 == pytest.approx(0.597 * 0.816, abs=1e-4)
     assert q.hinges_count == 2
-    # Кухня с Gola → ручки обнуляются (Gola закрывает открытые торцы)
-    assert q.handles_count == 0
+    # P1-02: без явного GOLA ручка нужна (раньше GOLA обнуляла её автоматически)
+    assert q.handles_count == 1
 
 
 def test_hinges_multi_door_per_module():
@@ -237,11 +247,12 @@ def test_penal_appliance_no_hinges():
     assert q.hinges_count == 0
 
 
-def test_facades_from_ldsp_go_into_ldsp():
-    """Фасады из ЛДСП (facade_type unknown) добавляются к ЛДСП с +15%."""
+def test_unknown_facade_not_added_to_ldsp():
+    """P1-17: facade_type=unknown не добавляется в ЛДСП (раньше +15%)."""
     q = _calc([_mk("lower_base", 600, fc=1)], ["EGGER U702"], zone_type="kitchen")
-    # 1.95144 + 0.487152×1.15 = 2.5117
-    assert q.ldsp_area_m2 == pytest.approx(1.95144 + 0.597 * 0.816 * 1.15, abs=1e-4)
+    assert q.ldsp_area_m2 == pytest.approx(1.95144, abs=1e-4)
+    assert q.facades_area_m2 > 0
+    assert any("Тип фасада не выбран" in w for w in q.warnings)
 
 
 def test_mdf_facades_use_mdf_sheets():
@@ -330,7 +341,7 @@ def test_quantity_multiplier_scales_quantities():
     assert q.ldsp_sheets == math.ceil(5.389584 * 1.3 / EGGER_SHEET_M2) == 2
     assert q.adjustable_feet == 12
     assert q.countertop_length_m == pytest.approx((1.8 + 2 * 0.05) * 1.1, abs=1e-4)
-    assert q.gola_horizontal_m == pytest.approx(1.8, abs=1e-4)
+    assert q.gola_horizontal_m == 0  # P1-02: GOLA не добавляется автоматически
 
 
 def test_shared_sidewalls_saving():
@@ -356,10 +367,22 @@ def test_shared_sides_only_same_type_and_depth():
 # Авто-комплектующие для кухни (по умолчанию)
 # ════════════════════════════════════════════════════════════════════
 
-def test_kitchen_auto_accessories_defaults():
-    """auto_accessories=True (дефолт): лоток, сушка, мойка; авто-ящики 2+1 внутренний."""
+def test_kitchen_auto_accessories_are_opt_in():
+    """P1-02: по умолчанию платных автопозиций НЕТ (раньше были всегда)."""
     q = calculate_quantities([_mk("lower_base", 600, fc=1)], "Кухня", ["EGGER U702"],
                              zone_type="kitchen", auto_led=False)
+    assert q.drawers_count == 0
+    assert q.drawers_internal_count == 0
+    assert q.cutlery_tray_count == 0
+    assert q.has_sink is False
+    assert q.drying_rack_count == 0
+
+
+def test_kitchen_auto_accessories_when_explicitly_enabled():
+    """auto_accessories=True: лоток, сушка, мойка; авто-ящики 2+1 внутренний."""
+    q = calculate_quantities([_mk("lower_base", 600, fc=1)], "Кухня", ["EGGER U702"],
+                             zone_type="kitchen", auto_led=False,
+                             auto_accessories=True, auto_drawers=True)
     assert q.drawers_count == 2
     assert q.drawers_internal_count == 1
     assert q.drawer_system == "Tandembox"
@@ -373,7 +396,8 @@ def test_kitchen_auto_accessories_defaults():
 def test_kitchen_auto_bottle_holder_for_narrow_module():
     q = calculate_quantities(
         [_mk("lower_base", 150, fc=1), _mk("lower_base", 600, fc=1)],
-        "Кухня", ["EGGER U702"], zone_type="kitchen", auto_led=False)
+        "Кухня", ["EGGER U702"], zone_type="kitchen", auto_led=False,
+        auto_accessories=True)
     assert q.bottle_holder_count == 1
     assert q.bottle_holder_type == "flora"
 
@@ -381,7 +405,8 @@ def test_kitchen_auto_bottle_holder_for_narrow_module():
 def test_kitchen_auto_led():
     """Авто-LED для кухни: лента 70% длины Gola, БП и датчик."""
     q = calculate_quantities([_mk("lower_base", 600, fc=1)], "Кухня", ["EGGER U702"],
-                             zone_type="kitchen", auto_accessories=False, auto_drawers=False)
+                             zone_type="kitchen", auto_accessories=False,
+                             auto_drawers=False, auto_led=True)
     assert q.led_strip_m == pytest.approx(0.6 * 0.7, abs=1e-4)
     assert q.led_power_supply == 1
     assert q.led_sensor == 1
@@ -390,7 +415,8 @@ def test_kitchen_auto_led():
 def test_auto_accessories_off_when_has_spec():
     """has_spec=True: не дублируем авто-комплектующие (их добавил spec.yaml)."""
     q = calculate_quantities([_mk("lower_base", 600, fc=1)], "Кухня", ["EGGER U702"],
-                             zone_type="kitchen", has_spec=True, auto_led=False)
+                             zone_type="kitchen", has_spec=True, auto_led=True,
+                             auto_accessories=True, auto_drawers=True)
     assert q.drawers_count == 0
     assert q.cutlery_tray_count == 0
     assert q.has_sink is False
@@ -414,7 +440,8 @@ def test_non_kitchen_no_auto_accessories():
 # ════════════════════════════════════════════════════════════════════
 
 def test_gola_vertical_basic_two_profiles():
-    q = _calc([_mk("lower_base", 600, fc=1)], ["EGGER U702"], zone_type="kitchen")
+    q = _calc([_mk("lower_base", 600, fc=1)], ["EGGER U702"],
+              zone_type="kitchen", auto_gola=True)
     # средняя высота модулей с фасадами: 0.82 м (без припуска на пропил) → 2 профиля
     assert q.gola_vertical_pcs == 2
     assert q.gola_vertical_m == pytest.approx(0.82 * 2, abs=1e-4)
@@ -423,14 +450,14 @@ def test_gola_vertical_basic_two_profiles():
 def test_gola_vertical_island_adds_two():
     """'остров' в имени комнаты → ещё 2 вертикальных профиля."""
     q = _calc([_mk("lower_base", 600, fc=1)], ["EGGER U702"],
-              room="Кухня с островом", zone_type="kitchen")
+              room="Кухня с островом", zone_type="kitchen", auto_gola=True)
     assert q.gola_vertical_pcs == 4
     assert q.gola_vertical_m == pytest.approx(0.82 * 4, abs=1e-4)
 
 
 def test_gola_vertical_corner_adds_one():
     q = _calc([_mk("lower_base", 600, fc=1), _mk("lower_base", 600, fc=1, corner=True)],
-              ["EGGER U702"], room="Кухня", zone_type="kitchen")
+              ["EGGER U702"], room="Кухня", zone_type="kitchen", auto_gola=True)
     assert q.gola_vertical_pcs == 3
 
 
@@ -486,9 +513,9 @@ def test_sliding_zone_kitchen_hinged_still_counts():
     """Те же створки при hinged zone_type='Кухня': петли как раньше (8 шт),
     ручки обнуляются Gola-блоком — прежнее кухонное поведение не тронуто."""
     q = _calc([_mk("penal", 1800, h=2500, fc=2)], ["EGGER U702"],
-              room="Кухня", zone_type="Кухня")
+              room="Кухня", zone_type="Кухня", auto_gola=True)
     assert q.hinges_count == 8          # 2 створки × 4 петли (2500 ≥ 2000, FIRMAX)
-    assert q.handles_count == 0         # кухня с Gola — ручки не нужны (как было)
+    assert q.handles_count == 0         # явно включённая GOLA закрывает торцы
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -529,10 +556,13 @@ def test_tall_ldsp_facade_not_mistaken_for_mdf_2mm():
 
 
 def test_mdf_1mm_edge_not_added_to_ldsp_edge():
-    """Кромка МДФ (1мм) не смешивается с кромкой ЛДСП (0.4/0.8/2)."""
+    """P2-08: кромка МДФ-фасада не попадает ещё и в кромку ЛДСП 0.8/0.4."""
     q = _calc([_mk("penal", 600, h=1500, fc=1)], ["EMDIWAY U702"], zone_type="kitchen")
-    assert q.edge_mdf_1mm_m == 6
-    assert q.edge_04_m == 12            # без вклада МДФ-фасада
+    assert q.edge_mdf_1mm_m == 6        # только МДФ-фасад
+    assert q.edge_08_m == 6             # только видимые торцы ЛДСП
+    assert q.edge_04_m == 17            # скрытые торцы ЛДСП, без фасада
+    # Сумма кромки ЛДСП не удваивает фасад: 6 + 17 ≈ общий метраж ЛДСП.
+    assert q.edge_08_m + q.edge_04_m == 23
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -548,7 +578,8 @@ def test_fill_template_kitchen_structure():
         [_mk("lower_base", 600, fc=1)], "Кухня", ["EGGER U702"], zone_type="kitchen")
     assert items and all(len(i) == 5 for i in items)
     cats = {i[0] for i in items}
-    assert {"ЛДСП", "КРОМКА", "ХДФ", "GOLA", "СТОЛЕШНИЦА", "КРЕПЁЖ"} <= cats
+    # P1-02: GOLA больше не добавляется автоматически в fill_template_for_room
+    assert {"ЛДСП", "КРОМКА", "ХДФ", "СТОЛЕШНИЦА", "КРЕПЁЖ"} <= cats
     # ЛДСП: 1 лист по 6000 (однотон)
     ldsp = next(i for i in items if i[0] == "ЛДСП")
     assert ldsp[4] == 1 and ldsp[3] == 6000

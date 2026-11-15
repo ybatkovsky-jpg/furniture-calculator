@@ -12,16 +12,15 @@
 """
 
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import re
 
+from app.domain.cost_lines import CostLine, build_cost_lines
 from app.services.cost_calc import calculate_cost, CostBreakdown, DiscountInfo
 from app.services.sheet_calc import calculate_sheets_for_modules, SheetCalculation
-from app.services.edge_calc import calculate_edge_for_modules, EdgeCalculation
-from app.services.hardware_calc import (
-    calculate_hardware_for_modules, HardwareCalculation, DEFAULT_HINGE_BRAND
-)
+from app.services.edge_calc import EdgeCalculation
+from app.services.hardware_calc import HardwareCalculation, DEFAULT_HINGE_BRAND
 from app.services.glass_calc import calculate_glass_for_modules, GlassCalculation
 
 logger = logging.getLogger(__name__)
@@ -40,6 +39,13 @@ class CalculationResult:
     countertop_cost: float = 0
     accessories_cost: float = 0
     subcontractor_cost: float = 0
+    fastener_cost: float = 0
+
+    # Полные строки себестоимости (P0-02): что именно и по какой цене
+    lines: List[CostLine] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    missing_prices: List[str] = field(default_factory=list)
+    can_issue_kp: bool = True
 
     # Количества прочих позиций из quantity_calc (для показа в смете)
     hdf_sheets: int = 0
@@ -80,6 +86,8 @@ def calculate_full_cost(
     discount_info: Optional[DiscountInfo] = None,
     settings: Optional[Dict] = None,
     zone_type: Optional[str] = None,
+    price_book: Optional[Dict[str, float]] = None,
+    has_spec: bool = False,
 ) -> CalculationResult:
     """
     Полный расчёт стоимости заказа.
@@ -114,9 +122,6 @@ def calculate_full_cost(
             "noncash_markup": 1.13,
         }
 
-    # 1. Генерируем детали из модулей (оставляем для совместимости)
-    modules_with_details = _generate_details_for_modules(modules)
-
     # 2. ЕДИНЫЙ ИСТОЧНИК ПРАВДЫ: количество ДСП и фурнитуры считает quantity_calc
     #    (та же логика, что в Excel: запас на раскрой, экономия смежных стенок,
     #    ручки, направляющие). Цены по-прежнему из прайса (selected_*).
@@ -130,14 +135,22 @@ def calculate_full_cost(
     if not zone_type:
         zone_type = _infer_zone_type(modules)
     quantities = calculate_quantities(
-        recognized, "", material_names, zone_type=zone_type, hinge_brand=hinge_brand
+        recognized,
+        "",
+        material_names,
+        zone_type=zone_type,
+        hinge_brand=hinge_brand,
+        has_spec=has_spec,
+        # P1-02: платные автопозиции — только по явному выбору оператора,
+        # а не молча по умолчанию (раньше +36 366 ₽ на кухню).
+        auto_accessories=False,
+        auto_drawers=False,
+        auto_led=False,
+        auto_gola=False,
     )
 
-    material_prices = _extract_material_prices(selected_materials)
     result.sheets_calc.total_sheets = quantities.ldsp_sheets
     result.sheets_calc.total_area_m2 = round(quantities.ldsp_area_m2, 3)
-    avg_price = _get_average_sheet_price(material_prices)
-    result.material_cost = float((quantities.ldsp_sheets or 0) * avg_price)
 
     # Количества прочих позиций (ХДФ, подсветка, GOLA, столешница) — для показа в смете
     result.hdf_sheets = quantities.hdf_sheets
@@ -146,54 +159,66 @@ def calculate_full_cost(
     result.gola_horizontal_m = quantities.gola_horizontal_m
     result.countertop_length_m = quantities.countertop_length_m
 
-    # 2. Расчёт кромки
-    edge_prices = _extract_edge_prices(selected_materials)
-    result.edge_calc = calculate_edge_for_modules(
-        modules=modules,
-        edge_preset="kitchen_standard",  # по умолчанию
-        edge_prices=edge_prices
-    )
-    result.edge_cost = float(result.edge_calc.total_cost or 0)
-
-    # 3. Расчёт фасадов (по нормализованным модулям — ручная схема тоже видна)
-    result.facade_cost = _calculate_facades_cost(recognized, selected_materials)
-
-    # 4. Расчёт фурнитуры — количество из quantity_calc (петли + ручки + ящики)
-    hinge_price = _extract_hinge_price(selected_hardware)
-    drawer_prices = _extract_drawer_prices(selected_hardware)
-    handle_price = _extract_handle_price(selected_hardware)
-    drawer_avg = (sum(drawer_prices.values()) / len(drawer_prices)) if drawer_prices else 0.0
-    result.hardware_calc = HardwareCalculation()
-    result.hardware_calc.hinges_total = quantities.hinges_count
-    result.hardware_calc.drawers_total = quantities.drawers_count
-    result.hardware_calc.handles_total = quantities.handles_count
-    result.hardware_calc.total_cost = round(
-        quantities.hinges_count * hinge_price
-        + quantities.drawers_count * drawer_avg
-        + quantities.handles_count * handle_price,
-        2,
-    )
-    result.hardware_calc.breakdown = {
-        "hinges": {"total_hinges": quantities.hinges_count,
-                   "cost": round(quantities.hinges_count * hinge_price, 2)},
-        "drawers": {"total_drawers": quantities.drawers_count,
-                    "cost": round(quantities.drawers_count * drawer_avg, 2)},
-        "handles": {"total_handles": quantities.handles_count,
-                    "cost": round(quantities.handles_count * handle_price, 2)},
-    }
-    result.hardware_cost = float(result.hardware_calc.total_cost or 0)
-
-    # 5. Расчёт стекла
-    # Преобразуем glass_items в формат для модулей
+    # 3. Расчёт стекла.
+    # P1-19: если размеры стекла не переданы, но у модулей есть
+    # has_glass/фасады — стекло считается по геометрии дверей, а не 0 ₽.
+    glass_items = list(glass_items or [])
+    if not glass_items:
+        glass_items = _derive_glass_items(modules)
     modules_with_glass = _add_glass_to_modules(modules, glass_items)
     result.glass_calc = calculate_glass_for_modules(modules_with_glass)
     result.glass_cost = float(result.glass_calc.total_cost or 0)
 
-    # 6. Дополнительные позиции (пока заглушки)
-    result.lighting_cost = 0
-    result.countertop_cost = 0
-    result.accessories_cost = 0
-    result.subcontractor_cost = 0
+    # 4. Полный CostBreakdown: каждая позиция — строка с ценой и источником
+    # (P0-02). Кромка берётся из quantities, edge_calc больше не участвует.
+    lines_result = build_cost_lines(
+        quantities,
+        selected_materials or {},
+        selected_hardware or {},
+        price_book=price_book,
+        glass_calc=result.glass_calc,
+        glass_items=glass_items,
+    )
+    result.lines = lines_result.lines
+    result.warnings = list(lines_result.warnings)
+    result.missing_prices = list(lines_result.missing)
+    result.can_issue_kp = lines_result.can_issue_kp
+
+    totals = lines_result.sum_by_kind()
+    result.material_cost = round(totals.get("ldsp", 0.0) + totals.get("hdf", 0.0), 2)
+    result.edge_cost = round(totals.get("edge", 0.0), 2)
+    result.facade_cost = round(totals.get("facade", 0.0), 2)
+    result.hardware_cost = round(
+        totals.get("hinge", 0.0) + totals.get("drawer", 0.0) + totals.get("handle", 0.0),
+        2,
+    )
+    result.glass_cost = round(totals.get("glass", result.glass_cost), 2)
+    result.lighting_cost = round(totals.get("led", 0.0), 2)
+    result.countertop_cost = round(totals.get("countertop", 0.0), 2)
+    result.accessories_cost = round(totals.get("gola", 0.0), 2)
+    result.fastener_cost = round(totals.get("fastener", 0.0), 2)
+    result.subcontractor_cost = 0.0
+
+    # Детальные расчёты — для совместимости со старым отображением.
+    result.edge_calc = EdgeCalculation(total_cost=result.edge_cost)
+    result.edge_calc.breakdown = {
+        line.name: {"length_m": line.quantity, "cost": line.amount}
+        for line in result.lines
+        if line.kind == "edge"
+    }
+    result.hardware_calc = HardwareCalculation()
+    result.hardware_calc.hinges_total = quantities.hinges_count
+    result.hardware_calc.drawers_total = quantities.drawers_count
+    result.hardware_calc.handles_total = quantities.handles_count
+    result.hardware_calc.total_cost = result.hardware_cost
+    result.hardware_calc.breakdown = {
+        "hinges": {"total_hinges": quantities.hinges_count,
+                   "cost": totals.get("hinge", 0.0)},
+        "drawers": {"total_drawers": quantities.drawers_count,
+                    "cost": totals.get("drawer", 0.0)},
+        "handles": {"total_handles": quantities.handles_count,
+                    "cost": totals.get("handle", 0.0)},
+    }
 
     # 7. Итоговый расчёт через cost_calc
     discount = discount_info or DiscountInfo()
@@ -208,6 +233,7 @@ def calculate_full_cost(
         countertop_cost=result.countertop_cost,
         accessories_cost=result.accessories_cost,
         subcontractor_cost=result.subcontractor_cost,
+        fastener_cost=result.fastener_cost,
         # Коэффициенты
         manufacturing_rate=settings["manufacturing_rate"],
         installation_rate=settings["installation_rate"],
@@ -504,6 +530,42 @@ def _extract_drawer_prices(selected_hardware: Dict) -> Dict[str, float]:
                     key = f"{drawer.get('brand', 'UNKNOWN')} {drawer.get('type', 'standard')} {drawer.get('height_type', 'medium')} {drawer.get('runner_type', '450mm')}"
                     prices[key] = float(drawer["price"])
     return prices
+
+
+def _derive_glass_items(modules: List[Dict]) -> List[Dict]:
+    """Стеклянные фасады → элементы стекла по геометрии дверей (P1-19).
+
+    Ручной ввод и распознавание передают только `has_glass`, без размеров.
+    Считаем площадь стекла по двери: (ширина/число дверей − 3 мм) ×
+    (высота − 4 мм) — те же зазоры, что в quantity_calc. Тип «clear»;
+    цена берётся из glass_calc.
+    """
+    items: List[Dict] = []
+    for module in modules or []:
+        if not module.get("has_glass"):
+            continue
+        facades = module.get("facades")
+        if isinstance(facades, dict):
+            count = int(facades.get("count") or 0)
+        elif isinstance(facades, list):
+            count = len(facades)
+        else:
+            count = 0
+        if count <= 0:
+            continue
+        width = _pick_dim(module, "width", "width_mm")
+        height = _pick_dim(module, "height", "height_mm")
+        if width <= 0 or height <= 0:
+            continue
+        items.append(
+            {
+                "type": "clear",
+                "width_mm": max(width // count - 3, 0),
+                "height_mm": max(height - 4, 0),
+                "tinting": False,
+            }
+        )
+    return items
 
 
 def _add_glass_to_modules(modules: List[Dict], glass_items: List[Dict]) -> List[Dict]:

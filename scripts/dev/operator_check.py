@@ -18,12 +18,22 @@ import argparse
 import base64
 import json
 import sys
+from pathlib import Path
 
 import httpx
 
-API_URL = "http://192.168.1.133:8888/v1/chat/completions"
-API_KEY = "sk-unsloth-c10db5079f5c4a4a99025ea350ef28c6"
-MODEL = "orcarouter/Qwen3.8-27B-Uncensored-GGUF"
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from app.config import settings  # noqa: E402
+
+API_URL = settings.local_llm_api_url or "http://192.168.1.133:8888/v1/chat/completions"
+if not API_URL.rstrip("/").endswith("/chat/completions"):
+    API_URL = API_URL.rstrip("/") + "/chat/completions"
+# Секрет — только из .env (P0-03): литерал ключа в репозитории недопустим.
+API_KEY = settings.local_llm_api_key
+MODEL = settings.local_vision_model or "orcarouter/Qwen3.8-27B-Uncensored-GGUF"
 MAX_TOKENS = 500
 TIMEOUT = 300.0
 MAX_ATTEMPTS = 3  # 1 original attempt + up to 2 retries

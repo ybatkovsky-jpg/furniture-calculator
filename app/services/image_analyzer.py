@@ -314,7 +314,9 @@ _UNIFIED_PROMPT_V2_EMBEDDED = """Ты — конструктор-техноло�
 
 Пример: если у фасадов №2 и №3 есть горизонтальные линии внутри:
 "drawer_indices": [2, 3]
-Если ящиков нет — "drawer_indices": []
+Если в одном фасаде несколько ящиков (2–4 горизонтальные линии), укажи их
+число в drawer_counts: {"2": 3}. Если у фасада один ящик — можно не указывать.
+Если ящиков нет — "drawer_indices": [], "drawer_counts": {}
 
 ═══════════════════════════════════════
 МЕБЕЛЬ БЕЗ ДВЕРЦ (кровать, стол, диван, тумба без дверей)
@@ -432,7 +434,7 @@ _UNIFIED_PROMPT_V2_EMBEDDED = """Ты — конструктор-техноло�
 
 МАТЕРИАЛЫ: если указаны декоры (EGGER H1379, H3158 и т.п.) — перечисли в materials.
 
-Верни ТОЛЬКО валидный JSON с полями: zone_type, materials, total_width_mm, facades, has_glass_facades, drawer_indices, confidence, notes.
+Верни ТОЛЬКО валидный JSON с полями: zone_type, materials, total_width_mm, facades, has_glass_facades, drawer_indices, drawer_counts, confidence, notes.
 
 heights_mm — ОПЦИОНАЛЬНОЕ поле (ЗАДАЧА 1Б): {"lower":820,"upper":720,"penal":2500}. Включай ТОЛЬКО зоны, высоту которых прочитал с ВЕРТИКАЛЬНОЙ размерной линии. Не читается → не включай ключ (Python возьмёт стандарт).
 
@@ -1083,7 +1085,22 @@ class GeminiImageAnalyzer:
                 return [], zone_type, materials, "low"
 
             # Python: создаём модули из фасадов (без помощи модели!)
-            modules = self._facades_to_modules(scaled_facades, zone_type, glass_indices, drawer_indices)
+            # drawer_counts — опциональная карта «фасад → число ящиков» (P1-04).
+            raw_drawer_counts = data.get("drawer_counts") or {}
+            drawer_counts: dict[int, int] = {}
+            if isinstance(raw_drawer_counts, dict):
+                for key, value in raw_drawer_counts.items():
+                    try:
+                        drawer_counts[int(key)] = max(1, min(4, int(value)))
+                    except (TypeError, ValueError):
+                        continue
+            modules = self._facades_to_modules(
+                scaled_facades,
+                zone_type,
+                glass_indices,
+                drawer_indices,
+                drawer_counts,
+            )
 
             if return_meta:
                 return modules, zone_type, materials, confidence, self._build_meta(
@@ -1119,17 +1136,20 @@ class GeminiImageAnalyzer:
         zone_type: Optional[str] = None,
         glass_indices: set = None,
         drawer_indices: set = None,
+        drawer_counts: dict = None,
     ) -> List[RecognizedModule]:
         """
         Python-группировка: отдельные дверцы → модули мебели.
 
-        Правила:
-        - Каждая дверца = потенциально отдельный модуль
-        - Дверцы одной зоны (lower/upper/penal) с одинаковой шириной (±30mm) = один тип модуля
-        - Угловая дверца (is_corner) → модуль corner (квадратный)
-        - Пенал → всегда отдельный модуль (не группируем!)
-        - Дверцы с одинаковой шириной группируются с quantity=N
-        - drawer_indices: индексы фасадов с ящиками (1-based)
+        Правила (P1-03):
+        - Дверцы, стоящие рядом по X (bbox_x_pct), одинаковой высоты и близкой
+          ширины (±30 мм) — ОДИН корпус: width = Σ ширин дверей, quantity=1,
+          facades.count=N. Раньше каждая дверь считалась отдельным корпусом
+          (quantity=N, facades.count=1): двухдверный шкаф давал +37% ЛДСП.
+        - Угловая дверца (is_corner) → модуль corner.
+        - Пенал → всегда отдельный модуль (не группируем).
+        - drawer_indices: индексы фасадов с ящиками (1-based);
+          drawer_counts: {индекс: число ящиков} — если модель его вернула.
         """
         if not scaled_facades:
             return []
@@ -1137,6 +1157,7 @@ class GeminiImageAnalyzer:
         rules = get_rules(zone_type)
         glass_indices = glass_indices or set()
         drawer_indices = drawer_indices or set()
+        drawer_counts = drawer_counts or {}
 
         modules = []
 
@@ -1151,8 +1172,8 @@ class GeminiImageAnalyzer:
             if not zone_items:
                 continue
 
-            # Сортируем по ширине для группировки
-            zone_items.sort(key=lambda x: x[1].width_mm)
+            # Сортируем слева направо: группировка по X-смежности (P1-03).
+            zone_items.sort(key=lambda x: (x[1].bbox_x_pct, x[1].width_mm))
 
             i = 0
             while i < len(zone_items):
@@ -1193,34 +1214,50 @@ class GeminiImageAnalyzer:
                     i += 1
                     continue
 
-                # Группируем дверцы с одинаковой шириной (±30mm)
+                # P1-03: соседние по X дверцы = один корпус с N фасадами.
                 group = [(idx, sf)]
+                right_edge = sf.bbox_x_pct + sf.bbox_w_pct
                 j = i + 1
                 while j < len(zone_items):
                     jdx, jsf = zone_items[j]
-                    if abs(jsf.width_mm - sf.width_mm) <= 30:
-                        group.append((jdx, jsf))
-                        j += 1
-                    else:
+                    gap_pct = jsf.bbox_x_pct - right_edge
+                    same_height = abs(jsf.height_mm - sf.height_mm) <= 4
+                    similar_width = abs(jsf.width_mm - sf.width_mm) <= 30
+                    # 3% ширины листа — допуск на стык/пропил между дверями.
+                    if not (same_height and similar_width and gap_pct <= 3.0):
                         break
+                    group.append((jdx, jsf))
+                    right_edge = jsf.bbox_x_pct + jsf.bbox_w_pct
+                    j += 1
 
-                avg_width = sum(g[1].width_mm for g in group) // len(group)
+                carcass_width = sum(g[1].width_mm for g in group)
                 avg_height = sum(g[1].height_mm for g in group) // len(group)
                 any_glass = any((g[0] + 1) in glass_indices for g in group)
-                any_drawer = any((g[0] + 1) in drawer_indices for g in group)
+                drawer_count = sum(
+                    int(drawer_counts.get(g[0] + 1, 1))
+                    for g in group
+                    if (g[0] + 1) in drawer_indices
+                )
 
                 mtype = {"lower": "lower_base", "upper": "upper_base"}.get(zone, "lower_base")
                 depth = rules.default_depth_upper if zone == "upper" else rules.default_depth_lower
 
+                if len(group) > 1:
+                    logger.info(
+                        "🔗 P1-03: %s дверц(ы) по X-смежности → один корпус %d мм, "
+                        "фасадов %d",
+                        len(group), carcass_width, len(group),
+                    )
+
                 modules.append(RecognizedModule(
                     type=mtype,
-                    width=avg_width,
+                    width=carcass_width,
                     depth=depth,
                     height=avg_height,
-                    quantity=len(group),
+                    quantity=1,
                     has_glass=any_glass,
-                    facades={"count": 1, "type": "doors"},
-                    drawers={"count": 1} if any_drawer else None,
+                    facades={"count": len(group), "type": "glass" if any_glass else "doors"},
+                    drawers={"count": drawer_count} if drawer_count > 0 else None,
                 ))
 
                 i = j

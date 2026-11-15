@@ -61,6 +61,19 @@ def test_template_has_fastener_and_countertop_rows():
         assert 3 <= row <= 345, keywords
 
 
+def test_db_price_matches_keywords_and_unit():
+    from app.services.template_filler import _find_db_price
+
+    prices = [
+        {"name": "LAMARTY однотон", "category": "ЛДСП", "price": 5100, "unit": "лист"},
+        {"name": "EGGER 0,8*19", "category": "Кромка", "price": 34, "unit": "м"},
+    ]
+    assert _find_db_price(prices, ["LAMARTY", "однотон"], "листов") == 5100
+    assert _find_db_price(prices, ["EGGER 0,8*19"], "м.п.") == 34
+    # Несовместимая единица не должна подставляться.
+    assert _find_db_price(prices, ["EGGER 0,8*19"], "листов") is None
+
+
 def test_mapping_does_not_share_edge_mdf_field():
     """Шесть строк шаблона больше не используют одно поле."""
     data = json.loads((ROOT / "templates" / "row_mapping.json").read_text(encoding="utf-8"))

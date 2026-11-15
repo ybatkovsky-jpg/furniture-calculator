@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 
 from openpyxl import Workbook
 
+from app.config import settings
 from app.services.full_pipeline import PipelineResult, RoomSpec
 from app.services.quantity_calc import (
     MaterialQuantities,
@@ -318,6 +319,10 @@ def fill_template_from_pipeline(
     # Загружаем шаблон
     logger.info(f"📄 Загрузка шаблона: {template_path}")
     wb = load_workbook(template_path)
+    # P1-01: цены Excel — из того же прайса БД, что и чат (где находится
+    # совпадение по ключевым словам и единице). Ненайденные строки остаются
+    # с ценой шаблона — это легаси, оно видно в отчёте.
+    db_prices = _load_db_prices()
 
     template_ws = wb["Рассчет"]
     rooms_with_modules = [r for r in pipeline_result.rooms if r.modules]
@@ -395,6 +400,11 @@ def fill_template_from_pipeline(
                     # Записываем ТОЛЬКО в колонку E (5)
                     cell = new_ws.cell(row=row_num, column=5)
                     cell.value = final_value
+                    # Цену берём из БД, кроме LED-бухты (цена за 5 м, а не за м).
+                    if field != "led_strip_5m":
+                        db_price = _find_db_price(db_prices, keywords, unit)
+                        if db_price is not None:
+                            new_ws.cell(row=row_num, column=4).value = db_price
                     filled_rows.append((row_num, keywords[0], final_value, unit))
                     logger.debug(
                         f"  {sheet_name}: R{row_num} «{keywords[0][:40]}...» → "
@@ -429,6 +439,13 @@ def fill_template_from_pipeline(
     # ── Сводный лист ──
     if "СВОДКА" in [ws.title for ws in wb.worksheets]:
         _update_summary(wb, pipeline_result, rooms_with_modules)
+
+    # P2-16: Excel пересчитает формулы при открытии (кэш значений не пишем —
+    # openpyxl этого не умеет, а data_only=True до пересчёта покажет None).
+    try:
+        wb.calculation.fullCalcOnLoad = True
+    except Exception:  # noqa: BLE001 — не критично для выгрузки
+        pass
 
     # ── Удаляем служебные листы шаблона ──
     _remove_template_sheets(wb)
@@ -788,6 +805,69 @@ def _add_furniture_header(ws, room: RoomSpec):
     ws.row_dimensions[2].height = 14 * (len(lines) + 1) + 4
 
     logger.info(f"🧩 {room.room_name}: шапка «Мебель:» — {len(lines)} модулей")
+
+
+_UNIT_ALIASES = {
+    "листов": "лист",
+    "лист": "лист",
+    "м.п.": "м",
+    "м.п": "м",
+    "м": "м",
+    "м²": "м²",
+    "м2": "м²",
+    "шт": "шт",
+}
+
+
+def _normalize_unit(unit: str) -> str:
+    return _UNIT_ALIASES.get(str(unit or "").strip().lower(), str(unit or "").strip().lower())
+
+
+def _load_db_prices() -> list[dict]:
+    """Цены активного прайса из SQLite (синхронно, для Excel-поколения)."""
+    import sqlite3
+
+    url = settings.database_url
+    prefix = "sqlite+aiosqlite:///"
+    if not url.startswith(prefix):
+        return []
+    db_path = url[len(prefix):]
+    if db_path.startswith("./"):
+        db_path = db_path[2:]
+    try:
+        con = sqlite3.connect(db_path)
+    except sqlite3.Error:
+        return []
+    try:
+        rows = con.execute(
+            "SELECT name, category, unit_price, price_unit FROM price_items "
+            "WHERE is_active=1 AND unit_price IS NOT NULL"
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        con.close()
+    return [
+        {"name": name, "category": category, "price": float(price), "unit": unit}
+        for name, category, price, unit in rows
+    ]
+
+
+def _find_db_price(prices: list[dict], keywords: list[str], unit: str) -> Optional[float]:
+    """Найти цену в прайсе по ключевым словам строки и совместимой единице."""
+    wanted_unit = _normalize_unit(unit)
+    keys = [" ".join(str(k).replace("ё", "е").casefold().split()) for k in keywords]
+    for item in prices:
+        text = " ".join(
+            str(item["name"]).replace("ё", "е").casefold().split()
+            + str(item["category"]).replace("ё", "е").casefold().split()
+        )
+        if not all(key in text for key in keys):
+            continue
+        if wanted_unit and _normalize_unit(item["unit"]) != wanted_unit:
+            continue
+        return item["price"]
+    return None
 
 
 def _find_row_by_label(ws, label: str, start: int = 1) -> Optional[int]:

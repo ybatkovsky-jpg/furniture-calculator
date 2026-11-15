@@ -4,7 +4,7 @@
 > `furniture-calculator` («ПРО МЕБЕЛЬ», Хабаровск).
 > Здесь: **куда мы идём, что нельзя ломать, что уже проверено фактами**.
 > Новые проверенные факты дописываем сюда с датой — не оставляем в чате.
-> Последняя сверка: **2026-11-15** — `pytest` 409 passed, `check_phases` 59/59,
+> Последняя сверка: **2026-11-15** — `pytest` 410 passed, `check_phases` 59/59,
 > `pip-audit -r requirements.txt` — 0 уязвимостей,
 > `VISION_PROVIDER=deepseek` в `.env`. Дата в заголовках разделов = дата проверки факта.
 
@@ -92,7 +92,7 @@ JSON (`zone_type`, `total_width_mm`, `facades[]`, `drawer_indices[]`, `heights_m
 6. **Не менять основную vision-модель на слабую.** 8B/4B систематически не видят двери/ящики
    (см. §5) — это прямой недосчёт петель и ручек в смете.
 7. **Тесты:** `pytest` из корня (в `pytest.ini` `testpaths = tests` — иначе pytest лезет в `temp/`
-   и падает на разовых скриптах). Сейчас **409 passed**. Правка расчётов без теста не принимается.
+   и падает на разовых скриптах). Сейчас **410 passed**. Правка расчётов без теста не принимается.
 8. **Python 3.12, type hints, async/await, SQLAlchemy 2.0, aiogram 3 FSM.** Не `print()` — `logging`.
    Комментарии, docstring'и, коммиты и сообщения пользователю — **по-русски**.
 9. **Ничего не удалять из `input_images/`, `output/`, `temp/`, `pdfs/`** — это артефакты прогонов
@@ -220,7 +220,7 @@ confidence по доминированию над вторым. Проверен
 ## 8. Проверка перед словом «готово»
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q                # ожидаем 409 passed, 0 failed
+.\.venv\Scripts\python.exe -m pytest -q                # ожидаем 410 passed, 0 failed
 $env:PYTHONIOENCODING='utf-8'; .\.venv\Scripts\python.exe scripts\check_phases.py  # ожидаем 59/59
 ```
 

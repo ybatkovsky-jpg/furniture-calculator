@@ -303,6 +303,7 @@ def calculate_quantities(
     auto_drawers: bool = False,      # авто-ящики если AI не нашёл
     auto_led: bool = False,          # авто-подсветка для кухни
     auto_gola: bool = False,         # авто-GOLA (профиль-ручка) для кухни
+    has_sink: bool = False,          # мойка (для вычета ХДФ, P2-01)
     has_refrigerator: bool = False,  # встраиваемый холодильник
     has_oven: bool = False,          # духовка
     has_dishwasher: bool = False,    # посудомойка
@@ -320,6 +321,7 @@ def calculate_quantities(
     - Раздвижные двери vs распашные (петли только для hinged)
     """
     q = MaterialQuantities()
+    q.has_sink = bool(has_sink)  # до расчёта ХДФ, а не после (P2-01)
     materials = materials or []
 
     # Правила для этого типа помещения

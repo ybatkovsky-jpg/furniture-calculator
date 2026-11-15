@@ -7,7 +7,8 @@ Telegram-бот для автоматического расчёта стоим�
 > `FullPipeline`; фото листа — тоже. Коэффициенты берутся из `CalcSettings` (профиль по умолчанию) или
 > `.env`, цены — из прайса в SQLite (импорт из XLSX). Смета чата и Excel используют один `CostBreakdown`
 > (`app/domain/cost_lines.py`), КП блокируется, если в смете есть позиция без цены. Проверки:
-> `pytest` — 407 passed, `scripts/check_phases.py` — 59/59, Alembic — 3 миграции.
+> `pytest` — 410 passed, `scripts/check_phases.py` — 59/59, Alembic — 3 миграции,
+> `pip-audit -r requirements.txt` — 0 известных уязвимостей.
 
 ## 🎯 Что делает
 

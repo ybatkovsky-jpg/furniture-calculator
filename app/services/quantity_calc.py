@@ -179,6 +179,9 @@ def detect_material_properties(materials: list[str]) -> dict:
         "brand": "unknown",
         "facade_type": "unknown",
         "has_glass": False,
+        # Пустой список материалов — неизвестность; консервативно считаем,
+        # что торец МДФ-фасада нуждается в кромке (ключ всегда присутствует).
+        "mdf_needs_edge": True,
     }
 
     if not materials:
@@ -694,7 +697,7 @@ def calculate_quantities(
             if has_island:
                 vertical_count += 2
 
-            q.gola_vertical_m = avg_height_m * vertical_count
+            q.gola_vertical_m = (avg_height_m + SAW_KERF_MM / 1000) * vertical_count
             q.gola_vertical_pcs = vertical_count
 
         # Штуки по 3 метра

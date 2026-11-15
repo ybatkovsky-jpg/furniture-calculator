@@ -12,6 +12,7 @@
 MORU: считается листами, с оптимизацией укладки деталей
 """
 
+import math
 from dataclasses import dataclass
 
 
@@ -62,13 +63,18 @@ def calculate_glass_cost(
     Returns:
         {"area_m2": площадь, "cost": стоимость, "description": описание}
     """
+    # Защита от отрицательных размеров: раньше они давали отрицательную
+    # площадь и отрицательную стоимость в смете.
+    if width_mm < 0 or height_mm < 0:
+        raise ValueError("Размеры стекла не могут быть отрицательными")
+
     area_m2 = (width_mm * height_mm) / 1_000_000
 
     if glass_type == "moru_riflenoe":
-        # MORU считается листами, не м²
-        sheets_needed = 1  # упрощённо - 1 лист на элемент
+        # MORU продаётся листами 2000×3300 (6.6 м²): считаем листы по площади.
+        sheets_needed = math.ceil(area_m2 / MORU_SHEET_SIZE["area_m2"]) if area_m2 > 0 else 0
         cost = GLASS_PRICES["moru_riflenoe"] * sheets_needed
-        description = f"MORU {width_mm}×{height_mm}мм"
+        description = f"MORU {width_mm}×{height_mm}мм ({sheets_needed} лист.)"
 
     elif glass_type in GLASS_PRICES:
         # Фиксированная цена за м²

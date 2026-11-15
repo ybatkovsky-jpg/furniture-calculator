@@ -43,7 +43,10 @@ print('ТЕСТ 1: detect_material_properties')
 print('━' * 60)
 
 r = detect_material_properties([])
-check(r == {'surface': 'plain', 'brand': 'unknown', 'facade_type': 'unknown', 'has_glass': False}, 'пустой список')
+check(r == {
+    'surface': 'plain', 'brand': 'unknown', 'facade_type': 'unknown',
+    'has_glass': False, 'mdf_needs_edge': True,
+}, 'пустой список')
 
 r = detect_material_properties(['EGGER H1379'])
 check(r['surface'] == 'texture' and r['brand'] == 'EGGER', 'EGGER H1379 → текстура')

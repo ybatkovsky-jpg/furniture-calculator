@@ -55,14 +55,12 @@ def _calc(modules, materials, room="Кухня", **kw):
 # ════════════════════════════════════════════════════════════════════
 
 def test_props_empty():
-    """КВЕРК P7-6: при пустом вводе ранний return не добавляет ключ mdf_needs_edge
-    (все вызывающие используют .get(), поэтому не ломается) — фиксируем форму."""
+    """При пустом вводе ключ mdf_needs_edge присутствует и консервативно True."""
     p = detect_material_properties([])
     assert p == {
         "surface": "plain", "brand": "unknown", "facade_type": "unknown",
-        "has_glass": False,
+        "has_glass": False, "mdf_needs_edge": True,
     }
-    assert "mdf_needs_edge" not in p
 
 
 @pytest.mark.parametrize("mats,brand", [
@@ -442,9 +440,9 @@ def test_non_kitchen_no_auto_accessories():
 def test_gola_vertical_basic_two_profiles():
     q = _calc([_mk("lower_base", 600, fc=1)], ["EGGER U702"],
               zone_type="kitchen", auto_gola=True)
-    # средняя высота модулей с фасадами: 0.82 м (без припуска на пропил) → 2 профиля
+    # средняя высота 0.82 м + пропил 4 мм → 2 профиля
     assert q.gola_vertical_pcs == 2
-    assert q.gola_vertical_m == pytest.approx(0.82 * 2, abs=1e-4)
+    assert q.gola_vertical_m == pytest.approx(0.824 * 2, abs=1e-4)
 
 
 def test_gola_vertical_island_adds_two():
@@ -452,7 +450,7 @@ def test_gola_vertical_island_adds_two():
     q = _calc([_mk("lower_base", 600, fc=1)], ["EGGER U702"],
               room="Кухня с островом", zone_type="kitchen", auto_gola=True)
     assert q.gola_vertical_pcs == 4
-    assert q.gola_vertical_m == pytest.approx(0.82 * 4, abs=1e-4)
+    assert q.gola_vertical_m == pytest.approx(0.824 * 4, abs=1e-4)
 
 
 def test_gola_vertical_corner_adds_one():

@@ -34,14 +34,17 @@ def test_for_aluminum_price():
     assert result["cost"] == 780.5
 
 
-def test_moru_riflenoe_costs_one_sheet_regardless_of_size():
-    """MORU считается листами: фиксированные 4250₽ даже при нулевых размерах."""
+def test_moru_riflenoe_counts_sheets_by_area():
+    """MORU — 6.6 м² на лист: 1.5 м² → 1 лист, 26.4 м² → 4 листа."""
     normal = calculate_glass_cost("moru_riflenoe", 1000, 1500)
     assert normal["cost"] == GLASS_PRICES["moru_riflenoe"]
 
+    large = calculate_glass_cost("moru_riflenoe", 4000, 6600)
+    assert large["cost"] == GLASS_PRICES["moru_riflenoe"] * 4
+
     zero = calculate_glass_cost("moru_riflenoe", 0, 0)
     assert zero["area_m2"] == 0.0
-    assert zero["cost"] == 4250  # упрощение в коде: 1 лист на элемент
+    assert zero["cost"] == 0
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -76,11 +79,12 @@ def test_unpriced_type_without_manual_price_costs_zero():
 # ГРАНИЧНЫЕ СЛУЧАИ
 # ════════════════════════════════════════════════════════════════════
 
-def test_negative_dimensions_produce_negative_cost():
-    """Отрицательный размер → отрицательная площадь/стоимость (защиты нет)."""
-    result = calculate_glass_cost("clear", -600, 800)
-    assert result["area_m2"] == -0.48
-    assert result["cost"] == -1200.0
+def test_negative_dimensions_are_rejected():
+    """Отрицательный размер — ошибка, а не отрицательная стоимость."""
+    import pytest
+
+    with pytest.raises(ValueError, match="отрицательными"):
+        calculate_glass_cost("clear", -600, 800)
 
 
 def test_rounding_of_area_and_cost():

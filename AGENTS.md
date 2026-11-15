@@ -201,13 +201,13 @@ confidence по доминированию над вторым. Проверен
   (вид, толщина, формат листа, единица, цена), в «Настройках» показывается сводка.
 - **P2-16**: Excel пишет вычисленные значения, а не формулы — `data_only=True`
   видит итог без пересчёта; формулы в Excel больше не живут.
-- **S5-04**: подготовлен путь PostgreSQL — `docker-compose.postgres.yml`,
-  `app/db/urls.py` (asyncpg → psycopg для Alembic), `docs/postgres.md`,
-  драйверы в requirements. **Не проверено:** 2026-11-15 Docker Desktop запущен,
-  но движок отвечает `500` на `/version`; контейнер PostgreSQL не поднят,
-  миграции/тесты на PostgreSQL не прогонялись.
-- **Осталось:** поднять PostgreSQL и пройти чек-лист `docs/postgres.md`
-  (миграции, перенос данных, нагрузка, роли/бэкап) — без этого S5-04 не закрыт.
+- **S5-04**: `docker-compose.postgres.yml`, `app/db/urls.py`, `docs/postgres.md`,
+  `scripts/migrate_sqlite_to_postgres.py`, драйверы asyncpg/psycopg.
+  2026-11-15 проверено на portable PostgreSQL 16.2: 3 миграции, `alembic check`
+  чисто, данные перенесены (53/18/525/122/2), asyncpg читает БД. Docker-путь
+  не работает: WSL без дистрибутива, движок Docker Desktop отвечает `500`.
+- **Осталось по S5-04:** `pytest` на PostgreSQL-URL, нагрузка, роли без DDL,
+  `pg_dump`/восстановление — чек-лист `docs/postgres.md` §3.
 
 - **Исправленные квирки ядра:** МДФ 2 мм на высоких фасадах больше не теряется;
   `glass_calc` считает MORU листами по площади (6.6 м²), отрицательные размеры —
@@ -232,6 +232,9 @@ confidence по доминированию над вторым. Проверен
 - **Ollama**: три «облачных» манифеста (`gemma4:31b-cloud`, `glm-5.1:cloud`, `minimax-m3:cloud`) —
   тег `-cloud` = весов локально нет.
 - **HF hub cache** (`~\.cache\huggingface\hub`): только `models--Systran--faster-whisper-tiny`.
+- **WSL:** дистрибутив не установлен (`wsl --status`), поэтому Linux-контейнеры
+  Docker Desktop не работают (движок отдаёт `500`). PostgreSQL проверялся
+  portable-бинарниками, не контейнером.
 - **Falcon-OCR на машине НЕТ**, репозиториев `unsloth/Falcon-OCR[-GGUF]` не существует; есть
   `tiiuae/Falcon-OCR` (safetensors), MLX, ONNX — **GGUF-версии нет**, значит Unsloth Studio её не запустит.
   Для подсчёта мебели отдельная OCR-модель не нужна: числа читает Tesseract, сущности — VLM.

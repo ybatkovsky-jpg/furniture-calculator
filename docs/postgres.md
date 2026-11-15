@@ -1,14 +1,22 @@
-# Переход на PostgreSQL (S5-04, заготовка)
+# Переход на PostgreSQL (S5-04)
 
-Документ описывает, как поднять PostgreSQL и перевести приложение. Это **не
-выполненная миграция**: на машине разработчика Docker-демон выключен, поэтому
-прогон миграций и тестов на PostgreSQL не проводился. Не считать готовым, пока
-не выполнены пункты проверки ниже.
+Документ описывает, как поднять PostgreSQL и перевести приложение.
 
-Проверка 2026-11-15: Docker Desktop удалось запустить, но движок отвечает
-`500 Internal Server Error` на `/version` и `/images/json` (`docker compose up`
-падает на получении образа). Контейнер PostgreSQL не поднят; причина — состояние
-Docker Desktop/WSL, а не проект. После починки Docker повторить раздел 3.
+**Статус 2026-11-15:** миграции и перенос данных **проверены** на переносном
+PostgreSQL 16.2 (Windows-бинарники, порт 55432, без Docker):
+- `alembic upgrade head` — 3 миграции, ошибок нет; `alembic check` —
+  «No new upgrade operations»;
+- схема создана, 7 таблиц приложения + `alembic_version`;
+- `scripts/migrate_sqlite_to_postgres.py` перенёс данные и сверил counts:
+  projects 53, calculations 18, price_items 525, price_history 122,
+  commercial_offers 2 (совпало с SQLite);
+- asyncpg-подключение через `app.db.session` читает проекты/расчёты/прайс.
+
+Docker-путь на этой машине **не работает**: Docker Desktop запускается, но
+движок отвечает `500` на `/version` и `/images/json`; причина — WSL без
+установленного дистрибутива (`wsl --status`: «Windows Subsystem for Linux has
+no installed distributions»). Для проверки использовался portable PostgreSQL,
+а не контейнер. После починки Docker/WSL можно повторить раздел 2.
 
 ## 1. Что уже готово в коде
 
@@ -38,19 +46,21 @@ $env:DATABASE_URL = "postgresql+asyncpg://furniture:...@127.0.0.1:5432/furniture
 .\.venv\Scripts\python.exe -m app.main
 ```
 
-## 3. Обязательная проверка (без неё S5-04 не закрыт)
+## 3. Обязательная проверка
 
-1. `alembic upgrade head` на пустой PostgreSQL — без ошибок; `alembic check` —
-   «No new upgrade operations».
-2. `pytest` на PostgreSQL-URL (тесты, где есть БД, должны использовать
-   временную схему/транзакцию).
-3. Перенести данные SQLite → PostgreSQL (скрипт/`pgloader`), сверить counts:
-   projects, calculations, price_items, price_history.
-4. Проверить WAL-специфику: `PRAGMA`-слушатель не должен выполняться для
-   PostgreSQL (в `db/session.py` стоит проверка `startswith("sqlite")`).
-5. Нагрузка: два параллельных расчёта, импорт прайса, генерация КП.
-6. Роли/доступ: отдельный пользователь БД для приложения без DDL-прав;
-   миграции — отдельной ролью.
+Сделано 2026-11-15:
+1. ✅ `alembic upgrade head` на пустом PostgreSQL; `alembic check` — чисто.
+2. ✅ Схема и asyncpg-подключение проверены вручную (проекты/расчёты/прайс).
+3. ✅ Данные SQLite → PostgreSQL перенесены `scripts/migrate_sqlite_to_postgres.py`;
+   counts совпали (53/18/525/122/2).
+4. ✅ WAL-слушатель не срабатывает для PostgreSQL (`startswith("sqlite")`),
+   подключение прошло без `PRAGMA`-ошибок.
+
+Осталось:
+5. ⏳ `pytest` на PostgreSQL-URL (тесты с БД — через временную схему/транзакцию).
+6. ⏳ Нагрузка: два параллельных расчёта, импорт прайса, генерация КП.
+7. ⏳ Роли/доступ: отдельный пользователь БД без DDL-прав; миграции — отдельной ролью.
+8. ⏳ Бэкап PostgreSQL (`pg_dump` + проверка восстановления).
 
 ## 4. Что ещё не сделано
 
@@ -62,6 +72,6 @@ $env:DATABASE_URL = "postgresql+asyncpg://furniture:...@127.0.0.1:5432/furniture
 
 ## 5. Откат
 
-Пока PostgreSQL не проверен, рабочей остаётся SQLite. Переключение
-`DATABASE_URL` обратимо; данные SQLite не удаляются. Перед миграцией —
-`scripts/backup_db.py`.
+Рабочей остаётся SQLite. Переключение `DATABASE_URL` обратимо; данные SQLite не
+удаляются. Перед миграцией — `scripts/backup_db.py`. Перенос в PostgreSQL
+идемпотентен (`ON CONFLICT DO NOTHING`), повторный запуск не дублирует строки.

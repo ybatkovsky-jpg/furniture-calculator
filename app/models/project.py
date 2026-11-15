@@ -2,7 +2,7 @@
 Модель для проектов клиентов.
 """
 
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.models.base import Base
@@ -41,11 +41,18 @@ class Project(Base):
         cascade="all, delete-orphan"
     )
 
-    # Свойство для получения текущего/первого расчёта
+    # Свойство для получения последнего расчёта (P2-19).
+    @property
+    def latest_calculation(self):
+        """Последний расчёт проекта (по id; created_at может быть None)."""
+        if not self.calculations:
+            return None
+        return max(self.calculations, key=lambda c: (c.id or 0))
+
     @property
     def calculation(self):
-        """Получить первый/текущий расчёт проекта."""
-        return self.calculations[0] if self.calculations else None
+        """Совместимость: «текущий» расчёт = последний, а не первый."""
+        return self.latest_calculation
 
     def __repr__(self):
         return f"<Project {self.client_name} - {self.project_name}>"

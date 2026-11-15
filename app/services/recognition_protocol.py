@@ -16,7 +16,7 @@
 это делает функции удобными для тестов без импорта image_analyzer.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 # Ранг уверенности для тайбрейков (high > medium > low)
 CONF_RANK = {"high": 3, "medium": 2, "low": 1}

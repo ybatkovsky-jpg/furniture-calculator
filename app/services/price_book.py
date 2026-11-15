@@ -18,7 +18,7 @@ from app.models.price import PriceItem
 
 # key → (наборы синонимов, ожидаемая единица или None)
 PRICE_BOOK_RULES: dict[str, tuple[tuple[tuple[str, ...], ...], str | None]] = {
-    "hdf": ((("хдф",), ("лхдф",)), "лист"),
+    "hdf": ((("хдф", "лхдф"),), "лист"),
     "gola_horizontal": ((("gola", "гола"), ("горизонт",)), "шт"),
     "gola_vertical": ((("gola", "гола"), ("вертик",)), "шт"),
     "led_strip": ((("led", "подсвет"), ("бухт", "лент", "полос")), "м"),
@@ -71,7 +71,7 @@ async def load_price_book(session: AsyncSession) -> dict[str, float]:
             book[key] = float(item.unit_price)
             break
 
-    # Кромка МДФ 1 мм — отдельное поле толщины (P0-07), а не подстрока названия.
+    # Кромка — по толщине (P0-07), а не подстрокой названия.
     for item in items:
         if "кромк" not in _text(item):
             continue
@@ -81,8 +81,9 @@ async def load_price_book(session: AsyncSession) -> dict[str, float]:
         except (TypeError, ValueError):
             thickness_value = None
         if thickness_value == 1.0:
-            book["edge_mdf_1mm"] = float(item.unit_price)
-            break
+            book.setdefault("edge_mdf_1mm", float(item.unit_price))
+        elif thickness_value in (0.4, 0.8, 2.0):
+            book.setdefault(f"edge_{thickness_value:g}", float(item.unit_price))
 
     return book
 
@@ -110,4 +111,17 @@ def build_price_book(items: Iterable[Any]) -> dict[str, float]:
                 continue
             book[key] = float(item.unit_price)
             break
+
+    for item in dummy:
+        if "кромк" not in _text(item):
+            continue
+        thickness = getattr(item, "thickness_mm", None)
+        try:
+            thickness_value = float(thickness) if thickness is not None else None
+        except (TypeError, ValueError):
+            thickness_value = None
+        if thickness_value == 1.0:
+            book.setdefault("edge_mdf_1mm", float(item.unit_price))
+        elif thickness_value in (0.4, 0.8, 2.0):
+            book.setdefault(f"edge_{thickness_value:g}", float(item.unit_price))
     return book

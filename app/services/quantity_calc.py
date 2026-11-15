@@ -31,9 +31,8 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-from app.services.full_pipeline import PipelineResult, RoomSpec
 from app.services.image_analyzer import RecognizedModule
-from app.services.furniture_defaults import get_rules, FurnitureRules
+from app.services.furniture_defaults import get_rules
 from app.services.hardware_calc import (
     hinges_per_door,                 # единое правило петель (parity с calc_engine)
     estimate_facade_weight_kg,       # оценка веса фасада (BLUM/HETTICH + вес)
@@ -761,7 +760,7 @@ def calculate_quantities(
     if rules.auto_shelves:
         open_mods = [m for m in modules if m.type in ("shelf_unit", "open_unit")]
         if open_mods:
-            q.suggestions.append(f"📚 Рекомендация: проверить количество полок в открытых модулях")
+            q.suggestions.append("📚 Рекомендация: проверить количество полок в открытых модулях")
 
     if is_wardrobe:
         q.suggestions.append(
@@ -795,9 +794,6 @@ def fill_template_for_room(
     """
     q = calculate_quantities(modules, room_name, materials, zone_type=zone_type)
     items = []
-
-    rules = get_rules(zone_type)
-    is_kitchen = rules.family == "kitchen"
 
     # Определяем материал через единую функцию
     mat_props = detect_material_properties(materials)

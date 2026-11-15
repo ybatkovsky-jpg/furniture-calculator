@@ -102,8 +102,6 @@ def _fix_ocr_name(name: str) -> str:
     # Явные исправления опечаток OCR
     TYPO_FIXES = {
         "Оctров": "Остров",
-        "Остров": "Остров",
-        "Остров": "Остров",
         "Подветкой": "подсветкой",
     }
     for wrong, right in TYPO_FIXES.items():
@@ -371,7 +369,7 @@ class FullPipeline:
                 )
 
             # ── 3. Fallback: модульный анализ (GLM-5V-Turbo) ──
-            logger.info(f"    ⚠️ Единый анализ не дал модулей, fallback на GLM-5V...")
+            logger.info("    ⚠️ Единый анализ не дал модулей, fallback на GLM-5V...")
             return await self.vision.analyze_drawing(tmp_path)
 
         finally:
@@ -427,7 +425,7 @@ class FullPipeline:
         for page_num in range(total):
             # Всегда пропускаем титульную (стр. 0)
             if page_num == 0:
-                logger.info(f"  Стр. 1: пропущена (титульная)")
+                logger.info("  Стр. 1: пропущена (титульная)")
                 continue
 
             # Всегда пропускаем последнюю (штамп/легенда)
@@ -478,10 +476,18 @@ class FullPipeline:
     def _find_room_for_page(
         self, ocr_result: PDFParseResult, page_num: int
     ) -> Optional[ParsedRoom]:
-        """Найти OCR-комнату для страницы: точный match page=N."""
-        import re
+        """Найти OCR-комнату для страницы по полю `page` (P2-02).
+
+        Раньше искали `page=N` в raw_text, но pdf_parser кладёт туда текст
+        секции, а номер страницы — в `ParsedRoom.page`. В результате привязка
+        «страница → помещение» не работала и имена генерировались заново.
+        """
         for room in ocr_result.rooms:
-            if f"page={page_num}" in room.raw_text:
+            if room.page == page_num:
+                return room
+        # Резерв: старые OCR-результаты могли писать номер в текст.
+        for room in ocr_result.rooms:
+            if f"page={page_num}" in (room.raw_text or ""):
                 return room
         return None
 
@@ -767,7 +773,7 @@ def print_result(result: PipelineResult):
                 c = '📐' if m.is_corner else ' '
                 print(f"      {g}{c} {m.type}: {m.width}×{m.depth}×{m.height}mm ×{m.quantity}")
         else:
-            print(f"   (без модулей — информационная секция)")
+            print("   (без модулей — информационная секция)")
         print()
 
     if result.errors:

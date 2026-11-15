@@ -4,11 +4,8 @@
 
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, FSInputFile
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
-from app.bot.keyboards.inline import get_discount_keyboard
 from app.db.session import get_session
 from app.models.calculation import Calculation, CommercialOffer
 from app.models.project import Project
@@ -199,10 +196,31 @@ async def create_calculation_variant(callback: CallbackQuery):
         )
 
         session.add(new_calculation)
+        await session.flush()
+
+        # P2-19: вариант пересчитывается сразу, а не открывается с 0 ₽.
+        from app.services.calc_engine import calculate_full_cost
+        from app.services.calculation_persist import apply_result
+        from app.services.price_book import load_price_book
+        from app.services.pricing_policy import load_default_policy
+
+        price_book = await load_price_book(session)
+        policy = await load_default_policy(session)
+        result = calculate_full_cost(
+            modules=new_calculation.modules or [],
+            selected_materials=new_calculation.selected_materials or {},
+            selected_hardware=new_calculation.selected_hardware or {},
+            glass_items=new_calculation.glass_items or [],
+            zone_type=original_calc.zone_type,
+            price_book=price_book,
+            settings=policy,
+        )
+        apply_result(new_calculation, result)
         await session.commit()
 
         await callback.message.answer(
             f"✅ Создан новый вариант: {new_variant_name}\n"
+            f"💰 Итого: {result.total_cash:,.0f} ₽\n"
             f"Теперь вы можете скорректировать материалы и сгенерировать новое КП."
         )
 

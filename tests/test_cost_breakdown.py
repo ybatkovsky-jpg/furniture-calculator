@@ -19,7 +19,7 @@ def _module():
 def _materials():
     return {
         "ldsp": {"name": "EGGER", "price": 6000, "price_unit": "лист"},
-        "facades": {"name": "MDF", "price": 10000, "price_unit": "м²"},
+        "facades": {"name": "ФАСАДЫ ПВХ 16мм", "price": 10000, "price_unit": "м²"},
         "edge": [
             {"name": "Кромка 0.8", "thickness_mm": 0.8, "price": 34},
             {"name": "Кромка 0.4", "thickness_mm": 0.4, "price": 17.5},

@@ -69,9 +69,21 @@ async def receive_price_document(message: Message, state: FSMContext):
         return
 
     document = message.document
-    file_name = document.file_name or "price.xlsx"
+    # P2-10: имя файла — только basename (никаких ../), лимит размера,
+    # проверка MIME/расширения. Раньше Path(tmpdir)/file_name позволял
+    # запись за пределы каталога, а размер не ограничивался.
+    file_name = Path(document.file_name or "price.xlsx").name
     if not file_name.lower().endswith(".xlsx"):
         await message.answer("Ошибка: нужен файл в формате .xlsx. Попробуйте еще раз.")
+        return
+    if document.file_size and document.file_size > 20 * 1024 * 1024:
+        await message.answer("Ошибка: файл больше 20 МБ.")
+        return
+    if document.mime_type and document.mime_type not in (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/octet-stream",
+    ):
+        await message.answer("Ошибка: неверный тип файла, нужен XLSX.")
         return
 
     # Проверяем, что пользователь существует

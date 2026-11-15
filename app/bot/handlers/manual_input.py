@@ -10,6 +10,8 @@ from app.bot.states.manual_input import ManualInputStates
 from app.bot.keyboards.inline import (
     get_module_type_keyboard,
     get_width_keyboard,
+    get_depth_keyboard,
+    get_height_keyboard,
     get_filling_keyboard,
     get_glass_keyboard,
     get_module_actions_keyboard
@@ -103,8 +105,27 @@ async def process_custom_width(message: Message, state: FSMContext):
         await message.answer("Введите корректную ширину в мм (положительное число):")
 
 
+def _default_depth(module_type: str) -> int:
+    return 320 if module_type in ["upper_base", "penal"] else 560
+
+
+def _default_height(module_type: str) -> int:
+    if module_type == "penal":
+        return 2100
+    if module_type == "upper_base":
+        return 720
+    return 820
+
+
+async def _reply(source, text: str, **kwargs):
+    """Ответить и на callback, и на обычное сообщение."""
+    if hasattr(source, "message"):
+        return await source.message.answer(text, **kwargs)
+    return await source.answer(text, **kwargs)
+
+
 async def save_width_and_continue(source, state: FSMContext, width: int):
-    """Сохраняет ширину и переходит к следующему шагу."""
+    """Сохраняет ширину и спрашивает глубину (P1-07)."""
     data = await state.get_data()
     current_modules = data.get('current_modules', [])
     current_module_index = data.get('current_module_index', 0)
@@ -113,42 +134,98 @@ async def save_width_and_continue(source, state: FSMContext, width: int):
         current_modules[current_module_index]['width'] = width
         await state.update_data(current_modules=current_modules)
 
-    # Определяем глубину по умолчанию
     module_type = current_modules[current_module_index]['type']
-    default_depth = 320 if module_type in ['upper_base', 'penal'] else 560
-    current_modules[current_module_index]['depth'] = default_depth
+    await state.set_state(ManualInputStates.waiting_for_depth)
+    await _reply(
+        source,
+        f"Ширина: {width} мм\n"
+        f"Выберите глубину (по умолчанию {_default_depth(module_type)} мм):",
+        reply_markup=get_depth_keyboard(),
+    )
 
-    # Определяем высоту по умолчанию
-    if module_type == 'penal':
-        default_height = 2100
-    elif module_type == 'upper_base':
-        default_height = 720
-    else:  # lower_base, column, cabinet
-        default_height = 820
 
-    current_modules[current_module_index]['height'] = default_height
-    await state.update_data(current_modules=current_modules)
+@router.callback_query(F.data.startswith("depth:"), ManualInputStates.waiting_for_depth)
+async def process_depth(callback: CallbackQuery, state: FSMContext):
+    """Глубина из кнопки или «по умолчанию»."""
+    value = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    modules = data.get('current_modules', [])
+    index = data.get('current_module_index', 0)
+    module_type = modules[index]['type']
+    depth = _default_depth(module_type) if value == "default" else int(value)
+    modules[index]['depth'] = depth
+    await state.update_data(current_modules=modules)
+
+    await state.set_state(ManualInputStates.waiting_for_height)
+    await callback.message.answer(
+        f"Глубина: {depth} мм\n"
+        f"Выберите высоту (по умолчанию {_default_height(module_type)} мм):",
+        reply_markup=get_height_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.message(ManualInputStates.waiting_for_depth)
+async def process_custom_depth(message: Message, state: FSMContext):
+    try:
+        depth = int(message.text.strip())
+        if depth <= 0 or depth > 2000:
+            raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("Введите глубину в мм (например: 560):")
+        return
+    data = await state.get_data()
+    modules = data.get('current_modules', [])
+    index = data.get('current_module_index', 0)
+    modules[index]['depth'] = depth
+    await state.update_data(current_modules=modules)
+    await state.set_state(ManualInputStates.waiting_for_height)
+    await message.answer(
+        f"Глубина: {depth} мм\n"
+        f"Выберите высоту (по умолчанию {_default_height(modules[index]['type'])} мм):",
+        reply_markup=get_height_keyboard(),
+    )
+
+
+@router.callback_query(F.data.startswith("height:"), ManualInputStates.waiting_for_height)
+async def process_height(callback: CallbackQuery, state: FSMContext):
+    """Высота из кнопки или «по умолчанию», затем наполнение."""
+    value = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    modules = data.get('current_modules', [])
+    index = data.get('current_module_index', 0)
+    module_type = modules[index]['type']
+    height = _default_height(module_type) if value == "default" else int(value)
+    modules[index]['height'] = height
+    await state.update_data(current_modules=modules)
 
     await state.set_state(ManualInputStates.waiting_for_filling)
+    await callback.message.answer(
+        f"Высота: {height} мм\n\nВыберите наполнение:",
+        reply_markup=get_filling_keyboard(),
+    )
+    await callback.answer()
 
-    if hasattr(source, 'message'):
-        # Это callback query
-        await source.message.answer(
-            f"Ширина: {width} мм\n"
-            f"Глубина: {default_depth} мм (по умолчанию)\n"
-            f"Высота: {default_height} мм (по умолчанию)\n\n"
-            "Выберите наполнение:",
-            reply_markup=get_filling_keyboard()
-        )
-    else:
-        # Это обычное сообщение
-        await source.answer(
-            f"Ширина: {width} мм\n"
-            f"Глубина: {default_depth} мм (по умолчанию)\n"
-            f"Высота: {default_height} мм (по умолчанию)\n\n"
-            "Выберите наполнение:",
-            reply_markup=get_filling_keyboard()
-        )
+
+@router.message(ManualInputStates.waiting_for_height)
+async def process_custom_height(message: Message, state: FSMContext):
+    try:
+        height = int(message.text.strip())
+        if height <= 0 or height > 4000:
+            raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("Введите высоту в мм (например: 820):")
+        return
+    data = await state.get_data()
+    modules = data.get('current_modules', [])
+    index = data.get('current_module_index', 0)
+    modules[index]['height'] = height
+    await state.update_data(current_modules=modules)
+    await state.set_state(ManualInputStates.waiting_for_filling)
+    await message.answer(
+        f"Высота: {height} мм\n\nВыберите наполнение:",
+        reply_markup=get_filling_keyboard(),
+    )
 
 
 @router.callback_query(F.data.startswith("filling:"), ManualInputStates.waiting_for_filling)

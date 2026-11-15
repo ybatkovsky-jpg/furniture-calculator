@@ -106,7 +106,7 @@ def _run_import(imports: list[list[tuple[str, object]]]):
 
 def test_import_empty_price_requires_manual_price():
     """P0-01: пустая цена → NULL + requires_manual_price, а не 0,419 из имени."""
-    stats, items, _ = _run_import([[("ЛДСП LAMARTY 0,4*19", None)]])
+    stats, items, _ = _run_import([[("ЛДСП LAMARTY 2800*2070", None)]])
 
     assert stats[0]["created"] == 1
     item = items[0]

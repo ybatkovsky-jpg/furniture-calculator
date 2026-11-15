@@ -8,9 +8,10 @@
 """
 
 from dataclasses import dataclass, field
-from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
+from app.domain.money import money as _money
+from app.domain.money import rub as _rub
 from app.domain.validation import (
     PricingError,
     validate_cost_components,
@@ -21,9 +22,9 @@ from app.domain.validation import (
 
 def _round_half_up(value: float, digits: int = 0) -> float:
     """Округление денег HALF_UP (round() в Python — банковское, P1-24)."""
-    quantum = Decimal(1).scaleb(-digits)
-    result = Decimal(str(value)).quantize(quantum, rounding=ROUND_HALF_UP)
-    return float(result)
+    if digits == 0:
+        return float(_rub(value))
+    return float(_money(value))
 
 
 @dataclass

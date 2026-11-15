@@ -45,7 +45,21 @@ CATEGORY_RULES: tuple[tuple[str, str, int], ...] = (
     ("лдсп", "ЛДСП", 20),
     ("столешн", "Столешницы", 50),
     ("петл", "Петли", 50),
+    ("лоток", "Комплектующие", 60),
     ("ящик", "Ящики", 50),
+    ("направляющ", "Направляющие", 50),
+    ("подъёмник", "Подъёмники", 50),
+    ("подъемник", "Подъёмники", 50),
+    ("бутылочниц", "Бутылочницы", 50),
+    ("сушк", "Сушки", 50),
+    ("подсвет", "Подсветка", 50),
+    ("gola", "GOLA", 50),
+    ("гола", "GOLA", 50),
+    ("цокол", "Крепёж", 50),
+    ("конфирмат", "Крепёж", 60),
+    ("опора", "Крепёж", 50),
+    ("подвес", "Крепёж", 50),
+    ("подрядчик", "Подрядчики", 50),
     ("стекл", "Стекло", 50),
     ("фасад", "Фасады", 30),
     ("алюмин", "Алюминиевый фасад", 30),
@@ -92,6 +106,8 @@ CATEGORY_UNITS = {
     "МДФ": "лист",
     "МДФ плиты": "лист",
     "ХДФ": "лист",
+    "GOLA": "шт",
+    "Крепёж": "шт",
     "Столешницы": "м",
     "Фасады": "м²",
     "ЭФТРИ ПВХ": "м²",
@@ -105,6 +121,57 @@ _THICKNESS_CROSS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:мм)?\s*[*×xх]\s*\d
 _THICKNESS_MM_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*мм\b")
 _THICKNESS_DECIMAL_RE = re.compile(r"(?<![\d.,])(\d[.,]\d)(?![\d.,])")
 _CURRENCY_RE = re.compile(r"(?i)(₽|руб\.?|р\.|rub)")
+_EDGE_NAME_RE = re.compile(r"(?<![\d.,])(\d(?:[.,]\d)?)\s*[*×xх]\s*(19|22|23|35|44)\b")
+_DIMENSIONS_RE = re.compile(r"(\d{3,4})\s*[*×xх]\s*(\d{2,4})")
+_COIL_RE = re.compile(r"бухт\w*[^\d]{0,5}(\d+(?:[.,]\d+)?)\s*м", re.IGNORECASE)
+
+
+def looks_like_edge(name: Optional[Any]) -> bool:
+    """«МДФ ETERNO 1*22», «EGGER 0,8*19» — это кромка, а не плита."""
+    return bool(_EDGE_NAME_RE.search(str(name or "")))
+
+
+def detect_brand(name: str, category: str) -> Optional[str]:
+    """Бренд позиции для выбора в боте (категории важнее первого слова).
+
+    UI выбирает петли по бренду BOYARD/BLUM/HETTICH и ящики по
+    «BLUM TANDEMBOX»/«BLUM LEGRABOX»/«BOYARD СТАРТ»/HETTICH. Импорт без
+    бренда ломал эти запросы.
+    """
+    text = (name or "").upper()
+    known = {
+        "EGGER", "EXTRAVERT", "LAMARTY", "ТОМЛЕСДРЕВ", "TOMLESDREV",
+        "EVOGLOSS", "EVOSOFT", "AGT", "ETERNO", "SLOTEX", "FIRMAX",
+        "BOYARD", "BLUM", "HETTICH",
+    }
+    first = (name or "").split(maxsplit=1)[0].upper() if name else ""
+    if first in known:
+        return first
+
+    if category == "Петли":
+        if "BOYARD" in text or "БОЯРД" in text:
+            return "BOYARD"
+        if "BLUM" in text or "БЛЮМ" in text:
+            return "BLUM"
+        if "HETTICH" in text or "ХЕТТИХ" in text:
+            return "HETTICH"
+        return None
+
+    if category == "Ящики":
+        if "TANDEMBOX" in text or "LEGRABOX" in text or "MOVENTO" in text:
+            return "BLUM LEGRABOX" if "LEGRABOX" in text else "BLUM TANDEMBOX"
+        if "BOYARD" in text or "СТАРТ" in text:
+            return "BOYARD СТАРТ"
+        if "HETTICH" in text:
+            return "HETTICH"
+        if "BLUM" in text:
+            return "BLUM TANDEMBOX"
+        return None
+
+    for marker in ("BOYARD", "BLUM", "HETTICH", "EGGER", "SLOTEX", "AGT"):
+        if marker in text:
+            return marker
+    return None
 
 
 @dataclass(frozen=True)
@@ -133,7 +200,11 @@ def normalize_text(value: Optional[Any]) -> str:
     text = str(value).strip()
     if not text:
         return ""
+    # ё → е и снятие диакритики: NFKD разлагает «ё» на «е» + U+0308,
+    # а regex превращал combining mark в пробел («подъе мники»).
+    text = text.replace("ё", "е").replace("Ё", "Е")
     text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
     text = text.casefold()
     text = re.sub(r"[\s\W]+", " ", text)
     return text.strip()
@@ -221,9 +292,22 @@ def detect_price_unit(
         if marker.casefold() in category_text.casefold():
             return unit
 
-    name_unit = normalize_unit(name)
-    if name_unit:
-        return name_unit
+    name_text = str(name or "")
+    name_lower = name_text.casefold()
+    # Профили GOLA и цоколь продаются штукой длиной 3–4 м, а не за метр.
+    if ("gola" in name_lower or "гола" in name_lower) and "профил" in name_lower:
+        return "шт"
+    if "цокол" in name_lower:
+        return "шт"
+    if "м²" in name_text or "кв.м" in name_lower or "кв. м" in name_lower:
+        return "м²"
+    # «3 м», «5м» — но не «900мм» (это размер, а не единица).
+    if re.search(r"\d+\s*м(?!м)(?!\w)", name_text, re.IGNORECASE):
+        return "м"
+    if re.search(r"\d+\s*м\.п", name_lower):
+        return "м"
+    if "шт" in name_lower and not re.search(r"\d+\s*мм", name_lower):
+        return "шт"
     return DEFAULT_PRICE_UNIT
 
 
@@ -246,9 +330,13 @@ def detect_thickness_mm(name: Optional[Any], category: Optional[Any]) -> Optiona
         match = regex.search(text)
         if match:
             try:
-                return float(match.group(1).replace(",", "."))
+                value = float(match.group(1).replace(",", "."))
             except ValueError:
                 continue
+            # Кромка толщиной 42 мм — это не кромка, а «42*3050» (габарит).
+            if 0.2 <= value <= 3.0:
+                return value
+            continue
 
     # «Кромка ПВХ 0.4» — десятичная без «мм» и без «*».
     match = _THICKNESS_DECIMAL_RE.search(text)
@@ -260,14 +348,19 @@ def detect_thickness_mm(name: Optional[Any], category: Optional[Any]) -> Optiona
 def guess_header_row(sheet) -> tuple[int, dict[str, int]]:
     header_patterns = {
         "name": ["наимен", "назван", "товар", "позици"],
+        # «Поставщик» — это не бренд ЛДСП: бренд берём из названия (EGGER и т.п.).
         "brand": ["бренд", "производ", "марка"],
+        "color": ["цвет"],
         "category": ["категор", "раздел", "группа"],
-        "price": ["цен", "р/м", "р/м2", "р/м²", "цена/м", "цена/м²"],
+        # «С/С» — себестоимость, то есть цена позиции в файлах расчёта.
+        "price": ["с/с", "с с", "себестоим", "цен", "р/м", "р м", "р/м2", "р м2", "цена/м", "цена/м²"],
         "unit": ["ед", "ед.", "шт", "м2", "м²", "кв"],
     }
 
-    for row_index in range(1, min(12, sheet.max_row) + 1):
-        row = [normalize_text(cell.value) for cell in sheet[row_index]]
+    for row_index, values in enumerate(
+        sheet.iter_rows(min_row=1, max_row=12, values_only=True), 1
+    ):
+        row = [normalize_text(value) for value in values]
         if not any(row):
             continue
 
@@ -308,6 +401,21 @@ def _item_key(name: str, category: str, brand: Optional[str]):
     return (name, category, brand or "")
 
 
+def _sheet_bounds(sheet) -> tuple[int, int]:
+    """Границы листа для read_only-режима (max_row там None)."""
+    if sheet.max_row and sheet.max_column:
+        return int(sheet.max_row), int(sheet.max_column)
+    try:
+        from openpyxl.utils import range_boundaries
+
+        _min_col, _min_row, max_col, max_row = range_boundaries(
+            sheet.calculate_dimension(force=True)
+        )
+        return int(max_row), int(max_col)
+    except Exception:  # noqa: BLE001 — пустой/битый лист
+        return 0, 0
+
+
 async def import_price_from_xlsx(
     path: str,
     session: AsyncSession,
@@ -318,7 +426,8 @@ async def import_price_from_xlsx(
     Возвращает {"created", "updated", "skipped", "rejected", "deactivated"}.
     Позиции, которых нет в файле, деактивируются (is_active=0), а не удаляются.
     """
-    workbook = load_workbook(Path(path), data_only=True)
+    # read_only — защита от больших/zip-bomb файлов (P2-10).
+    workbook = load_workbook(Path(path), data_only=True, read_only=True)
     created = updated = skipped = rejected = deactivated = 0
     seen_keys: set = set()
     # Категории, реально присутствующие в файле: деактивируем пропавшие
@@ -328,10 +437,16 @@ async def import_price_from_xlsx(
 
     for sheet in workbook.worksheets:
         current_category = detect_category_from_text(sheet.title) or None
+        current_brand = None  # бренд из заголовка секции («ЯЩИКИ HETTICH»)
         header_row_index, header_mapping = guess_header_row(sheet)
+        # read_only: читаем лист один раз построчно, а не random-access cell().
+        all_rows = list(sheet.iter_rows(values_only=True))
+        max_row = len(all_rows)
+        max_col = max((len(r) for r in all_rows), default=0)
 
-        for row_index in range(header_row_index + 1, sheet.max_row + 1):
-            row = [sheet.cell(row=row_index, column=col_index).value for col_index in range(1, max(sheet.max_column, 6) + 1)]
+        for row_index in range(header_row_index + 1, max_row + 1):
+            raw = list(all_rows[row_index - 1])
+            row = raw + [None] * (max(max_col, 6) - len(raw))
             if not any(row):
                 continue
 
@@ -340,6 +455,9 @@ async def import_price_from_xlsx(
                 category_hint = detect_category_from_text(section_text)
                 if category_hint:
                     current_category = category_hint
+                section_brand = detect_brand(str(section_text), current_category or "")
+                if section_brand:
+                    current_brand = section_brand
                 continue
 
             name = row[header_mapping.get("name", 0)] if header_mapping.get("name") is not None else row[0]
@@ -348,22 +466,61 @@ async def import_price_from_xlsx(
                 continue
 
             name = str(name).strip()
+            # Цвет/вариант — часть идентичности позиции: «EGGER ЛДСП» бывает
+            # однотон (6000) и текстура (6650), иначе строки перезаписывают
+            # друг друга и остаётся одна цена.
+            color_cell = (
+                row[header_mapping["color"]]
+                if header_mapping.get("color") is not None
+                else None
+            )
+            color = str(color_cell).strip() if color_cell is not None else ""
+            if color and color.casefold() not in name.casefold():
+                name = f"{name} {color}"
             category_cell = row[header_mapping.get("category")] if header_mapping.get("category") is not None else None
             category_text = str(category_cell).strip() if category_cell is not None else ""
-            category_hint = detect_category_from_text(category_text) or detect_category_from_text(name)
+            # Приоритет: явная колонка категории → заголовок секции → имя.
+            # Имя не должно перебивать секцию: «металл опора» в разделе
+            # «ОТ ПОДРЯДЧИКОВ» — это подрядчик, а не крепёж.
+            category_hint = detect_category_from_text(category_text)
+            name_hint = detect_category_from_text(name)
+            # Сильные маркеры в названии важнее заголовка секции:
+            # «IVEGO ПВХ» не должен наследовать случайную «Кромку».
+            strong_hint = name_hint in {
+                "ЛДСП", "Кромка", "МДФ", "МДФ плиты", "ХДФ", "Фасады",
+                "ЭФТРИ ПВХ", "Лакокраска", "Алюминиевый фасад", "Стекло",
+                "Петли", "Ящики", "Ручки", "GOLA",
+            }
             if category_hint:
                 category = category_hint
                 subcategory = None
-            else:
-                category = current_category or category_text or "Прочее"
+            elif strong_hint:
+                category = name_hint
+                subcategory = None
+            elif current_category:
+                category = current_category
                 subcategory = category_text if category_text and category_text != category else None
+            elif name_hint:
+                category = name_hint
+                subcategory = None
+            else:
+                category = category_text or "Прочее"
+                subcategory = None
+
+            # «МДФ ETERNO 1*22» / «EGGER 0,8*19» — кромка, даже если строка
+            # стоит до заголовка «КРОМКА К МДФ» и в названии есть «МДФ».
+            if looks_like_edge(name):
+                category = "Кромка"
+                subcategory = None
 
             brand_cell = row[header_mapping.get("brand")] if header_mapping.get("brand") is not None else None
             brand = str(brand_cell).strip() if brand_cell is not None and str(brand_cell).strip() else None
             if not brand:
-                brand_guess = str(name).split(maxsplit=1)[0]
-                if brand_guess.upper() in {"EGGER", "EXTRAVERT", "LAMARTY", "BOYARD", "BLUM", "HETTICH"}:
-                    brand = brand_guess
+                brand = detect_brand(str(name), category)
+                if not brand and category in (
+                    "Петли", "Ящики", "Подъёмники", "Направляющие"
+                ):
+                    brand = current_brand
 
             # P0-01: цена — только из своей ячейки, без перебора строки.
             price_cell = row[header_mapping.get("price")] if header_mapping.get("price") is not None else None
@@ -373,16 +530,34 @@ async def import_price_from_xlsx(
                 continue
 
             unit_cell = row[header_mapping.get("unit")] if header_mapping.get("unit") is not None else None
-            price_header = (
-                sheet.cell(
-                    row=header_row_index,
-                    column=header_mapping["price"] + 1,
-                ).value
-                if header_mapping.get("price") is not None
-                else None
-            )
+            price_header = None
+            if header_mapping.get("price") is not None and header_row_index - 1 < len(all_rows):
+                header_row = all_rows[header_row_index - 1]
+                price_index = header_mapping["price"]
+                if price_index < len(header_row):
+                    price_header = header_row[price_index]
             price_unit = detect_price_unit(name, category, price_header, unit_cell)
             thickness_mm = detect_thickness_mm(name, category)
+
+            # Цены «за изделие» приводим к единице расчёта:
+            # - столешница «4100*600» с ценой за лист → ₽/м по длине;
+            # - LED «Бухта 5м» → ₽/м;
+            # - профиль/цоколь длиной 3–4 м → ₽/шт (так их считает смета).
+            if price:
+                if category == "Столешницы" and price_unit == "м":
+                    dims = _DIMENSIONS_RE.search(str(name))
+                    if dims:
+                        length_mm = max(int(dims.group(1)), int(dims.group(2)))
+                        if length_mm > 0:
+                            price = round(float(price) / (length_mm / 1000), 2)
+                elif category == "Подсветка" and price_unit == "м":
+                    coil = _COIL_RE.search(str(name))
+                    if coil:
+                        length_m = float(coil.group(1).replace(",", "."))
+                        if length_m > 0:
+                            price = round(float(price) / length_m, 2)
+                elif category in ("GOLA", "Крепёж") and price_unit == "м":
+                    price_unit = "шт"
 
             requires_manual_price = 1 if price is None or price == 0 else 0
             unit_price = None if requires_manual_price else float(price)
@@ -476,6 +651,7 @@ async def import_price_from_xlsx(
             item.is_active = 0
             deactivated += 1
 
+    workbook.close()
     await session.commit()
     return ImportStats(
         created=created,

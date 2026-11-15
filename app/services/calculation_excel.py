@@ -7,15 +7,13 @@
 """
 
 import logging
-from pathlib import Path
-from typing import List, Tuple
 
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, numbers
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 from app.services.full_pipeline import PipelineResult
-from app.services.quantity_calc import fill_template_for_room, MaterialQuantities, calculate_quantities
+from app.services.quantity_calc import fill_template_for_room, calculate_quantities
 
 logger = logging.getLogger(__name__)
 

@@ -7,10 +7,9 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -18,12 +17,27 @@ from app.bot.keyboards.inline import recognition_result_keyboard
 from app.services.image_analyzer import GeminiImageAnalyzer, RecognitionResult
 from app.services.access import get_owned_project
 from app.db.session import get_session
-from app.models import Project, Calculation
+from app.models import Calculation
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+# P2-20: простое ограничение частоты тяжёлых vision/PDF-запросов.
+_LAST_HEAVY_REQUEST: dict[int, float] = {}
+HEAVY_REQUEST_INTERVAL_SEC = 5.0
+
+
+def _is_rate_limited(user_id: int, now: float | None = None) -> bool:
+    import time
+
+    current = time.monotonic() if now is None else now
+    last = _LAST_HEAVY_REQUEST.get(user_id, 0.0)
+    if current - last < HEAVY_REQUEST_INTERVAL_SEC:
+        return True
+    _LAST_HEAVY_REQUEST[user_id] = current
+    return False
 
 
 class ImageRecognitionState(StatesGroup):
@@ -46,6 +60,9 @@ async def request_photo(callback: CallbackQuery, state: FSMContext):
 @router.message(ImageRecognitionState.waiting_for_photo, F.photo)
 async def process_photo(message: Message, state: FSMContext, bot: Bot):
     """Обработать отправленное фото чертежа."""
+    if message.from_user and _is_rate_limited(message.from_user.id):
+        await message.answer("⏳ Подождите пару секунд перед следующим распознаванием.")
+        return
     try:
         # Получаем информацию о проекте из состояния
         data = await state.get_data()
@@ -102,6 +119,119 @@ async def invalid_photo(message: Message):
         "📷 Пожалуйста, отправьте фотографию чертежа.\n\n"
         "Поддерживаются только изображения (фото)."
     )
+
+
+@router.message(F.document)
+async def process_pdf_album(message: Message, state: FSMContext, bot: Bot):
+    """P1-06: приём PDF-альбома чертежей в боте.
+
+    PDF → FullPipeline (OCR → рендер → Vision) → модули → расчёт проекта.
+    Раньше бот принимал только фото, хотя README обещает альбом.
+    """
+    document = message.document
+    if document is None or not message.from_user:
+        return
+    if _is_rate_limited(message.from_user.id):
+        await message.answer("⏳ Подождите пару секунд перед следующей загрузкой.")
+        return
+
+    file_name = document.file_name or "album.pdf"
+    if not file_name.lower().endswith(".pdf"):
+        await message.answer(
+            "Поддерживается PDF-альбом чертежей или фото листа. "
+            "Отправьте файл .pdf либо фотографию."
+        )
+        return
+
+    max_bytes = 50 * 1024 * 1024
+    if document.file_size and document.file_size > max_bytes:
+        await message.answer("❌ PDF больше 50 МБ — разделите альбом на части.")
+        return
+
+    data = await state.get_data()
+    project_id = data.get("project_id")
+    if not project_id:
+        await message.answer(
+            "Сначала создайте проект: «📁 Новый проект», затем отправьте PDF."
+        )
+        return
+
+    async for session in get_session():
+        project = await get_owned_project(session, project_id, message.from_user.id)
+        if project is None:
+            await message.answer("❌ Проект не найден.")
+            return
+        break
+
+    temp_dir = Path("temp")
+    temp_dir.mkdir(exist_ok=True)
+    pdf_path = temp_dir / f"album_{project_id}_{message.message_id}.pdf"
+    status = await message.answer("📄 Принял PDF. Распознаю альбом — это может занять несколько минут…")
+
+    from app.services.full_pipeline import FullPipeline
+
+    pipeline = FullPipeline()
+    try:
+        await bot.download(document, destination=pdf_path)
+        result = await pipeline.process(pdf_path)
+    except Exception as exc:  # noqa: BLE001 — показываем причину оператору
+        logger.exception("PDF pipeline failed")
+        await status.edit_text(f"❌ Не удалось обработать PDF: {exc}")
+        return
+    finally:
+        await pipeline.close()
+        pdf_path.unlink(missing_ok=True)
+
+    if not result.rooms:
+        await status.edit_text(
+            "❌ В PDF не найдено помещений с мебелью. "
+            "Проверьте, что это альбом чертежей, а не скан текста."
+        )
+        return
+
+    modules = []
+    for room in result.rooms:
+        for module in room.modules:
+            modules.append({
+                "type": module.type,
+                "width": module.width,
+                "depth": module.depth,
+                "height": module.height,
+                "quantity": module.quantity,
+                "has_glass": module.has_glass,
+                "facades": module.facades,
+                "drawers": module.drawers,
+                "shelves": module.shelves,
+                "is_corner": module.is_corner,
+            })
+
+    if not modules:
+        await status.edit_text("❌ Модули не распознаны. Проверьте качество скана.")
+        return
+
+    async for session in get_session():
+        calculation = Calculation(
+            project_id=project_id,
+            modules=modules,
+            zone_type=result.rooms[0].zone_type,
+        )
+        session.add(calculation)
+        await session.commit()
+        await session.refresh(calculation)
+        calculation_id = calculation.id
+        break
+
+    rooms_summary = ", ".join(
+        f"{room.room_name} ({len(room.modules)})" for room in result.rooms
+    )
+    await status.edit_text(
+        f"✅ Альбом распознан: {len(result.rooms)} помещений, "
+        f"{len(modules)} модулей.\n{rooms_summary}"
+    )
+
+    from app.bot.handlers.materials import start_material_selection
+
+    await start_material_selection(message, calculation_id, state)
 
 
 async def show_recognition_result(

@@ -2,6 +2,7 @@
 Конфигурация SQLAlchemy сессий для асинхронной работы с БД.
 """
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from app.config import settings
 from typing import AsyncGenerator
@@ -12,6 +13,20 @@ engine = create_async_engine(
     echo=False,  # Если True, будут выводиться SQL запросы в логи
     future=True,
 )
+
+
+if settings.database_url.startswith("sqlite"):
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, _connection_record):
+        """P2-13: WAL + busy_timeout, иначе читатель блокирует писателя."""
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
 
 # Асинхронная фабрика сессий
 AsyncSessionLocal = async_sessionmaker(

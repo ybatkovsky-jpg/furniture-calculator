@@ -2,7 +2,7 @@
 Модель для настроек расчётов.
 """
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, JSON
+from sqlalchemy import Column, Integer, String, Float, DateTime
 from datetime import datetime
 from app.models.base import Base
 

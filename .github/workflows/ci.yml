@@ -16,7 +16,9 @@ jobs:
       - name: Установка зависимостей
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Линтер (фатальные ошибки)
+        run: ruff check app --select F,E9
       - name: Тесты
         run: python -m pytest -q
 

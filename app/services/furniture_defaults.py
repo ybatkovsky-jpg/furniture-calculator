@@ -5,8 +5,8 @@
 Код quantity_calc не нужно править — он читает правила отсюда.
 """
 
-from typing import Dict, List, Optional
-from dataclasses import dataclass, field
+from typing import Dict, Optional
+from dataclasses import dataclass
 
 
 @dataclass

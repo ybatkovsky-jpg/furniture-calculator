@@ -4,7 +4,6 @@
 Использует PyMuPDF (fitz) — быстрый, без внешних зависимостей.
 """
 
-import io
 import logging
 from pathlib import Path
 from typing import List, Optional, Tuple

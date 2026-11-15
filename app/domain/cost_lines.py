@@ -12,16 +12,20 @@ GOLA, LED, столешницу, крепёж. Здесь каждая пози�
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
 
+from app.domain.money import money_float, quantity_float, rub_float
 from app.services.glass_calc import GlassCalculation
 from app.services.quantity_calc import MaterialQuantities
 
 
 def _round(value: float, digits: int = 2) -> float:
-    quantum = Decimal(1).scaleb(-digits)
-    return float(Decimal(str(value)).quantize(quantum, rounding=ROUND_HALF_UP))
+    """Деньги (digits=2) — HALF_UP; рубли (0) — HALF_UP."""
+    if digits == 0:
+        return rub_float(value)
+    if digits == 2:
+        return money_float(value)
+    return quantity_float(value, digits)
 
 
 def _to_float(value: Any) -> float:
@@ -229,9 +233,15 @@ def build_cost_lines(
             continue
         price = edge_prices.get(thickness)
         source = "selected"
-        if not price and thickness == 1.0:
-            price = price_book.get("edge_mdf_1mm")
-            source = "price_book"
+        if not price:
+            # Цена по толщине из прайса (часто выбрана одна позиция кромки,
+            # а раскрой требует 0.4/0.8/2 мм).
+            book_key = (
+                "edge_mdf_1mm" if thickness == 1.0 else f"edge_{thickness:g}"
+            )
+            price = price_book.get(book_key)
+            if price:
+                source = "price_book"
         # Бот выбирает одну позицию кромки, а раскрой требует 0.4/0.8/2 мм.
         # Для ЛДСП-кромки берём цену ближайшей выбранной толщины и
         # предупреждаем (МДФ-кромка так не подменяется — иначе неверный тип).

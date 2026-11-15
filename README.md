@@ -2,6 +2,13 @@
 
 Telegram-бот для автоматического расчёта стоимости корпусной мебели. Менеджер загружает PDF-альбом чертежей → AI распознаёт модули → бот считает материалы и генерирует смету в Excel.
 
+> **Актуальное состояние (2026-11-15).** HTTP-сервера (FastAPI/uvicorn) в проекте нет — `app/main.py`
+> запускает только Telegram-бота polling-ом. PDF-альбом принимается ботом (до 50 МБ) и проходит
+> `FullPipeline`; фото листа — тоже. Коэффициенты берутся из `CalcSettings` (профиль по умолчанию) или
+> `.env`, цены — из прайса в SQLite (импорт из XLSX). Смета чата и Excel используют один `CostBreakdown`
+> (`app/domain/cost_lines.py`), КП блокируется, если в смете есть позиция без цены. Проверки:
+> `pytest` — 407 passed, `scripts/check_phases.py` — 59/59, Alembic — 3 миграции.
+
 ## 🎯 Что делает
 
 ```
@@ -74,7 +81,7 @@ python -m app.services.template_filler "путь/к/чертежам.pdf" "templ
 2. Изготовление = Себестоимость × 0.80
 3. Монтаж = Себестоимость × 0.55
 4. Замер = 2 500 ₽
-5. Доставка = 10 000 ₽
+5. Доставка = 6 500 ₽ (себестоимость) / 10 000 ₽ (клиенту)
 6. Проектировка = Изготовление × 0.10
 7. Прочие = Себестоимость × 0.05
 8. Итого = пп. 1–7
@@ -91,7 +98,7 @@ python -m app.services.template_filler "путь/к/чертежам.pdf" "templ
 ```
 furniture-calculator/
 ├── app/
-│   ├── main.py                    # FastAPI + запуск Telegram-бота
+│   ├── main.py                    # инициализация БД + запуск Telegram-бота (HTTP-сервера нет)
 │   ├── config.py                  # Pydantic Settings (.env): облако + локальный LLM
 │   ├── bot/                       # Telegram-бот (aiogram 3)
 │   │   ├── bot.py
@@ -169,7 +176,7 @@ furniture-calculator/
 | ORM | SQLAlchemy 2.0 (async) |
 | Excel | openpyxl |
 | PDF | ReportLab, pdf2image |
-| Web (API) | FastAPI |
+| Web (API) | — (HTTP-сервера нет, только Telegram polling) |
 
 ## 📝 Лицензия
 

@@ -8,9 +8,9 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from app.db.session import get_session
-from app.models.calculation import Calculation
 from app.services.access import get_owned_calculation
 from app.services.cost_calc import DiscountInfo, calculate_cost
+from app.services.pricing_policy import load_default_policy
 from app.services.calc_engine import calculate_full_cost
 from app.bot.handlers.calculation import _extract_discount_info, show_estimate, _format_estimate_text
 
@@ -168,14 +168,16 @@ async def process_discount_value(message: Message, state: FSMContext):
         hardware_cost = calculation.hardware_cost or 0
         glass_cost = calculation.glass_cost or 0
 
-        # Пересчитываем итоговую стоимость
+        # Пересчитываем итоговую стоимость по единой политике (P1-09)
+        policy = await load_default_policy(session)
         cost_breakdown = calculate_cost(
             material_cost=material_cost,
             edge_cost=edge_cost,
             facade_cost=facade_cost,
             hardware_cost=hardware_cost,
             glass_cost=glass_cost,
-            discount=discount_info
+            discount=discount_info,
+            **policy.as_cost_kwargs(),
         )
 
         # Обновляем цены
@@ -193,7 +195,7 @@ async def process_discount_value(message: Message, state: FSMContext):
         selected_hardware=calculation.selected_hardware or {},
         glass_items=calculation.glass_items or [],
         discount_info=discount_info,
-        settings=None
+        settings=policy,
     )
 
     await state.set_state(None)
@@ -246,13 +248,20 @@ async def toggle_designer_bonus(callback: CallbackQuery):
             designer_bonus_rate=calculation.designer_bonus_rate or 0.10
         )
 
+        policy = await load_default_policy(session)
         cost_breakdown = calculate_cost(
             material_cost=calculation.material_cost or 0,
             edge_cost=calculation.edge_cost or 0,
             facade_cost=calculation.facade_cost or 0,
             hardware_cost=calculation.hardware_cost or 0,
             glass_cost=calculation.glass_cost or 0,
-            discount=discount_info
+            lighting_cost=calculation.lighting_cost or 0,
+            countertop_cost=calculation.countertop_cost or 0,
+            accessories_cost=calculation.accessories_cost or 0,
+            subcontractor_cost=calculation.subcontractor_cost or 0,
+            fastener_cost=calculation.fastener_cost or 0,
+            discount=discount_info,
+            **policy.as_cost_kwargs(),
         )
 
         calculation.price_after_discount = cost_breakdown.price_after_discount
@@ -300,13 +309,20 @@ async def remove_discount(callback: CallbackQuery):
             designer_bonus_rate=calculation.designer_bonus_rate or 0.10
         )
 
+        policy = await load_default_policy(session)
         cost_breakdown = calculate_cost(
             material_cost=calculation.material_cost or 0,
             edge_cost=calculation.edge_cost or 0,
             facade_cost=calculation.facade_cost or 0,
             hardware_cost=calculation.hardware_cost or 0,
             glass_cost=calculation.glass_cost or 0,
-            discount=discount_info
+            lighting_cost=calculation.lighting_cost or 0,
+            countertop_cost=calculation.countertop_cost or 0,
+            accessories_cost=calculation.accessories_cost or 0,
+            subcontractor_cost=calculation.subcontractor_cost or 0,
+            fastener_cost=calculation.fastener_cost or 0,
+            discount=discount_info,
+            **policy.as_cost_kwargs(),
         )
 
         calculation.price_after_discount = cost_breakdown.price_after_discount
@@ -341,6 +357,7 @@ async def back_to_estimate(callback: CallbackQuery):
         if not calculation:
             await callback.answer("Расчёт не найден")
             return
+        policy = await load_default_policy(session)
         break
 
     discount_info = _extract_discount_info(calculation)
@@ -350,7 +367,7 @@ async def back_to_estimate(callback: CallbackQuery):
         selected_hardware=calculation.selected_hardware or {},
         glass_items=calculation.glass_items or [],
         discount_info=discount_info,
-        settings=None
+        settings=policy,
     )
 
     # Показываем смету

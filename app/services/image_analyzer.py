@@ -17,7 +17,6 @@ import json
 import logging
 import base64
 import io
-import time
 from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -1617,7 +1616,7 @@ class GeminiImageAnalyzer:
 
         # 3. Fallback: просто ищем любой JSON с "modules"
         for candidate in re.findall(r'\{[^{}]*"modules"[^{}]*\}', cleaned):
-            logger.debug(f"Found modules-JSON via regex")
+            logger.debug("Found modules-JSON via regex")
             return self._fix_json_syntax(candidate)
 
         # 4. Последняя попытка: от первой { до последней }
@@ -1730,7 +1729,12 @@ class GeminiImageAnalyzer:
         unique_corners = {}
         for c in corners:
             key = f"{c.width}_{c.depth}"
-            unique_corners[key] = c
+            if key in unique_corners:
+                # P2-05: одинаковые угловые не выбрасываем — суммируем
+                # количество, иначе терялся второй угловой модуль.
+                unique_corners[key].quantity += max(c.quantity, 1)
+            else:
+                unique_corners[key] = c
 
         processed = list(unique_corners.values())
 

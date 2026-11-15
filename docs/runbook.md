@@ -78,7 +78,7 @@ for t in ('projects', 'calculations', 'price_items'):
 
 | Дата | Копия | integrity | projects | calculations | price_items | Кто |
 |---|---|---|---|---|---|---|
-| 2026-11-15 | — | — | — | — | — | первичная настройка: копия ещё не снята |
+| 2026-11-15 | `furniture_20261115_204752.db` | ok | 53 | 18 | 525 | проверка восстановления: копия открылась, counts live/copy совпали (projects 53, calculations 18, price_items 525) |
 
 ## 6. Ограничения этапа 0
 

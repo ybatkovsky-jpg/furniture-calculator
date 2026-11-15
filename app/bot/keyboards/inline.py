@@ -44,6 +44,36 @@ def get_width_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+def get_depth_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура выбора глубины (P1-07)."""
+    keyboard = [
+        [
+            InlineKeyboardButton(text="320", callback_data="depth:320"),
+            InlineKeyboardButton(text="560", callback_data="depth:560"),
+            InlineKeyboardButton(text="600", callback_data="depth:600"),
+        ],
+        [
+            InlineKeyboardButton(text="По умолчанию", callback_data="depth:default"),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_height_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура выбора высоты (P1-07)."""
+    keyboard = [
+        [
+            InlineKeyboardButton(text="720", callback_data="height:720"),
+            InlineKeyboardButton(text="820", callback_data="height:820"),
+            InlineKeyboardButton(text="2100", callback_data="height:2100"),
+        ],
+        [
+            InlineKeyboardButton(text="По умолчанию", callback_data="height:default"),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
 def get_filling_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура для выбора наполнения модуля."""
     keyboard = [

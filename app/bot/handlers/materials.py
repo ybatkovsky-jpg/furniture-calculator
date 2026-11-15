@@ -10,22 +10,9 @@ from sqlalchemy import select
 from app.bot.states.materials import MaterialSelectionStates
 from app.db.session import get_session
 from app.models.price import PriceItem
-from app.models.calculation import Calculation
 from app.services.access import get_owned_calculation
 
 router = Router()
-
-
-def get_calculation_id(user_id: int) -> int | None:
-    """Получает calculation_id из глобального словаря."""
-    global _user_calculation_ids
-    if '_user_calculation_ids' not in globals():
-        _user_calculation_ids = {}
-    
-    calc_id = _user_calculation_ids.get(user_id)
-    print(f"DEBUG: get_calculation_id for user {user_id}: {calc_id}")
-    print(f"DEBUG: _user_calculation_ids = {_user_calculation_ids}")
-    return calc_id
 
 
 async def start_material_selection(message: Message, calculation_id: int, state: FSMContext):
@@ -35,20 +22,8 @@ async def start_material_selection(message: Message, calculation_id: int, state:
         await message.answer("Ошибка: пользователь не найден.")
         return
 
-    print(f"DEBUG: start_material_selection called with calculation_id={calculation_id}, user_id={message.from_user.id}")
-
     # Сохраняем calculation_id в состоянии FSM
     await state.update_data(calculation_id=calculation_id)
-
-    # Также сохраняем в глобальном словаре для совместимости
-    global _user_calculation_ids
-    if '_user_calculation_ids' not in globals():
-        _user_calculation_ids = {}
-    _user_calculation_ids[message.from_user.id] = calculation_id
-
-    print(f"DEBUG: saved calculation_id {calculation_id} for user {message.from_user.id}")
-    print(f"DEBUG: _user_calculation_ids = {_user_calculation_ids}")
-    print(f"DEBUG: state data after update: {await state.get_data()}")
 
     # Начинаем с выбора ЛДСП
     await select_ldsp(message)
@@ -108,12 +83,8 @@ async def process_ldsp_selection(callback: CallbackQuery, state: FSMContext):
     ldsp_id = int(callback.data.split(":")[1])
 
     # Получаем calculation_id из глобального словаря (приоритет) или состояния FSM
-    calculation_id = get_calculation_id(callback.from_user.id)
-    if not calculation_id:
-        data = await state.get_data()
-        calculation_id = data.get('calculation_id')
-
-    print(f"DEBUG: process_ldsp_selection - calculation_id={calculation_id}")
+    data = await state.get_data()
+    calculation_id = data.get('calculation_id')
 
     if not calculation_id:
         await callback.answer("Ошибка: не найден ID расчёта")
@@ -211,10 +182,8 @@ async def process_facade_category(callback: CallbackQuery, state: FSMContext):
     category = callback.data.split(":", 1)[1]
 
     # Получаем calculation_id из глобального словаря (приоритет) или состояния FSM
-    calculation_id = get_calculation_id(callback.from_user.id)
-    if not calculation_id:
-        data = await state.get_data()
-        calculation_id = data.get('calculation_id')
+    data = await state.get_data()
+    calculation_id = data.get('calculation_id')
 
     if not calculation_id:
         await callback.answer("Ошибка: не найден ID расчёта")
@@ -277,10 +246,8 @@ async def process_facade_selection(callback: CallbackQuery, state: FSMContext):
     facade_id = int(callback.data.split(":")[1])
 
     # Получаем calculation_id из глобального словаря (приоритет) или состояния FSM
-    calculation_id = get_calculation_id(callback.from_user.id)
-    if not calculation_id:
-        data = await state.get_data()
-        calculation_id = data.get('calculation_id')
+    data = await state.get_data()
+    calculation_id = data.get('calculation_id')
 
     if not calculation_id:
         await callback.answer("Ошибка: не найден ID расчёта")
@@ -464,8 +431,8 @@ async def process_manual_price(message: Message, state: FSMContext):
             f"Цена: {price}₽/{drawer_item.price_unit} (введена вручную)"
         )
         
-        # Завершаем выбор материалов
-        await finish_material_selection(message, state)
+        # Переходим к выбору ручки (P0-02), затем завершение
+        await select_handle(message, state)
     
     await state.set_state(None)
 
@@ -480,29 +447,40 @@ async def select_edge_automatically(message: Message, state: FSMContext):
         await message.answer("❌ Ошибка: ЛДСП не выбран")
         return
 
-    # Ищем кромку по бренду ЛДСП
+    # Ищем кромку по бренду ЛДСП: сначала с ценой и толщиной 0.8 мм,
+    # затем любую с ценой, затем любую по бренду (может потребовать цену).
     async for session in get_session():
+        base = select(PriceItem).where(
+            PriceItem.category == "Кромка",
+            PriceItem.is_active == 1,
+        )
         result = await session.execute(
-            select(PriceItem).where(
-                PriceItem.category == "Кромка",
+            base.where(
                 PriceItem.brand == ldsp_brand,
-                PriceItem.is_active == 1
+                PriceItem.unit_price.is_not(None),
+                PriceItem.thickness_mm == 0.8,
             ).order_by(PriceItem.name)
         )
         edge_items = result.scalars().all()
-        break
-
-    if not edge_items:
-        # Если не нашли по бренду, берём любую кромку
-        async for session in get_session():
+        if not edge_items:
             result = await session.execute(
-                select(PriceItem).where(
-                    PriceItem.category == "Кромка",
-                    PriceItem.is_active == 1
+                base.where(
+                    PriceItem.brand == ldsp_brand,
+                    PriceItem.unit_price.is_not(None),
                 ).order_by(PriceItem.name)
             )
             edge_items = result.scalars().all()
-            break
+        if not edge_items:
+            result = await session.execute(
+                base.where(PriceItem.unit_price.is_not(None)).order_by(PriceItem.name)
+            )
+            edge_items = result.scalars().all()
+        if not edge_items:
+            result = await session.execute(
+                base.where(PriceItem.brand == ldsp_brand).order_by(PriceItem.name)
+            )
+            edge_items = result.scalars().all()
+        break
 
     if not edge_items:
         await message.answer("❌ В прайсе не найдена кромка. Обратитесь к администратору.")
@@ -571,10 +549,8 @@ async def process_hinge_brand(callback: CallbackQuery, state: FSMContext):
     brand = callback.data.split(":", 1)[1]
 
     # Получаем calculation_id из глобального словаря (приоритет) или состояния FSM
-    calculation_id = get_calculation_id(callback.from_user.id)
-    if not calculation_id:
-        data = await state.get_data()
-        calculation_id = data.get('calculation_id')
+    data = await state.get_data()
+    calculation_id = data.get('calculation_id')
 
     if not calculation_id:
         await callback.answer("Ошибка: не найден ID расчёта")
@@ -638,10 +614,8 @@ async def process_hinge_selection(callback: CallbackQuery, state: FSMContext):
     hinge_id = int(callback.data.split(":")[1])
 
     # Получаем calculation_id из глобального словаря (приоритет) или состояния FSM
-    calculation_id = get_calculation_id(callback.from_user.id)
-    if not calculation_id:
-        data = await state.get_data()
-        calculation_id = data.get('calculation_id')
+    data = await state.get_data()
+    calculation_id = data.get('calculation_id')
 
     if not calculation_id:
         await callback.answer("Ошибка: не найден ID расчёта")
@@ -722,8 +696,8 @@ async def check_for_drawers(message: Message, state: FSMContext):
         # Есть ящики, предлагаем выбрать систему
         await select_drawer_brand(message, state)
     else:
-        # Ящиков нет, завершаем выбор материалов
-        await finish_material_selection(message, state)
+        # Ящиков нет — переходим к выбору ручки
+        await select_handle(message, state)
 
 
 async def select_drawer_brand(message: Message, state: FSMContext):
@@ -756,10 +730,8 @@ async def process_drawer_brand(callback: CallbackQuery, state: FSMContext):
     brand = callback.data.split(":", 1)[1]
 
     # Получаем calculation_id из глобального словаря (приоритет) или состояния FSM
-    calculation_id = get_calculation_id(callback.from_user.id)
-    if not calculation_id:
-        data = await state.get_data()
-        calculation_id = data.get('calculation_id')
+    data = await state.get_data()
+    calculation_id = data.get('calculation_id')
 
     if not calculation_id:
         await callback.answer("Ошибка: не найден ID расчёта")
@@ -779,8 +751,8 @@ async def process_drawer_brand(callback: CallbackQuery, state: FSMContext):
 
     if not drawer_items:
         await callback.message.answer(f"❌ Ящики '{brand}' не найдены в прайсе.")
-        # Продолжаем без ящиков
-        await finish_material_selection(callback.message, state)
+        # Продолжаем без ящиков — к выбору ручки
+        await select_handle(callback.message, state)
         return
 
     # Сохраняем calculation_id в состоянии
@@ -825,10 +797,8 @@ async def process_drawer_selection(callback: CallbackQuery, state: FSMContext):
     drawer_id = int(callback.data.split(":")[1])
 
     # Получаем calculation_id из глобального словаря (приоритет) или состояния FSM
-    calculation_id = get_calculation_id(callback.from_user.id)
-    if not calculation_id:
-        data = await state.get_data()
-        calculation_id = data.get('calculation_id')
+    data = await state.get_data()
+    calculation_id = data.get('calculation_id')
 
     if not calculation_id:
         await callback.answer("Ошибка: не найден ID расчёта")
@@ -873,7 +843,89 @@ async def process_drawer_selection(callback: CallbackQuery, state: FSMContext):
         f"Цена: {drawer_item.unit_price}₽/{drawer_item.price_unit}"
     )
     
-    # Завершаем выбор материалов
+    # Переходим к выбору ручки, затем завершение
+    await select_handle(callback.message, state)
+    await callback.answer()
+
+
+async def select_handle(message: Message, state: FSMContext):
+    """Шаг выбора ручки (P0-02): без цены ручек КП блокируется."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    items = []
+    async for session in get_session():
+        result = await session.execute(
+            select(PriceItem).where(
+                PriceItem.category == "Ручки",
+                PriceItem.is_active == 1,
+            ).order_by(PriceItem.name)
+        )
+        items = result.scalars().all()
+        break
+
+    if not items:
+        await message.answer(
+            "⚠️ В прайсе нет ручек. Смета будет без стоимости ручек — "
+            "КП будет заблокировано до добавления цены."
+        )
+        await finish_material_selection(message, state)
+        return
+
+    keyboard = []
+    for item in items[:40]:
+        price_text = f"{item.unit_price:.0f}₽" if item.unit_price else "нет цены"
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"{item.name[:45]} — {price_text}",
+                callback_data=f"handle:{item.id}",
+            )
+        ])
+    keyboard.append([
+        InlineKeyboardButton(text="Без ручек (Gola/push)", callback_data="handle:none")
+    ])
+
+    await message.answer(
+        "🖐 Выберите ручку (или «Без ручек», если проект на Gola/push-to-open):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+    )
+
+
+@router.callback_query(F.data.startswith("handle:"))
+async def process_handle_selection(callback: CallbackQuery, state: FSMContext):
+    """Сохранить выбранную ручку и завершить выбор материалов."""
+    value = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    selected_hardware = data.get("selected_hardware", {})
+
+    if value == "none":
+        selected_hardware.pop("handles", None)
+        await state.update_data(selected_hardware=selected_hardware)
+        await callback.message.answer("Ручки: без накладных ручек")
+    else:
+        try:
+            handle_id = int(value)
+        except ValueError:
+            await callback.answer("Некорректная ручка", show_alert=True)
+            return
+        async for session in get_session():
+            item = await session.get(PriceItem, handle_id)
+            if item is None:
+                await callback.answer("Ручка не найдена", show_alert=True)
+                return
+            if item.requires_manual_price or not item.unit_price:
+                await callback.answer("У ручки нет цены — выберите другую", show_alert=True)
+                return
+            selected_hardware["handles"] = {
+                "id": item.id,
+                "name": item.name,
+                "price": item.unit_price,
+                "price_unit": item.price_unit,
+                "brand": item.brand,
+            }
+            await state.update_data(selected_hardware=selected_hardware)
+            break
+        await callback.message.answer(f"✅ Выбрана ручка: {item.name}")
+
     await finish_material_selection(callback.message, state)
     await callback.answer()
 
@@ -924,7 +976,13 @@ async def finish_material_selection(message: Message, state: FSMContext):
     if 'drawers' in selected_hardware:
         drawers = selected_hardware['drawers']
         summary += f"📦 Ящики: {drawers['name']} ({drawers['price']}₽)\n"
-    
+
+    if 'handles' in selected_hardware:
+        handles = selected_hardware['handles']
+        summary += f"🖐 Ручки: {handles['name']} ({handles['price']}₽)\n"
+    else:
+        summary += "🖐 Ручки: не выбраны (КП будет заблокировано)\n"
+
     summary += "\nТеперь можно запустить расчёт стоимости!"
 
     # Клавиатура для запуска расчёта

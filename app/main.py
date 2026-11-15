@@ -13,7 +13,7 @@ from app.config import settings
 from app.db import init_db
 from app.bot.bot import bot, dp, setup_bot_commands
 from app.bot.middlewares import AllowlistMiddleware
-from app.bot.handlers import start_router, price_router, project_router, image_router, manual_input_router, materials_router, calculation_router, discounts_router, kp_router
+from app.bot.handlers import start_router, price_router, project_router, image_router, manual_input_router, materials_router, calculation_router, discounts_router, kp_router, nav_router
 
 # Логирование
 # Уровень берётся из LOG_LEVEL (по умолчанию INFO — DEBUG слишком шумный для прода,
@@ -70,6 +70,7 @@ async def main():
     dp.include_router(calculation_router)
     dp.include_router(discounts_router)
     dp.include_router(kp_router)
+    dp.include_router(nav_router)
     logger.info("✓ Handlers подключены")
 
     # 3. Устанавливаем команды бота

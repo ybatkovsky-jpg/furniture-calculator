@@ -19,7 +19,6 @@ GLM-OCR (Z.ai) — специализированная OCR-модель (0.9B �
 """
 
 import re
-import json
 import logging
 import base64
 from typing import Dict, List, Optional, Any
@@ -249,9 +248,6 @@ class GLMOCRParser:
         sections = re.split(r'\n##\s+', md)
         if not sections:
             return rooms
-
-        # Первый блок — всё до первого ## (обычно пустой или вводный)
-        first_block = sections[0].strip()
 
         for i, section in enumerate(sections[1:], 1):
             lines = section.split('\n')
@@ -486,7 +482,7 @@ class GLMOCRParser:
         """Извлечь примечания (нумерованные списки, требования)."""
         notes = []
         # Нумерованные пункты: "1. ", "2. ", ...
-        for match in re.finditer(r'^\s*(\d+)\\.?\\s+(.+)$', text, re.MULTILINE):
+        for match in re.finditer(r'^\s*(\d+)\.?\s+(.+)$', text, re.MULTILINE):
             notes.append(match.group(2).strip())
         # "Примечание:" или "Приемание:"
         note_sections = re.split(r'(?:Примечание|Приемание|ВАЖНО|ВНИМАНИЕ)[\s:]*', text, flags=re.IGNORECASE)

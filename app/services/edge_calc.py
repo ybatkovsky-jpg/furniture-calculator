@@ -9,7 +9,7 @@
 Для каждой детали определяем видимые/скрытые торцы и считаем метраж.
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 
 

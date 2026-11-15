@@ -18,7 +18,7 @@ import re
 
 from app.domain.cost_lines import CostLine, build_cost_lines
 from app.services.cost_calc import calculate_cost, CostBreakdown, DiscountInfo
-from app.services.sheet_calc import calculate_sheets_for_modules, SheetCalculation
+from app.services.sheet_calc import SheetCalculation
 from app.services.edge_calc import EdgeCalculation
 from app.services.hardware_calc import HardwareCalculation, DEFAULT_HINGE_BRAND
 from app.services.glass_calc import calculate_glass_for_modules, GlassCalculation
@@ -105,22 +105,11 @@ def calculate_full_cost(
     """
     result = CalculationResult()
 
-    # Настройки по умолчанию
-    if settings is None:
-        settings = {
-            "manufacturing_rate": 0.80,
-            "installation_rate": 0.55,
-            "design_rate": 0.10,
-            "overhead_rate": 0.05,
-            "profit_rate": 0.30,
-            "tech_director_rate": 0.015,
-            "manager_rate": 0.0,
-            "designer_rate": 0.0,
-            "measurement_fee": 2500,
-            "delivery_fee": 6500,
-            "delivery_fee_client": 10000,
-            "noncash_markup": 1.13,
-        }
+    # P1-09: единая политика коэффициентов (CalcSettings → config), без
+    # третьей копии чисел в этом файле.
+    from app.services.pricing_policy import coerce_policy
+
+    policy = coerce_policy(settings)
 
     # 2. ЕДИНЫЙ ИСТОЧНИК ПРАВДЫ: количество ДСП и фурнитуры считает quantity_calc
     #    (та же логика, что в Excel: запас на раскрой, экономия смежных стенок,
@@ -180,9 +169,12 @@ def calculate_full_cost(
         glass_items=glass_items,
     )
     result.lines = lines_result.lines
-    result.warnings = list(lines_result.warnings)
+    result.warnings = list(quantities.warnings) + list(lines_result.warnings)
     result.missing_prices = list(lines_result.missing)
     result.can_issue_kp = lines_result.can_issue_kp
+    # P1-17: тип фасада не выбран — КП не выпускаем до явного выбора.
+    if any("Тип фасада не выбран" in warning for warning in quantities.warnings):
+        result.can_issue_kp = False
 
     totals = lines_result.sum_by_kind()
     result.material_cost = round(totals.get("ldsp", 0.0) + totals.get("hdf", 0.0), 2)
@@ -235,18 +227,18 @@ def calculate_full_cost(
         subcontractor_cost=result.subcontractor_cost,
         fastener_cost=result.fastener_cost,
         # Коэффициенты
-        manufacturing_rate=settings["manufacturing_rate"],
-        installation_rate=settings["installation_rate"],
-        design_rate=settings["design_rate"],
-        overhead_rate=settings["overhead_rate"],
-        profit_rate=settings["profit_rate"],
-        tech_director_rate=settings["tech_director_rate"],
-        manager_rate=settings["manager_rate"],
-        designer_rate=settings["designer_rate"],
-        measurement_fee=settings["measurement_fee"],
-        delivery_fee=settings["delivery_fee"],
-        delivery_fee_client=settings["delivery_fee_client"],
-        noncash_markup=settings["noncash_markup"],
+        manufacturing_rate=policy.manufacturing_rate,
+        installation_rate=policy.installation_rate,
+        design_rate=policy.design_rate,
+        overhead_rate=policy.overhead_rate,
+        profit_rate=policy.profit_rate,
+        tech_director_rate=policy.tech_director_rate,
+        manager_rate=policy.manager_rate,
+        designer_rate=policy.designer_rate,
+        measurement_fee=policy.measurement_fee,
+        delivery_fee=policy.delivery_fee,
+        delivery_fee_client=policy.delivery_fee_client,
+        noncash_markup=policy.noncash_markup,
         # Скидки
         discount=discount
     )

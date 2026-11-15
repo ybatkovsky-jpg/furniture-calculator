@@ -9,20 +9,15 @@
 """
 
 import logging
-import math
-import re
-import copy
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from openpyxl import Workbook, worksheet
-from openpyxl.utils import get_column_letter
+from openpyxl import Workbook
 
 from app.services.full_pipeline import PipelineResult, RoomSpec
 from app.services.quantity_calc import (
     MaterialQuantities,
     calculate_quantities,
-    fill_template_for_room,
     detect_material_properties,
 )
 from app.services.project_spec import (
@@ -292,6 +287,7 @@ def fill_template_from_pipeline(
     template_path: str,
     output_path: str,
     project_spec: Optional[ProjectSpec] = None,
+    pricing_policy=None,
 ) -> str:
     """
     Главная функция: заполнить шаблон на основе результатов конвейера.
@@ -313,6 +309,12 @@ def fill_template_from_pipeline(
     """
     from openpyxl import load_workbook
 
+    # P1-01: коэффициенты в финансовой секции — из единой политики, а не
+    # зашитые в шаблон 0.8/0.55/0.08/0.05.
+    from app.services.pricing_policy import coerce_policy
+
+    policy = coerce_policy(pricing_policy)
+
     # Загружаем шаблон
     logger.info(f"📄 Загрузка шаблона: {template_path}")
     wb = load_workbook(template_path)
@@ -327,7 +329,9 @@ def fill_template_from_pipeline(
 
     # Для каждого помещения создаём копию листа-шаблона
     unfilled_items = []  # собираем позиции, для которых не нашлась строка
-    spec_applied = False  # спецификацию применяем только к ПЕРВОЙ комнате
+    # P2-18: спецификация проектная; применяем к подходящим комнатам, но
+    # каждую позицию — ровно один раз.
+    applied_spec_items: set[str] = set()
 
     for i, room in enumerate(rooms_with_modules):
         sheet_name = _clean_sheet_name(room.room_name)[:31]
@@ -346,11 +350,13 @@ def fill_template_from_pipeline(
         q = calculate_quantities(room.modules, room.room_name, room.materials, zone_type=room.zone_type,
                                  has_spec=(project_spec is not None))
 
-        # Применяем спецификацию проекта ТОЛЬКО к первой комнате (не дублируем!)
-        if project_spec and not spec_applied:
-            n_added = apply_spec_to_quantities(project_spec, q, room.room_name)
+        # Применяем спецификацию проекта к каждой комнате, но каждую
+        # позицию — ровно один раз (P2-18).
+        if project_spec:
+            n_added = apply_spec_to_quantities(
+                project_spec, q, room.room_name, applied_spec_items
+            )
             if n_added > 0:
-                spec_applied = True
                 # Если spec добавил GOLA — убираем ручки
                 if q.gola_horizontal_pcs > 0 or q.gola_vertical_pcs > 0:
                     q.handles_count = 0
@@ -412,6 +418,9 @@ def fill_template_from_pipeline(
             f"ЛДСП={q.ldsp_sheets} листов, "
             f"кромка={q.edge_08_m:.0f}+{q.edge_04_m:.0f} м"
         )
+
+        # P1-01: переписать финансовую секцию под единую политику.
+        _apply_pricing_policy(new_ws, policy)
 
         # ── Добавляем рекомендации после финансовой секции ──
         if q.suggestions:
@@ -476,7 +485,8 @@ def _add_quality_sheet(wb: Workbook, pipeline_result: PipelineResult):
     if sheet_name in [ws.title for ws in wb.worksheets]:
         del wb[sheet_name]
 
-    ws = wb.create_sheet(sheet_name, 0)  # вставляем первым листом
+    # P2-15: QC — служебный лист, в конец книги, чтобы не открывался первым.
+    ws = wb.create_sheet(sheet_name)
 
     # Стили
     header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
@@ -768,7 +778,9 @@ def _add_furniture_header(ws, room: RoomSpec):
     if range_ not in [str(r) for r in ws.merged_cells.ranges]:
         ws.merge_cells(range_)
     cell = ws["A2"]
-    cell.value = text
+    # P2-15: не затираем адрес объекта, который записал _update_title.
+    existing = str(cell.value or "").strip()
+    cell.value = f"{existing}\n{text}" if existing else text
     cell.font = Font(name="Arial", size=9)
     cell.fill = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
     cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
@@ -776,6 +788,80 @@ def _add_furniture_header(ws, room: RoomSpec):
     ws.row_dimensions[2].height = 14 * (len(lines) + 1) + 4
 
     logger.info(f"🧩 {room.room_name}: шапка «Мебель:» — {len(lines)} модулей")
+
+
+def _find_row_by_label(ws, label: str, start: int = 1) -> Optional[int]:
+    """Найти строку финансовой секции по подписи в колонке D."""
+    for row in range(start, min(ws.max_row, 400) + 1):
+        value = ws.cell(row=row, column=4).value
+        if value is not None and str(value).strip().lower().startswith(label.lower()):
+            return row
+    return None
+
+
+def _apply_pricing_policy(ws, policy) -> bool:
+    """Переписать финансовую секцию листа по единой политике (P1-01).
+
+    Возвращает False, если секция не найдена (не ломаем нестандартный шаблон).
+    """
+    cost_row = _find_row_by_label(ws, "СЕБЕСТОИМОСТЬ")
+    manufacturing_row = _find_row_by_label(ws, "ИЗГОТОВЛЕНИЕ")
+    installation_row = _find_row_by_label(ws, "МОНТАЖ")
+    measurement_row = _find_row_by_label(ws, "ЗАМЕР")
+    delivery_row = _find_row_by_label(ws, "ДОСТАВКА")
+    design_row = _find_row_by_label(ws, "ПРОЕКТИРОВКА")
+    overhead_row = _find_row_by_label(ws, "ПРОЧИЕ РАСХОДЫ")
+    profit_row = _find_row_by_label(ws, "ПЛАНИРУЕМАЯ ПРИБЫЛЬ")
+    tech_row = _find_row_by_label(ws, "ТЕХНИЧЕСКИЙ ДИРЕКТОР")
+    manager_row = _find_row_by_label(ws, "МЕНЕДЖЕР")
+    cash_row = _find_row_by_label(ws, "ИТОГО за наличку")
+    noncash_row = _find_row_by_label(ws, "безнал")
+
+    if not all(
+        (cost_row, manufacturing_row, installation_row, measurement_row,
+         delivery_row, design_row, overhead_row, profit_row, tech_row,
+         manager_row, cash_row, noncash_row)
+    ):
+        logger.warning("Финансовая секция шаблона не найдена — политика не применена")
+        return False
+
+    # Первое «ИТОГО:» до прибыли — промежуточный итог, после прибыли — итог с прибылью.
+    subtotal_row = _find_row_by_label(ws, "ИТОГО:", start=manufacturing_row)
+    total_row = _find_row_by_label(ws, "ИТОГО:", start=profit_row + 1)
+    if subtotal_row is None or total_row is None or subtotal_row >= profit_row:
+        logger.warning("Строки «ИТОГО» шаблона не найдены — политика не применена")
+        return False
+
+    ws.cell(manufacturing_row, 5).value = (
+        f"=ROUND({policy.manufacturing_rate}*E{cost_row},0)"
+    )
+    ws.cell(installation_row, 5).value = (
+        f"=ROUND({policy.installation_rate}*E{cost_row},0)"
+    )
+    ws.cell(measurement_row, 5).value = policy.measurement_fee
+    ws.cell(delivery_row, 5).value = policy.delivery_fee
+    ws.cell(design_row, 5).value = (
+        f"=ROUND({policy.design_rate}*E{manufacturing_row},0)"
+    )
+    ws.cell(overhead_row, 5).value = (
+        f"=ROUND({policy.overhead_rate}*E{cost_row},0)"
+    )
+    ws.cell(subtotal_row, 5).value = (
+        f"=ROUND(SUM(E{cost_row}:E{overhead_row}),0)"
+    )
+    ws.cell(profit_row, 5).value = f"=ROUND({policy.profit_rate}*E{subtotal_row},0)"
+    ws.cell(total_row, 5).value = f"=ROUND(E{profit_row}+E{subtotal_row},0)"
+    ws.cell(tech_row, 5).value = (
+        f"=ROUND(E{total_row}*{policy.tech_director_rate},0)"
+    )
+    ws.cell(manager_row, 5).value = (
+        f"=ROUND(E{total_row}*{policy.manager_rate},0)"
+    )
+    ws.cell(cash_row, 5).value = (
+        f"=ROUND(E{total_row}+E{tech_row}+E{manager_row},0)"
+    )
+    ws.cell(noncash_row, 5).value = f"=E{cash_row}*{policy.noncash_markup}"
+    return True
 
 
 def _update_summary(wb: Workbook, result: PipelineResult, rooms: List[RoomSpec]):

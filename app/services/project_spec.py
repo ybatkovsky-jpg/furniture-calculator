@@ -9,7 +9,7 @@
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -272,10 +272,14 @@ def apply_spec_to_quantities(
     spec: Optional[ProjectSpec],
     materials_qty,  # MaterialQuantities
     room_name: str = "",
+    applied_items: set | None = None,
 ) -> int:
     """
     Применить позиции из спецификации к MaterialQuantities.
-    Добавляет только то, чего ещё нет в расчёте.
+
+    P2-18: спецификация — проектная, а не «только для первой комнаты».
+    `applied_items` не даёт добавить одну и ту же позицию повторно при
+    обходе нескольких помещений.
 
     Returns:
         количество добавленных позиций
@@ -283,11 +287,15 @@ def apply_spec_to_quantities(
     if spec is None or not spec.items:
         return 0
 
+    applied_items = applied_items if applied_items is not None else set()
     added = 0
     room_lower = room_name.lower()
     is_kitchen = any(kw in room_lower for kw in ["кухн", "остров", "гарнитур", "kitchen"])
 
     for item in spec.items:
+        if item.name in applied_items:
+            continue
+        before = added
         notes_lower = (item.notes or "").lower()
 
         # Фильтр по комнате: применяем только если комната совпадает
@@ -378,6 +386,9 @@ def apply_spec_to_quantities(
             added += 1
         elif "подъёмник" in item.name.lower():
             added += 1  # подъёмники добавляются через hardware_calc
+
+        if added > before:
+            applied_items.add(item.name)
 
     if added > 0:
         logger.info(f"📋 Спецификация: +{added} позиций для «{room_name}»")

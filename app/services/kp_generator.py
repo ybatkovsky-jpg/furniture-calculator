@@ -4,9 +4,11 @@
 Использует ReportLab для создания профессиональных PDF документов.
 """
 
+import logging
 import os
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from pathlib import Path
+from typing import List
 from decimal import Decimal
 
 from reportlab.lib import colors
@@ -20,6 +22,8 @@ from reportlab.pdfbase.ttfonts import TTFont
 from app.config import settings
 from app.models.calculation import Calculation, CommercialOffer
 from app.models.project import Project
+
+logger = logging.getLogger(__name__)
 
 
 class KPGenerator:
@@ -40,17 +44,32 @@ class KPGenerator:
         self._setup_styles()
 
     def _setup_styles(self):
-        """Настроить стили для PDF."""
-        # Регистрация шрифта для кириллицы
-        try:
-            pdfmetrics.registerFont(TTFont('DejaVuSans', 'DejaVuSans.ttf'))
-            default_font = 'DejaVuSans'
-        except:
+        """Настроить стили для PDF.
+
+        P2-14: шрифт ищем по абсолютным путям (проект → Windows → Linux),
+        а не по относительному имени: в Docker относительный DejaVuSans.ttf
+        не находился, и КП уезжало в Helvetica без кириллицы.
+        """
+        project_root = Path(__file__).resolve().parents[2]
+        candidates = [
+            ("DejaVuSans", project_root / "DejaVuSans.ttf"),
+            ("DejaVuSans", project_root / "templates" / "DejaVuSans.ttf"),
+            ("DejaVuSans", Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")),
+            ("DejaVuSans", Path("/usr/share/fonts/dejavu/DejaVuSans.ttf")),
+            ("Arial", Path("C:/Windows/Fonts/arial.ttf")),
+        ]
+        default_font = "Helvetica"
+        for font_name, font_path in candidates:
+            if not font_path.exists():
+                continue
             try:
-                pdfmetrics.registerFont(TTFont('Arial', 'C:\\Windows\\Fonts\\arial.ttf'))
-                default_font = 'Arial'
-            except:
-                default_font = 'Helvetica'
+                pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
+                default_font = font_name
+                break
+            except Exception:  # noqa: BLE001 — шрифт опционален
+                continue
+        if default_font == "Helvetica":
+            logger.warning("Кириллический шрифт не найден — КП может отображаться некорректно")
 
         # Заголовок компании
         self.styles.add(ParagraphStyle(
@@ -112,7 +131,9 @@ class KPGenerator:
         """Генерировать уникальный номер КП."""
         # Получить следующий номер из базы данных
         # Для простоты используем timestamp
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        # P2-14: секунды не уникальны — два КП подряд получали один номер и
+        # падали на unique(offer_number). Добавляем микросекунды.
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
         return f"{self.kp_prefix}{timestamp}"
 
     def _create_items_table(self, calculation: Calculation) -> List[List[str]]:
@@ -297,7 +318,6 @@ class KPGenerator:
         discount_type = getattr(calculation, 'discount_type', None)
         discount_value = getattr(calculation, 'discount_value', 0)
         markup_type = getattr(calculation, 'markup_type', None)
-        markup_value = getattr(calculation, 'markup_value', 0)
 
         if discount_amount != 0:
             if discount_type == "percent":

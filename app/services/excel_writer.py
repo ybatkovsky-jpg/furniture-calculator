@@ -9,9 +9,7 @@
 """
 
 import logging
-from pathlib import Path
-from typing import List, Optional
-from dataclasses import dataclass
+from typing import Optional
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side

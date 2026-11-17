@@ -12,12 +12,11 @@ from aiogram.types import (
 )
 
 from app.db.session import get_session
+from app.domain.validation import PricingError
 from app.models.calculation import Calculation
 from app.services.access import get_owned_calculation
-from app.services.calc_engine import calculate_full_cost
+from app.services.calculation_service import CalculationService, discount_info_from
 from app.services.cost_calc import DiscountInfo
-from app.services.price_book import load_price_book
-from app.services.pricing_policy import load_default_policy
 
 router = Router()
 
@@ -48,33 +47,19 @@ async def start_calculation(callback: CallbackQuery, state: FSMContext):
             await callback.answer()
             return
 
-        # Запускаем расчёт
+        # P1-01: единственная точка пересчёта — CalculationService. Обработчик
+        # не собирает прайс/политику вручную и не пишет поля расчёта сам.
+        service = CalculationService(session)
         try:
-            # P0-02: цены ХДФ/GOLA/LED/столешницы/крепежа — из активного прайса,
-            # а не заглушки. Чего нет в прайсе — попадёт в warning/missing.
-            price_book = await load_price_book(session)
-            # P1-09: коэффициенты — из активного профиля CalcSettings (или config).
-            policy = await load_default_policy(session)
-            result = calculate_full_cost(
-                modules=calculation.modules or [],
-                selected_materials=calculation.selected_materials or {},
-                selected_hardware=calculation.selected_hardware or {},
-                glass_items=calculation.glass_items or [],
-                discount_info=_extract_discount_info(calculation),
-                settings=policy,
-                zone_type=calculation.zone_type,  # P1-20: не угадываем заново
-                price_book=price_book,
-            )
-
-            # Сохраняем результаты в БД (P1-10: весь CostBreakdown, а не 5 полей)
-            from app.services.calculation_persist import apply_result
-
-            apply_result(calculation, result)
-            await session.commit()
+            result = await service.recalculate(calculation, reason="initial")
 
             # Показываем смету
             await show_estimate(callback.message, calculation, result)
 
+        except PricingError as e:
+            await callback.message.answer(f"⛔ {e!s}")
+            await callback.answer()
+            return
         except Exception as e:  # noqa: BLE001
             await callback.message.answer(f"Ошибка при расчёте: {e!s}")
             await callback.answer()
@@ -168,7 +153,8 @@ def _format_estimate_text(calculation: Calculation, result) -> str:
     lines.append(f"Изготовление: {breakdown.manufacturing:,.0f} ₽")
     lines.append(f"Монтаж: {breakdown.installation:,.0f} ₽")
     lines.append(f"Замер: {breakdown.measurement:,.0f} ₽")
-    lines.append(f"Доставка: {breakdown.delivery_internal:,.0f} ₽")
+    lines.append(f"Доставка клиенту: {breakdown.delivery_client:,.0f} ₽ (отдельно)")
+    lines.append(f"Доставка внутренняя: {breakdown.delivery_internal:,.0f} ₽")
     lines.append(f"Проектировка: {breakdown.design:,.0f} ₽")
     lines.append(f"Прочие: {breakdown.overhead:,.0f} ₽")
     lines.append(f"Прибыль: {breakdown.profit:,.0f} ₽")
@@ -197,21 +183,18 @@ def _format_estimate_text(calculation: Calculation, result) -> str:
     # Финальные цены
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     lines.append(f"Итого наличка: {result.total_cash:,.0f} ₽")
-    lines.append(f"Безнал: {result.total_noncash:,.0f} ₽")
+    lines.append(f"Безнал (+13% на мебель): {result.total_noncash:,.0f} ₽")
+    lines.append(
+        f"УСН 15%: {breakdown.tax_accrual:,.0f} ₽ (НДС 0), "
+        f"чистая прибыль: {breakdown.net_profit:,.0f} ₽"
+    )
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
     return "\n".join(lines)
 
 
 def _extract_discount_info(calculation: Calculation) -> DiscountInfo:
-    """Извлекает информацию о скидках из расчёта."""
-    return DiscountInfo(
-        discount_type=calculation.discount_type,
-        discount_value=calculation.discount_value or 0,
-        markup_type=calculation.markup_type,
-        markup_value=calculation.markup_value or 0,
-        designer_bonus_enabled=bool(calculation.designer_bonus_enabled),
-        designer_bonus_rate=calculation.designer_bonus_rate or 0.10
-    )
+    """Совместимость: скидка из расчёта (переехала в CalculationService)."""
+    return discount_info_from(calculation)
 
 

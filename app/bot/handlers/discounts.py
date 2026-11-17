@@ -14,15 +14,13 @@ from aiogram.types import (
 )
 
 from app.bot.handlers.calculation import (
-    _extract_discount_info,
     _format_estimate_text,
     show_estimate,
 )
 from app.db.session import get_session
+from app.domain.validation import PricingError
 from app.services.access import get_owned_calculation
-from app.services.calc_engine import calculate_full_cost
-from app.services.cost_calc import DiscountInfo, calculate_cost
-from app.services.pricing_policy import load_default_policy
+from app.services.calculation_service import CalculationService
 
 router = Router()
 
@@ -133,85 +131,38 @@ async def process_discount_value(message: Message, state: FSMContext):
             await message.answer("Ошибка: расчёт не найден")
             return
 
-        # P0-08: проверяем границы до записи в БД, а не после расчёта.
-        base = calculation.total_base_cash or calculation.final_price_cash or 0
-        if discount_type == "percent" and value > 100:
-            await message.answer("❌ Скидка не может быть больше 100%.")
+        # P1-01/P0-01: один полный пересчёт. Раньше здесь вручную собирались
+        # 5 компонентов из 10 — скидка занижала себестоимость на 17,8 %.
+        # Валидация (P2-06) выполняется в сервисе до записи в БД.
+        service = CalculationService(session)
+        try:
+            if discount_type in ("percent", "fixed"):
+                result = await service.apply_discount(
+                    calculation,
+                    discount_type=discount_type,
+                    discount_value=value,
+                    reason="discount",
+                )
+            elif discount_type in ("markup_percent", "markup_fixed"):
+                result = await service.apply_discount(
+                    calculation,
+                    markup_type=discount_type.replace("markup_", ""),
+                    markup_value=value,
+                    reason="markup",
+                )
+            else:
+                await message.answer("Ошибка: неизвестный тип скидки")
+                return
+        except PricingError as exc:
+            await message.answer(f"❌ {exc}")
+            await state.set_state(None)
             return
-        if discount_type == "markup_percent" and value > 100:
-            await message.answer("❌ Наценка не может быть больше 100%.")
-            return
-        if discount_type == "fixed" and value > base:
-            await message.answer(
-                f"❌ Скидка {value:,.0f} ₽ больше суммы {base:,.0f} ₽."
-            )
-            return
-
-        # Сбрасываем предыдущие скидки/наценки
-        calculation.discount_type = None
-        calculation.discount_value = 0
-        calculation.markup_type = None
-        calculation.markup_value = 0
-
-        # Устанавливаем новые значения
-        if discount_type in ["percent", "fixed"]:
-            calculation.discount_type = discount_type
-            calculation.discount_value = value
-        elif discount_type in ["markup_percent", "markup_fixed"]:
-            calculation.markup_type = discount_type.replace("markup_", "")
-            calculation.markup_value = value
-
-        # Пересчитываем цены
-        discount_info = DiscountInfo(
-            discount_type=calculation.discount_type,
-            discount_value=calculation.discount_value,
-            markup_type=calculation.markup_type,
-            markup_value=calculation.markup_value,
-            designer_bonus_enabled=bool(calculation.designer_bonus_enabled),
-            designer_bonus_rate=calculation.designer_bonus_rate or 0.10
-        )
-
-        # Получаем текущие стоимости
-        material_cost = calculation.material_cost or 0
-        edge_cost = calculation.edge_cost or 0
-        facade_cost = calculation.facade_cost or 0
-        hardware_cost = calculation.hardware_cost or 0
-        glass_cost = calculation.glass_cost or 0
-
-        # Пересчитываем итоговую стоимость по единой политике (P1-09)
-        policy = await load_default_policy(session)
-        cost_breakdown = calculate_cost(
-            material_cost=material_cost,
-            edge_cost=edge_cost,
-            facade_cost=facade_cost,
-            hardware_cost=hardware_cost,
-            glass_cost=glass_cost,
-            discount=discount_info,
-            **policy.as_cost_kwargs(),
-        )
-
-        # Обновляем цены
-        calculation.price_after_discount = cost_breakdown.price_after_discount
-        calculation.final_price_cash = cost_breakdown.final_cash
-        calculation.final_price_noncash = cost_breakdown.final_noncash
-
-        await session.commit()
         break
-
-    discount_info = _extract_discount_info(calculation)
-    result = calculate_full_cost(
-        modules=calculation.modules or [],
-        selected_materials=calculation.selected_materials or {},
-        selected_hardware=calculation.selected_hardware or {},
-        glass_items=calculation.glass_items or [],
-        discount_info=discount_info,
-        settings=policy,
-    )
 
     await state.set_state(None)
     await message.answer("✅ Скидка/наценка применена. Возвращаюсь к смете...")
 
-    # Показываем обновлённую смету
+    # Показываем обновлённую смету из того же пересчёта, без второго вызова.
     try:
         await show_estimate(message, calculation, result)
     except TelegramBadRequest:
@@ -245,40 +196,15 @@ async def toggle_designer_bonus(callback: CallbackQuery):
             await callback.answer("Расчёт не найден")
             return
 
-        # Переключаем бонус
-        calculation.designer_bonus_enabled = 1 if not calculation.designer_bonus_enabled else 0
-
-        # Пересчитываем цены
-        discount_info = DiscountInfo(
-            discount_type=calculation.discount_type,
-            discount_value=calculation.discount_value,
-            markup_type=calculation.markup_type,
-            markup_value=calculation.markup_value,
-            designer_bonus_enabled=bool(calculation.designer_bonus_enabled),
-            designer_bonus_rate=calculation.designer_bonus_rate or 0.10
-        )
-
-        policy = await load_default_policy(session)
-        cost_breakdown = calculate_cost(
-            material_cost=calculation.material_cost or 0,
-            edge_cost=calculation.edge_cost or 0,
-            facade_cost=calculation.facade_cost or 0,
-            hardware_cost=calculation.hardware_cost or 0,
-            glass_cost=calculation.glass_cost or 0,
-            lighting_cost=calculation.lighting_cost or 0,
-            countertop_cost=calculation.countertop_cost or 0,
-            accessories_cost=calculation.accessories_cost or 0,
-            subcontractor_cost=calculation.subcontractor_cost or 0,
-            fastener_cost=calculation.fastener_cost or 0,
-            discount=discount_info,
-            **policy.as_cost_kwargs(),
-        )
-
-        calculation.price_after_discount = cost_breakdown.price_after_discount
-        calculation.final_price_cash = cost_breakdown.final_cash
-        calculation.final_price_noncash = cost_breakdown.final_noncash
-
-        await session.commit()
+        # Переключаем бонус и пересчитываем единым сервисом (P1-01).
+        service = CalculationService(session)
+        try:
+            await service.set_designer_bonus(
+                calculation, not bool(calculation.designer_bonus_enabled)
+            )
+        except PricingError as exc:
+            await callback.answer(f"❌ {exc}", show_alert=True)
+            return
         break
 
     await callback.answer("Бонус дизайнера переключён")
@@ -307,39 +233,9 @@ async def remove_discount(callback: CallbackQuery):
             await callback.answer("Расчёт не найден")
             return
 
-        # Сбрасываем скидки/наценки
-        calculation.discount_type = None
-        calculation.discount_value = 0
-        calculation.markup_type = None
-        calculation.markup_value = 0
-
-        # Пересчитываем цены
-        discount_info = DiscountInfo(
-            designer_bonus_enabled=bool(calculation.designer_bonus_enabled),
-            designer_bonus_rate=calculation.designer_bonus_rate or 0.10
-        )
-
-        policy = await load_default_policy(session)
-        cost_breakdown = calculate_cost(
-            material_cost=calculation.material_cost or 0,
-            edge_cost=calculation.edge_cost or 0,
-            facade_cost=calculation.facade_cost or 0,
-            hardware_cost=calculation.hardware_cost or 0,
-            glass_cost=calculation.glass_cost or 0,
-            lighting_cost=calculation.lighting_cost or 0,
-            countertop_cost=calculation.countertop_cost or 0,
-            accessories_cost=calculation.accessories_cost or 0,
-            subcontractor_cost=calculation.subcontractor_cost or 0,
-            fastener_cost=calculation.fastener_cost or 0,
-            discount=discount_info,
-            **policy.as_cost_kwargs(),
-        )
-
-        calculation.price_after_discount = cost_breakdown.price_after_discount
-        calculation.final_price_cash = cost_breakdown.final_cash
-        calculation.final_price_noncash = cost_breakdown.final_noncash
-
-        await session.commit()
+        # Сбрасываем скидку/наценку и пересчитываем единым сервисом (P1-01).
+        service = CalculationService(session)
+        await service.clear_discount(calculation)
         break
 
     await callback.answer("Скидка убрана")
@@ -367,18 +263,8 @@ async def back_to_estimate(callback: CallbackQuery):
         if not calculation:
             await callback.answer("Расчёт не найден")
             return
-        policy = await load_default_policy(session)
+        result = await CalculationService(session).preview_calculation(calculation)
         break
-
-    discount_info = _extract_discount_info(calculation)
-    result = calculate_full_cost(
-        modules=calculation.modules or [],
-        selected_materials=calculation.selected_materials or {},
-        selected_hardware=calculation.selected_hardware or {},
-        glass_items=calculation.glass_items or [],
-        discount_info=discount_info,
-        settings=policy,
-    )
 
     # Показываем смету
     try:

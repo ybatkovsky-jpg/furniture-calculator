@@ -9,8 +9,18 @@ from app.models.calculation import Calculation
 from app.services.calc_engine import CalculationResult
 
 
-def apply_result(calculation: Calculation, result: CalculationResult) -> None:
-    """Записать в расчёт весь CostBreakdown, итоги и снимок quote."""
+def apply_result(
+    calculation: Calculation,
+    result: CalculationResult,
+    *,
+    reason: str = "manual",
+) -> None:
+    """Записать в расчёт весь CostBreakdown, итоги и снимок quote.
+
+    `reason` — почему пересчитано (`initial`, `discount`, `designer_bonus`,
+    `price_update`…). Попадает в снимок: по нему потом видно, откуда взялась
+    сумма, без чтения логов (P1-10).
+    """
     breakdown = result.cost_breakdown
     calculation.material_cost = result.material_cost
     calculation.edge_cost = result.edge_cost
@@ -41,7 +51,9 @@ def apply_result(calculation: Calculation, result: CalculationResult) -> None:
     calculation.final_price_noncash = result.total_noncash
     calculation.quote = {
         "engine_version": "2.0",
+        "quote_version": "2.1",
         "created_at": datetime.now(UTC).isoformat(),
+        "reason": reason,
         "zone_type": calculation.zone_type,
         "lines": [asdict(line) for line in result.lines],
         "warnings": result.warnings,
@@ -52,6 +64,18 @@ def apply_result(calculation: Calculation, result: CalculationResult) -> None:
         "cost_price": breakdown.cost_price,
         "discount_amount": breakdown.discount_amount,
         "total_base_cash": breakdown.total_base_cash,
+        "delivery_client": breakdown.delivery_client,
+        "delivery_internal": breakdown.delivery_internal,
+        "tax": {
+            "regime": "УСН доходы минус расходы",
+            "region": "Хабаровский край",
+            "tax_base": breakdown.tax_base,
+            "tax_usn": breakdown.tax_usn,
+            "min_tax": breakdown.min_tax,
+            "tax_accrual": breakdown.tax_accrual,
+            "vat": breakdown.vat,
+            "net_profit": breakdown.net_profit,
+        },
         "total_cash": result.total_cash,
         "total_noncash": result.total_noncash,
     }

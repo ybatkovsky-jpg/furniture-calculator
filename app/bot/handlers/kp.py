@@ -19,6 +19,19 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def is_legacy_calculation(calculation: Calculation) -> bool:
+    """Старый расчёт без снимка цен или с нулевой себестоимостью.
+
+    День 4: такие расчёты не выпускают КП, пока их не пересчитали.
+    """
+    quote = calculation.quote or {}
+    return (
+        not quote
+        or not calculation.cost_price
+        or float(calculation.cost_price) <= 0
+    )
+
+
 @router.callback_query(F.data.startswith("download_kp:"))
 async def download_kp(callback: CallbackQuery):
     """
@@ -47,9 +60,22 @@ async def download_kp(callback: CallbackQuery):
                 await callback.answer()
                 return
 
+            # День 4: старые расчёты (без снимка quote или с нулевой
+            # себестоимостью) не выпускают КП без пересчёта — иначе клиент
+            # получает цену из старых коэффициентов/шаблона.
+            quote = calculation.quote or {}
+            if is_legacy_calculation(calculation):
+                calculation.status = "legacy"
+                await session.commit()
+                await callback.message.answer(
+                    "⛔ Это старый расчёт: нет снимка цен или себестоимость равна 0. "
+                    "Пересчитайте смету (выберите материалы заново), затем выпускайте КП."
+                )
+                await callback.answer()
+                return
+
             # P0-02: КП не выпускается, если в смете есть строки без цены
             # или не выбраны ручки — иначе клиент получает заниженную цену.
-            quote = calculation.quote or {}
             if quote and not quote.get("can_issue_kp", True):
                 reasons = quote.get("missing_prices") or quote.get("warnings") or []
                 details = "\n".join(f"• {reason}" for reason in reasons[:10])
@@ -194,30 +220,22 @@ async def create_calculation_variant(callback: CallbackQuery):
             selected_materials=original_calc.selected_materials,
             selected_hardware=original_calc.selected_hardware,
             glass_items=original_calc.glass_items,
-            # Копировать остальные поля...
+            # P2-04: без zone_type вариант «Кухня» открывался как «Гостиная»,
+            # и GOLA/столешница терялись при пересчёте.
+            zone_type=original_calc.zone_type,
         )
 
         session.add(new_calculation)
         await session.flush()
 
-        # P2-19: вариант пересчитывается сразу, а не открывается с 0 ₽.
-        from app.services.calc_engine import calculate_full_cost
-        from app.services.calculation_persist import apply_result
-        from app.services.price_book import load_price_book
-        from app.services.pricing_policy import load_default_policy
+        # P2-19/P1-01: вариант пересчитывается сразу и тем же сервисом, что
+        # остальные экраны (раньше — своя копия вызова движка).
+        from app.services.calculation_service import CalculationService
 
-        price_book = await load_price_book(session)
-        policy = await load_default_policy(session)
-        result = calculate_full_cost(
-            modules=new_calculation.modules or [],
-            selected_materials=new_calculation.selected_materials or {},
-            selected_hardware=new_calculation.selected_hardware or {},
-            glass_items=new_calculation.glass_items or [],
-            zone_type=original_calc.zone_type,
-            price_book=price_book,
-            settings=policy,
+        service = CalculationService(session)
+        result = await service.recalculate(
+            new_calculation, reason="variant", commit=False
         )
-        apply_result(new_calculation, result)
         await session.commit()
 
         await callback.message.answer(

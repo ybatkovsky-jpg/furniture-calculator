@@ -25,8 +25,7 @@ from app.models.calculation import Calculation
 from app.models.price import PriceItem
 from app.models.project import Project
 from app.services.access import get_owned_calculation
-from app.services.calc_engine import calculate_full_cost
-from app.services.price_book import load_price_book
+from app.services.calculation_service import CalculationService
 from app.services.pricing_policy import load_default_policy
 
 logger = logging.getLogger(__name__)
@@ -120,20 +119,11 @@ async def show_estimate_callback(callback: CallbackQuery):
         if calculation is None:
             await callback.answer("Расчёт не найден", show_alert=True)
             return
-        price_book = await load_price_book(session)
-        policy = await load_default_policy(session)
+        # P1-11: скидка берётся из самого расчёта, иначе экран показывал
+        # цену без скидки. Пересчёт — через единый сервис (P1-01).
+        result = await CalculationService(session).preview_calculation(calculation)
         break
 
-    result = calculate_full_cost(
-        modules=calculation.modules or [],
-        selected_materials=calculation.selected_materials or {},
-        selected_hardware=calculation.selected_hardware or {},
-        glass_items=calculation.glass_items or [],
-        zone_type=calculation.zone_type,
-        price_book=price_book,
-        settings=policy,
-        discount_info=None,
-    )
     await show_estimate(callback.message, calculation, result)
     await callback.answer()
 

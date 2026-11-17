@@ -52,6 +52,8 @@ class RecognizedModule:
     # P1-04: распашные ("hinged") или раздвижные ("sliding") двери. Зона даёт
     # значение по умолчанию; явное значение модуля его переопределяет.
     door_system: str | None = None
+    # P1-07: способ открывания на уровне модуля (переопределяет проект).
+    handle_mode: str | None = None
     # Bounding box (если модель вернула)
     bbox: dict[str, int] | None = None  # {"x": int, "y": int, "w": int, "h": int}
     notes: str | None = None  # предупреждения по модулю (например, коррекция ширины)

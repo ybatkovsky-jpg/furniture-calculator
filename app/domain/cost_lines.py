@@ -66,7 +66,7 @@ class CostLine:
     kind: str          # ldsp | edge | facade | hdf | hinge | drawer | handle |
                        # gola | led | countertop | fastener | glass |
                        # rod | bottle_holder | cutlery_tray | drying_rack |
-                       # hygienic_mat | drawer_internal
+                       # hygienic_mat | drawer_internal | push_open | lift
     name: str
     quantity: float
     unit: str
@@ -463,6 +463,24 @@ def build_cost_lines(
             "selected",
             field="handles_count",
         )
+
+    # ── P1-07: механизмы вместо ручек ──────────────────────────────
+    add(
+        "push_open",
+        "Push-to-open механизм",
+        quantities.push_open_count,
+        "шт",
+        price_book.get("push_hinge"),
+        "price_book",
+    )
+    add(
+        "lift",
+        "Подъёмник (lift)",
+        quantities.lift_mechanism_count,
+        "шт",
+        price_book.get("lift_mechanism"),
+        "price_book",
+    )
 
     # ── GOLA / LED (кухня) ─────────────────────────────────────────
     add(

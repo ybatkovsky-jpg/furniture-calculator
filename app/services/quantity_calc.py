@@ -128,6 +128,10 @@ class MaterialQuantities:
 
     # Ручки накладные
     handles_count: int = 0
+    # P1-07: способ открывания и механизмы вместо ручек.
+    handle_mode: str = "handles"     # handles | gola | push | lift
+    push_open_count: int = 0          # push-to-open механизмы (по петлям)
+    lift_mechanism_count: int = 0     # подъёмники (lift)
 
     # Фурнитура
     hinges_count: int = 0
@@ -342,6 +346,7 @@ def calculate_quantities(
     # ЛДСП SLOTEX «EGGER» и не меняет число листов).
     ldsp_name: str | None = None,
     drawer_system: str | None = None,        # P1-06: выбранная система ящиков
+    handle_mode: str | None = None,          # P1-07: handles | gola | push | lift
     zone_type: str | None = None,           # NEW: тип помещения из AI
     has_spec: bool = False,          # если есть spec.yaml — не автодобавлять
     # P1-02: платные автопозиции — opt-in. По умолчанию False: раньше кухня
@@ -369,6 +374,10 @@ def calculate_quantities(
     - Раздвижные двери vs распашные (петли только для hinged)
     """
     q = MaterialQuantities()
+    mode = str(handle_mode or "handles").strip().lower()
+    if mode not in {"handles", "gola", "push", "lift"}:
+        mode = "handles"
+    q.handle_mode = mode
     if drawer_system:
         q.drawer_system = drawer_system
     q.has_sink = bool(has_sink)  # до расчёта ХДФ, а не после (P2-01)
@@ -560,6 +569,24 @@ def calculate_quantities(
             facade_w_m = (module.width / facade_count - 3) / 1000
             q.pvc_film_m2 += facade_w_m * facade_h_m * facade_count * qty
 
+        # ── P1-07: способ открывания ──
+        module_handle_mode = str(
+            getattr(module, "handle_mode", None) or mode or "handles"
+        ).lower()
+        if module_handle_mode not in {"handles", "gola", "push", "lift"}:
+            module_handle_mode = "handles"
+        has_doors = bool(module.facades and module.facades.get("count", 0) > 0)
+
+        if module_handle_mode == "gola" and has_doors:
+            # Профиль-ручка: горизонтальный по ширине модуля, вертикальный —
+            # по высоте высоких модулей. Метраж затем переводится в штуки по 3 м.
+            q.gola_horizontal_m += (module.width / 1000) * qty
+            if module.type in ("penal", "column", "wardrobe", "tall_cabinet"):
+                q.gola_vertical_m += (module.height / 1000) * qty
+        if module_handle_mode == "lift" and has_doors:
+            # Подъёмник — один на модуль (верхние базы/антресоли).
+            q.lift_mechanism_count += 1 * qty
+
         # ── Ручки: двери + ящики (P1-04) ──
         # На раздвижные створки обычные накладные ручки не ставят — профиль-ручка
         # отдельной позицией в прайсе отсутствует (цена не выдумывается).
@@ -568,7 +595,11 @@ def calculate_quantities(
         ).lower()
         is_sliding_module = module_door_system == "sliding"
 
-        if not is_sliding_module and module.type in HINGED_MODULE_TYPES:
+        if (
+            module_handle_mode == "handles"
+            and not is_sliding_module
+            and module.type in HINGED_MODULE_TYPES
+        ):
             if module.facades and module.facades.get("count", 0) > 0:
                 fc = module.facades.get("count", 1)
                 for _ in range(fc):
@@ -585,6 +616,7 @@ def calculate_quantities(
         # ── Петли: по высоте ОДНОЙ ДВЕРИ, а не модуля ──
         # Ящики = без петель (используют боксы)
         # Встраиваемая техника = петли в комплекте, НЕ считаем
+        hinges_before = q.hinges_count
         if module.type in HINGED_MODULE_TYPES:
             # Пропускаем модули-ящики (у них направляющие, не петли)
             has_drawers_only = (
@@ -606,7 +638,8 @@ def calculate_quantities(
             # готовой позиции с ценой в прайсе нет (price_manager.py) — цену
             # не выдумываем, оставляем только исключение петель.
             if (
-                not is_sliding_module
+                module_handle_mode != "lift"
+                and not is_sliding_module
                 and not has_drawers_only
                 and not is_appliance_penal
                 and module.facades
@@ -637,6 +670,11 @@ def calculate_quantities(
                     * qty
                 )
                 q.hinge_brand = hinge_brand_key
+
+        # P1-07: push-to-open — механизм на каждую петлю (цена отдельной
+        # позицией; без неё строка missing и КП блокируется).
+        if module_handle_mode == "push" and has_doors:
+            q.push_open_count += max(0, q.hinges_count - hinges_before)
 
         # ── Ящики (AI + рекомендации) ──
         if module.drawers and module.drawers.get("count", 0) > 0:
@@ -821,7 +859,14 @@ def calculate_quantities(
             if q.led_sensor == 0:
                 q.led_sensor = 1
 
-    # ── Отключаем ручки для Gola и push-to-open ──
+    # ── P1-07: GOLA/push/lift — без накладных ручек ──
+    if q.handle_mode != "handles":
+        q.handles_count = 0
+    # GOLA из явного режима: метраж → штуки по 3 м (если авто-GOLA не считала).
+    if q.gola_horizontal_m > 0 and q.gola_horizontal_pcs == 0:
+        q.gola_horizontal_pcs = math.ceil(q.gola_horizontal_m / 3)
+    if q.gola_vertical_m > 0 and q.gola_vertical_pcs == 0:
+        q.gola_vertical_pcs = math.ceil(q.gola_vertical_m / 3)
     # Если есть Gola — ручки не нужны
     if q.gola_horizontal_pcs > 0 or q.gola_vertical_pcs > 0:
         q.handles_count = 0

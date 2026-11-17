@@ -133,6 +133,7 @@ def calculate_full_cost(
     material_names = _extract_material_names(selected_materials)
     ldsp_name = _extract_ldsp_name(selected_materials)
     drawer_system = _drawer_system_from_selection(selected_hardware)
+    handle_mode = _handle_mode_from_selection(selected_hardware)
     if not zone_type:
         zone_type = _infer_zone_type(modules)
     quantities = calculate_quantities(
@@ -141,6 +142,7 @@ def calculate_full_cost(
         material_names,
         ldsp_name=ldsp_name,
         drawer_system=drawer_system,
+        handle_mode=handle_mode,
         zone_type=zone_type,
         hinge_brand=hinge_brand,
         has_spec=has_spec,
@@ -209,7 +211,8 @@ def calculate_full_cost(
     result.facade_cost = round(totals.get("facade", 0.0), 2)
     result.hardware_cost = round(
         totals.get("hinge", 0.0) + totals.get("drawer", 0.0)
-        + totals.get("handle", 0.0) + totals.get("drawer_internal", 0.0),
+        + totals.get("handle", 0.0) + totals.get("drawer_internal", 0.0)
+        + totals.get("push_open", 0.0) + totals.get("lift", 0.0),
         2,
     )
     result.glass_cost = round(totals.get("glass", result.glass_cost), 2)
@@ -397,6 +400,14 @@ def _drawer_system_from_selection(selected_hardware: dict) -> str | None:
     return None
 
 
+def _handle_mode_from_selection(selected_hardware: dict) -> str:
+    """Способ открывания из выбора оператора (P1-07): handles/gola/push/lift."""
+    if not isinstance(selected_hardware, dict):
+        return "handles"
+    mode = str(selected_hardware.get("handle_mode") or "handles").strip().lower()
+    return mode if mode in {"handles", "gola", "push", "lift"} else "handles"
+
+
 def _extract_ldsp_name(selected_materials: dict) -> str | None:
     """Имя выбранной позиции ЛДСП (P1-08).
 
@@ -503,6 +514,7 @@ def _dict_to_recognized_module(m: dict):
         shelves=shelves,
         is_corner=bool(m.get("is_corner", False)),
         door_system=(str(m["door_system"]).lower() if m.get("door_system") else None),
+        handle_mode=(str(m["handle_mode"]).lower() if m.get("handle_mode") else None),
     )
 
 

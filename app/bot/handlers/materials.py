@@ -889,12 +889,25 @@ async def select_handle(message: Message, state: FSMContext):
                 callback_data=f"handle:{item.id}",
             )
         ])
-    keyboard.append([
-        InlineKeyboardButton(text="Без ручек (Gola/push)", callback_data="handle:none")
+    # P1-07: способы открывания вместо «Без ручек (Gola/push)», который
+    # оставлял handles_count > 0 и навсегда блокировал КП.
+    keyboard.extend([
+        [InlineKeyboardButton(
+            text="GOLA — профиль-ручка", callback_data="handle:gola"
+        )],
+        [InlineKeyboardButton(
+            text="Push-to-open (без ручек)", callback_data="handle:push"
+        )],
+        [InlineKeyboardButton(
+            text="Подъёмники (lift), без ручек", callback_data="handle:lift"
+        )],
     ])
 
     await message.answer(
-        "🖐 Выберите ручку (или «Без ручек», если проект на Gola/push-to-open):",
+        "🖐 Выберите ручку или способ открывания:\n"
+        "• GOLA — профиль вместо ручек;\n"
+        "• push-to-open — механизм на петли;\n"
+        "• lift — подъёмники на верхние фасады.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
     )
 
@@ -906,10 +919,24 @@ async def process_handle_selection(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     selected_hardware = data.get("selected_hardware", {})
 
-    if value == "none":
+    if value in {"gola", "push", "lift"}:
         selected_hardware.pop("handles", None)
+        selected_hardware["handle_mode"] = value
         await state.update_data(selected_hardware=selected_hardware)
-        await callback.message.answer("Ручки: без накладных ручек")
+        labels = {
+            "gola": "GOLA — профиль-ручка (без накладных ручек)",
+            "push": "push-to-open — без ручек, механизм на петли",
+            "lift": "подъёмники — без ручек",
+        }
+        await callback.message.answer(f"Способ открывания: {labels[value]}")
+    elif value == "none":
+        # Старая кнопка «Без ручек (Gola/push)»: способ не выбран.
+        await callback.message.answer(
+            "Выберите способ открывания: GOLA, push-to-open или подъёмники."
+        )
+        await select_handle(callback.message, state)
+        await callback.answer()
+        return
     else:
         try:
             handle_id = int(value)
@@ -931,6 +958,7 @@ async def process_handle_selection(callback: CallbackQuery, state: FSMContext):
                 "price_unit": item.price_unit,
                 "brand": item.brand,
             }
+            selected_hardware["handle_mode"] = "handles"
             await state.update_data(selected_hardware=selected_hardware)
             break
         await callback.message.answer(f"✅ Выбрана ручка: {item.name}")

@@ -111,7 +111,7 @@ def test_recalculate_is_full_and_persisted():
         result = await service.recalculate(calculation, reason="initial")
 
         # Все 10 компонентов на месте: скидка больше не увидит «дыру».
-        assert result.cost_breakdown.cost_price == 22473
+        assert result.cost_breakdown.cost_price == 23473
         assert calculation.cost_price == result.cost_breakdown.cost_price
         assert calculation.final_price_cash == result.total_cash
         assert calculation.final_price_noncash == result.total_noncash

@@ -49,6 +49,9 @@ class RecognizedModule:
     drawers: dict[str, Any] | None = None
     shelves: int = 0
     is_corner: bool = False
+    # P1-04: распашные ("hinged") или раздвижные ("sliding") двери. Зона даёт
+    # значение по умолчанию; явное значение модуля его переопределяет.
+    door_system: str | None = None
     # Bounding box (если модель вернула)
     bbox: dict[str, int] | None = None  # {"x": int, "y": int, "w": int, "h": int}
     notes: str | None = None  # предупреждения по модулю (например, коррекция ширины)

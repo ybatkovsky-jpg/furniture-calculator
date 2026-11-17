@@ -59,7 +59,7 @@ def _calc(**kwargs):
 
 def test_golden_module_600x560x820_two_doors_two_drawers():
     """Эталон: ЛДСП 6000, кромка 549, фасады 4850, ХДФ 1530,
-    петли 800, ящики 6000, ручки 1000, крепёж 1744."""
+    петли 800, ящики 6000, ручки 2000 (2 двери + 2 ящика, P1-04), крепёж 1744."""
     result = _calc()
     totals = {}
     for line in result.lines:
@@ -71,10 +71,10 @@ def test_golden_module_600x560x820_two_doors_two_drawers():
     assert totals["hdf"] == 1530
     assert totals["hinge"] == 800         # 4 петли × 200
     assert totals["drawer"] == 6000       # 2 ящика × 3000
-    assert totals["handle"] == 1000       # 2 ручки × 500
+    assert totals["handle"] == 2000       # 2 двери + 2 ящика = 4 ручки × 500 (P1-04)
     assert totals["fastener"] == 1744
 
-    assert result.cost_breakdown.cost_price == 22473
+    assert result.cost_breakdown.cost_price == 23473
     assert abs(sum(line.amount for line in result.lines) - result.cost_breakdown.cost_price) <= 0.01
     assert result.can_issue_kp is True
     assert result.warnings == []

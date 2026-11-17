@@ -469,6 +469,7 @@ def _dict_to_recognized_module(m: dict):
         drawers=drawers,
         shelves=shelves,
         is_corner=bool(m.get("is_corner", False)),
+        door_system=(str(m["door_system"]).lower() if m.get("door_system") else None),
     )
 
 

@@ -61,6 +61,15 @@ SHEET_LDSP_SLOTEX_LONG = {"width_mm": 4200, "height_mm": 600, "area_m2": 2.52}
 SHEET_MDF_STANDARD = {"width_mm": 2800, "height_mm": 1220, "area_m2": 3.416}
 SHEET_MDF_LARGE    = {"width_mm": 3050, "height_mm": 2070, "area_mm2": 3050*2070, "area_m2": 6.3135}
 
+# P1-04: все типы модулей, у которых бывают распашные двери. Раньше список
+# ограничивался lower_base/upper_base/penal/column/tumbler, поэтому «Тумба»
+# (cabinet), шкаф, пенал-колонна и тумба под раковину оставались без петель
+# и ручек даже при дверях.
+HINGED_MODULE_TYPES = {
+    "lower_base", "upper_base", "penal", "column", "tumbler",
+    "cabinet", "wardrobe", "tall_cabinet", "vanity", "drawer_unit", "corner",
+}
+
 # Толщина реза пилы (мм) — добавляется к каждому размеру детали
 SAW_KERF_MM = 4
 
@@ -341,11 +350,9 @@ def calculate_quantities(
     room_lower = room_name.lower()
     is_kitchen = rules.family == "kitchen"
     is_wardrobe = rules.family == "wardrobe"
-    # Раздвижная система дверей (шкаф-купе/гардеробная): зоны «Спальня»,
-    # «Гардеробная», «wardrobe» помечены door_system="sliding" (furniture_defaults).
-    # На створки купе ставят систему направляющих/роликов, а НЕ петли; накладные
-    # ручки на раздвижные створки тоже не вешаются — см. блоки ручек и петель ниже.
-    is_sliding = rules.door_system == "sliding"
+    # P1-04: раздвижная система — значение по умолчанию зоны, которое можно
+    # переопределить на уровне модуля (`door_system="hinged"`), см.
+    # is_sliding_module в цикле.
 
     # Определяем свойства материала (единая функция)
     mat_props = detect_material_properties(materials)
@@ -523,35 +530,32 @@ def calculate_quantities(
             facade_w_m = (module.width / facade_count - 3) / 1000
             q.pvc_film_m2 += facade_w_m * facade_h_m * facade_count * qty
 
-        # ── Ручки (обычные накладные, только для распашных фасадов) ──
-        # На раздвижные створки (door_system="sliding": шкаф-купе, гардеробная)
-        # обычные накладные ручки не ставят — для купе используется профиль-ручка
-        # (врезная/накладная на раму створки). Такой позиции в прайсе НЕТ
-        # (см. price_manager.py) → ручки для sliding просто не считаем.
-        if not is_sliding and module.type in ("lower_base", "upper_base", "penal", "column", "tumbler"):
+        # ── Ручки: двери + ящики (P1-04) ──
+        # На раздвижные створки обычные накладные ручки не ставят — профиль-ручка
+        # отдельной позицией в прайсе отсутствует (цена не выдумывается).
+        module_door_system = str(
+            getattr(module, "door_system", None) or rules.door_system or "hinged"
+        ).lower()
+        is_sliding_module = module_door_system == "sliding"
+
+        if not is_sliding_module and module.type in HINGED_MODULE_TYPES:
             if module.facades and module.facades.get("count", 0) > 0:
                 fc = module.facades.get("count", 1)
-                # Gola и push-to-open — без ручек; обычные петли — с ручками
-                # По умолчанию считаем что ручки нужны (Gola отсеивается отдельно — см. ниже)
                 for _ in range(fc):
                     if module.height <= rules.handles_tall_threshold_mm:
                         q.handles_count += rules.handles_short_door * qty
                     else:
                         q.handles_count += rules.handles_tall_door * qty
 
-            # ── Ручки ящиков в модуле БЕЗ дверей ──
-            # Ручной ввод (bot/handlers/manual_input.py) задаёт ящики как
-            # filling="drawers" + quantity=N и НЕ задаёт facades — без этой
-            # ветки такой модуль оставался вообще без ручек (каждый выдвижной
-            # фасад имеет свою ручку). Для распознанных модулей фасады уже
-            # есть (facades.count>0), поэтому двойного счёта нет.
-            elif module.drawers and module.drawers.get("count", 0) > 0:
+            # Ручки ящиков считаются ВМЕСТЕ с дверными (раньше — elif, и модуль
+            # «2 двери + 3 ящика» получал 2 ручки вместо 5).
+            if module.drawers and module.drawers.get("count", 0) > 0:
                 q.handles_count += int(module.drawers.get("count", 0)) * qty
 
         # ── Петли: по высоте ОДНОЙ ДВЕРИ, а не модуля ──
         # Ящики = без петель (используют боксы)
         # Встраиваемая техника = петли в комплекте, НЕ считаем
-        if module.type in ("lower_base", "upper_base", "penal", "column", "tumbler"):
+        if module.type in HINGED_MODULE_TYPES:
             # Пропускаем модули-ящики (у них направляющие, не петли)
             has_drawers_only = (
                 module.drawers
@@ -571,7 +575,12 @@ def calculate_quantities(
             # направляющие + ролики). Раздвижная система НЕ учтена в смете:
             # готовой позиции с ценой в прайсе нет (price_manager.py) — цену
             # не выдумываем, оставляем только исключение петель.
-            if not is_sliding and not has_drawers_only and not is_appliance_penal and module.facades:
+            if (
+                not is_sliding_module
+                and not has_drawers_only
+                and not is_appliance_penal
+                and module.facades
+            ):
                 facade_count = module.facades.get("count", 1)
                 # Высота двери = высота модуля: facades.count описывает двери РЯДОМ
                 # (промпт: «вертикальная линия = стык двух дверей»), каждая — полная

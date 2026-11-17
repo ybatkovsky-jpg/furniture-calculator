@@ -320,11 +320,11 @@ def test_drawers_only_module_gets_handles():
     assert q.handles_count == 3
 
 
-def test_drawers_with_facade_handles_not_doubled():
-    """Ящики + фасад: ручки считаются по фасаду, а не плюс по ящикам."""
+def test_drawers_with_facade_handles_counted_together():
+    """P1-04: 1 дверь + 3 ящика = 4 ручки (раньше elif давал 1)."""
     q = _calc([_mk("lower_base", 400, fc=1, dr=3)], ["EGGER U702"],
               room="Спальня", zone_type="bedroom")
-    assert q.handles_count == 1
+    assert q.handles_count == 4
 
 
 # ════════════════════════════════════════════════════════════════════

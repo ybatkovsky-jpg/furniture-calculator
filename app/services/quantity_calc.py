@@ -361,6 +361,19 @@ def calculate_quantities(
     total_partitions_count = 0  # вертикальные перегородки
 
     for module in modules:
+        # P2-14: модуль 0×0×0 раньше давал 1 лист и смету ~36 000 ₽.
+        # Ширина/высота — обязательные габариты: без них нельзя построить
+        # ни одной детали, поэтому это ошибка, а не «примерно 0».
+        if module.width <= 0 or module.height <= 0:
+            raise ValueError(
+                "Размеры модуля должны быть больше нуля: "
+                f"тип {module.type!r}, Ш×В = {module.width}×{module.height} мм"
+            )
+        if module.depth < 0:
+            raise ValueError(
+                "Глубина модуля не может быть отрицательной: "
+                f"тип {module.type!r}, Г = {module.depth} мм"
+            )
         # Размеры в мм (с припуском на пропил)
         w_mm = module.width + SAW_KERF_MM
         d_mm = module.depth + SAW_KERF_MM
@@ -404,6 +417,16 @@ def calculate_quantities(
         visible_per_module = (2 * h_m + 2 * w_m)  # передние кромки боковин + дна/крыши
         visible_per_module += shelf_count * w_m   # передняя кромка каждой полки
 
+        # P0-03: стеклянная дверь оплачивается как стекло, а не как фасад
+        # из ЛДСП/МДФ. Иначе витрина платила дважды (фасад + стекло).
+        facade_is_glass = bool(
+            getattr(module, "has_glass", False)
+            or (
+                module.facades
+                and str(module.facades.get("type") or "").lower() == "glass"
+            )
+        )
+
         # Кромка фасадов (видимая со всех сторон).
         # P2-08: если фасад плитный МДФ (EMDIWAY/EVOGLOSS/AGT…), его периметр
         # уходит в кромку МДФ 1 мм ниже. Раньше он одновременно попадал
@@ -412,8 +435,13 @@ def calculate_quantities(
             mat_props.get("mdf_needs_edge")
             and module.facades
             and module.facades.get("count", 0) > 0
+            and not facade_is_glass
         )
-        if module.facades and module.facades.get("count", 0) > 0:
+        if (
+            module.facades
+            and module.facades.get("count", 0) > 0
+            and not facade_is_glass
+        ):
             fc = module.facades.get("count", 1)
             fh = (module.height - 4) / 1000
             fw = (module.width / fc - 3) / 1000
@@ -428,7 +456,12 @@ def calculate_quantities(
         q.edge_premium_m  += premium_total * EDGE_OVERLAP
 
         # ── КРОМКА МДФ (1мм) — для плитного МДФ ──
-        if mat_props.get("mdf_needs_edge", False) and module.facades and module.facades.get("count", 0) > 0:
+        if (
+            mat_props.get("mdf_needs_edge", False)
+            and module.facades
+            and module.facades.get("count", 0) > 0
+            and not facade_is_glass
+        ):
             fc = module.facades.get("count", 1)
             fh = (module.height - 4) / 1000
             fw = (module.width / fc - 3) / 1000
@@ -443,15 +476,24 @@ def calculate_quantities(
         else:
             q.mdf_facade_needs_edge = False
 
-        # ── Фасады ──
-        if module.facades and module.facades.get("count", 0) > 0:
+        # ── Фасады (кроме стеклянных: они считаются строкой «Стекло») ──
+        if (
+            module.facades
+            and module.facades.get("count", 0) > 0
+            and not facade_is_glass
+        ):
             facade_count = module.facades.get("count", 1)
             facade_h_m = (module.height - 4) / 1000   # зазор 4мм
             facade_w_m = (module.width / facade_count - 3) / 1000  # зазор 3мм
             q.facades_area_m2 += facade_w_m * facade_h_m * facade_count * qty
 
         # ── Плёнка ПВХ (если фасады IVEGO) ──
-        if mat_props["facade_type"] == "pvh" and module.facades and module.facades.get("count", 0) > 0:
+        if (
+            mat_props["facade_type"] == "pvh"
+            and module.facades
+            and module.facades.get("count", 0) > 0
+            and not facade_is_glass
+        ):
             facade_count = module.facades.get("count", 1)
             facade_h_m = (module.height - 4) / 1000
             facade_w_m = (module.width / facade_count - 3) / 1000

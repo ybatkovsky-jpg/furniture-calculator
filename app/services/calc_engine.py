@@ -542,15 +542,20 @@ def _extract_drawer_prices(selected_hardware: dict) -> dict[str, float]:
 
 
 def _derive_glass_items(modules: list[dict]) -> list[dict]:
-    """Стеклянные фасады → элементы стекла по геометрии дверей (P1-19).
+    """Стеклянные фасады → элементы стекла по геометрии КАЖДОЙ двери (P1-19/P0-03).
 
     Ручной ввод и распознавание передают только `has_glass`, без размеров.
     Считаем площадь стекла по двери: (ширина/число дверей − 3 мм) ×
     (высота − 4 мм) — те же зазоры, что в quantity_calc. Тип «clear»;
     цена берётся из glass_calc.
+
+    P0-03: элементов столько же, сколько дверей. Раньше на модуль создавался
+    ОДИН элемент половинной ширины: две стеклянные двери 800×900 давали
+    0,3557 м² вместо 0,7114 (недосчёт 50 %). `module_id`/`door_index`
+    позволяют проверить, что одна дверь не оплачена дважды.
     """
     items: list[dict] = []
-    for module in modules or []:
+    for module_index, module in enumerate(modules or []):
         if not module.get("has_glass"):
             continue
         facades = module.get("facades")
@@ -566,25 +571,48 @@ def _derive_glass_items(modules: list[dict]) -> list[dict]:
         height = _pick_dim(module, "height", "height_mm")
         if width <= 0 or height <= 0:
             continue
-        items.append(
-            {
-                "type": "clear",
-                "width_mm": max(width // count - 3, 0),
-                "height_mm": max(height - 4, 0),
-                "tinting": False,
-            }
-        )
+        door_width = max(width // count - 3, 0)
+        door_height = max(height - 4, 0)
+        for door_index in range(count):
+            items.append(
+                {
+                    "type": "clear",
+                    "width_mm": door_width,
+                    "height_mm": door_height,
+                    "tinting": False,
+                    "module_id": module_index,
+                    "door_index": door_index,
+                }
+            )
     return items
 
 
 def _add_glass_to_modules(modules: list[dict], glass_items: list[dict]) -> list[dict]:
-    """Добавляет стекло в модули для расчёта."""
-    # Упрощённо - добавляем всё стекло в первый модуль
+    """Привязать элементы стекла к своим модулям (P0-03).
+
+    Раньше всё стекло сваливалось в ПЕРВЫЙ модуль. Для цены это было
+    эквивалентно, но проверка «одна дверь — один тип оплаты» становилась
+    невозможной: нельзя было сопоставить строку стекла с модулем/дверью.
+    Элементы без `module_id` (старые явные `glass_items` из кэша) кладём
+    в первый модуль со стеклом — обратная совместимость.
+    """
     if not modules or not glass_items:
         return modules
 
     modules_copy = [module.copy() for module in modules]
-    modules_copy[0]["glass_items"] = glass_items
+    fallback = next(
+        (index for index, module in enumerate(modules) if module.get("has_glass")),
+        0,
+    )
+    by_module: dict[int, list[dict]] = {}
+    for item in glass_items:
+        module_id = item.get("module_id")
+        if not isinstance(module_id, int) or not 0 <= module_id < len(modules_copy):
+            module_id = fallback
+        by_module.setdefault(module_id, []).append(item)
+
+    for module_id, items in by_module.items():
+        modules_copy[module_id]["glass_items"] = items
     return modules_copy
 
 

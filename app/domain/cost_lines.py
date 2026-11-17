@@ -72,6 +72,10 @@ class CostLine:
     amount: float
     price_source: str  # selected | price_book | included | missing
     note: str = ""
+    # P0-03: к какому модулю/двери относится строка (стекло — позлементно).
+    # Нужно, чтобы проверить «одна дверь не оплачена дважды».
+    module_id: int | None = None
+    door_index: int | None = None
 
 
 @dataclass
@@ -413,23 +417,43 @@ def build_cost_lines(
     )
 
     # ── Стекло ─────────────────────────────────────────────────────
+    # P0-03: строка на КАЖДЫЙ элемент (дверь), а не одна на модуль.
+    # Смешанное стекло (часть с ценой, часть без) больше не маскируется
+    # ненулевым итогом: отсутствие цены хотя бы у одного элемента блокирует КП.
     glass_items = glass_items or []
-    glass_cost = float(glass_calc.total_cost) if glass_calc else 0.0
-    glass_area = float(glass_calc.total_area_m2) if glass_calc else 0.0
-    if glass_items and glass_cost <= 0:
+    breakdown = list(getattr(glass_calc, "breakdown", None) or [])
+    if breakdown:
+        for element in breakdown:
+            glass_type = str(element.get("glass_type") or "")
+            area = _to_float(element.get("area_m2"))
+            cost = _to_float(element.get("cost"))
+            module_id = element.get("module_id")
+            door_index = element.get("door_index")
+            label = f"Стекло ({glass_type})" if glass_type else "Стекло / зеркала"
+            note = str(element.get("description") or "")
+            if cost <= 0:
+                result.missing.append(f"{label} ({area:g} м²)")
+                result.warnings.append(
+                    f"Стекло: для элемента {area:g} м² нет цены"
+                )
+                result.lines.append(
+                    CostLine(
+                        "glass", label, _round(area, 3), "м²", 0.0, 0.0,
+                        "missing", "цена не задана", module_id, door_index,
+                    )
+                )
+                continue
+            # MORU продаётся листами: цена за м² — справочная, сумма — по листам.
+            unit_price = _round(cost / area, 2) if area > 0 else 0.0
+            result.lines.append(
+                CostLine(
+                    "glass", label, _round(area, 3), "м²",
+                    unit_price, _round(cost), "included", note,
+                    module_id, door_index,
+                )
+            )
+    elif glass_items and float(getattr(glass_calc, "total_cost", 0) or 0) <= 0:
         result.missing.append("Стекло: цена не задана")
         result.warnings.append("Стекло: для выбранных элементов нет цены")
-    elif glass_cost > 0:
-        result.lines.append(
-            CostLine(
-                "glass",
-                "Стекло / зеркала",
-                _round(glass_area, 3),
-                "м²",
-                0.0,
-                _round(glass_cost),
-                "included",
-            )
-        )
 
     return result

@@ -120,24 +120,42 @@ def calculate_glass_for_modules(modules: list[dict]) -> GlassCalculation:
     """
     result = GlassCalculation()
 
-    for module in modules:
-        if "glass_items" not in module:
-            continue
-
-        for glass_item in module["glass_items"]:
+    for module_index, module in enumerate(modules):
+        items = module.get("glass_items") or []
+        for door_index, glass_item in enumerate(items):
+            if not isinstance(glass_item, dict):
+                continue
+            # P0-03: без `type` раньше падал KeyError. Теперь это «нет цены»
+            # (missing), КП блокируется понятной причиной, а расчёт не рушится.
+            glass_type = glass_item.get("type")
+            glass_type = str(glass_type) if glass_type else "unknown"
             glass_calc = calculate_glass_cost(
-                glass_type=glass_item["type"],
-                width_mm=glass_item["width_mm"],
-                height_mm=glass_item["height_mm"],
+                glass_type=glass_type,
+                width_mm=float(glass_item.get("width_mm") or 0),
+                height_mm=float(glass_item.get("height_mm") or 0),
                 tinting=glass_item.get("tinting", False),
-                manual_price=glass_item.get("manual_price")
+                manual_price=glass_item.get("manual_price"),
             )
+            # Привязка к модулю/двери: нужна для правила «одна дверь — один
+            # тип оплаты» (не фасад + стекло одновременно).
+            glass_calc["module_id"] = glass_item.get("module_id", module_index)
+            glass_calc["door_index"] = glass_item.get("door_index", door_index)
+
+            # P0-03: площадь элемента для строки сметы — без округления до
+            # 3 знаков на каждой двери (иначе 2 двери 397×896 дают 0,712 вместо
+            # 0,7114 и расходятся с «сумма площадей дверей»).
+            raw_area = (
+                float(glass_item.get("width_mm") or 0)
+                * float(glass_item.get("height_mm") or 0)
+                / 1_000_000
+            )
+            glass_calc["area_m2"] = round(raw_area, 6)
 
             result.breakdown.append(glass_calc)
-            result.total_area_m2 += glass_calc["area_m2"]
+            result.total_area_m2 += raw_area
             result.total_cost += glass_calc["cost"]
 
-    result.total_area_m2 = round(result.total_area_m2, 3)
+    result.total_area_m2 = round(result.total_area_m2, 4)
     result.total_cost = round(result.total_cost, 2)
 
     return result

@@ -13,6 +13,7 @@ from app.bot.bot import bot, dp, setup_bot_commands
 from app.bot.handlers import (
     calculation_router,
     discounts_router,
+    excel_router,
     image_router,
     kp_router,
     manual_input_router,
@@ -80,6 +81,7 @@ async def main():
     dp.include_router(materials_router)
     dp.include_router(calculation_router)
     dp.include_router(discounts_router)
+    dp.include_router(excel_router)
     dp.include_router(kp_router)
     dp.include_router(nav_router)
     logger.info("✓ Handlers подключены")

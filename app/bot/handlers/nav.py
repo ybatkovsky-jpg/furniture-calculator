@@ -41,6 +41,7 @@ def _recalc_keyboard(calculation_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📄 Скачать КП", callback_data=f"download_kp:{calculation_id}")],
+            [InlineKeyboardButton(text="📊 Скачать Excel", callback_data=f"download_excel:{calculation_id}")],
             [InlineKeyboardButton(text="✏️ Скорректировать", callback_data=f"edit_calculation:{calculation_id}")],
             [InlineKeyboardButton(text="💰 Скидка/наценка", callback_data=f"discount_menu:{calculation_id}")],
         ]

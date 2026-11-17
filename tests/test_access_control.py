@@ -48,7 +48,10 @@ def test_production_requires_admins():
     with pytest.raises(RuntimeError, match="ADMIN_TELEGRAM_IDS"):
         prod.validate_startup()
 
-    ok = Settings(environment="production", admin_telegram_ids="1")
+    ok = Settings(
+        environment="production", admin_telegram_ids="1",
+        allowed_telegram_ids="2",
+    )
     ok.validate_startup()  # не падает
 
     dev = Settings(environment="dev", admin_telegram_ids="")
@@ -95,3 +98,42 @@ def test_owned_calculation_scoped_to_owner():
         await engine.dispose()
 
     _run(scenario())
+
+
+# ── P2-15: prod-allowlist и маскировка URL БД ──────────────────────────────
+
+
+def test_production_requires_allowlist_or_explicit_opt_in():
+    """Пустой allowlist в prod — падение старта, а не «доступ всем»."""
+    from app.config import mask_database_url
+
+    no_list = Settings(environment="prod", admin_telegram_ids="1")
+    with pytest.raises(RuntimeError, match="ALLOWED_TELEGRAM_IDS"):
+        no_list.validate_startup()
+
+    with_list = Settings(
+        environment="prod", admin_telegram_ids="1", allowed_telegram_ids="2"
+    )
+    with_list.validate_startup()
+
+    explicit = Settings(
+        environment="prod", admin_telegram_ids="1", allow_any_user=True
+    )
+    explicit.validate_startup()
+
+    # Пароль не попадает в лог.
+    masked = mask_database_url("postgresql+asyncpg://user:secret@db:5432/app")
+    assert "secret" not in masked
+    assert "***" in masked
+    assert mask_database_url("sqlite+aiosqlite:///./data/furniture.db").endswith(
+        "furniture.db"
+    )
+
+
+def test_dockerfile_installs_cyrillic_fonts():
+    """P2-18: без DejaVu КП в Docker уходит в Helvetica без кириллицы."""
+    from pathlib import Path
+
+    dockerfile = Path(__file__).resolve().parents[1] / "Dockerfile"
+    text = dockerfile.read_text(encoding="utf-8")
+    assert "fonts-dejavu" in text

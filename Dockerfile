@@ -9,6 +9,11 @@ WORKDIR /app
 # Непривилегированный пользователь: процесс не должен работать от root.
 RUN useradd --create-home --uid 1000 appuser
 
+# P2-18: кириллица в КП/PDF — без шрифтов DejaVu ReportLab уходит в Helvetica.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

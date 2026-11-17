@@ -24,7 +24,7 @@ from app.bot.handlers import (
     start_router,
 )
 from app.bot.middlewares import AllowlistMiddleware
-from app.config import settings
+from app.config import mask_database_url, settings
 from app.db import init_db
 
 # Логирование
@@ -99,7 +99,7 @@ async def main():
     # 5. Запускаем polling
     logger.info("✓ Бот запущен на polling")
     logger.info("📝 Токен бота: ****<скрыт>")  # не логируем токен — секрет
-    logger.info(f"📦 БД: {settings.database_url}")
+    logger.info(f"📦 БД: {mask_database_url(settings.database_url)}")
 
     try:
         await dp.start_polling(

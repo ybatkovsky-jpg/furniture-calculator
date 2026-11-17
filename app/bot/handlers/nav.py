@@ -37,6 +37,26 @@ PRICE_BUTTON = "💰 Прайс"
 SETTINGS_BUTTON = "⚙️ Настройки"
 
 
+def project_row_label(project: Project) -> str:
+    """Подпись проекта в списке: цена — только если есть доказательство.
+
+    P2-22: у legacy-расчёта (нет `quote` или `cost_price=0`) цены нет —
+    показываем «архив», а не 0 ₽/старую сумму, которую нельзя доказать.
+    """
+    name = project.project_name or project.client_name
+    calculation = project.latest_calculation
+    if calculation is None:
+        return f"{name} — без расчёта"
+    if (
+        not calculation.quote
+        or not calculation.cost_price
+        or float(calculation.cost_price) <= 0
+    ):
+        return f"{name} — архив (нет снимка цен)"
+    price = float(calculation.final_price_cash or 0)
+    return f"{name} — {price:,.0f} ₽".replace(",", " ")
+
+
 def _recalc_keyboard(calculation_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -82,11 +102,10 @@ async def show_projects(message: Message, state: FSMContext):
                 )
             ])
             continue
-        latest = max(project.calculations, key=lambda c: c.id)
-        price = latest.final_price_cash or 0
+        latest = project.latest_calculation
         rows.append([
             InlineKeyboardButton(
-                text=f"{project.project_name or project.client_name} — {price:,.0f} ₽",
+                text=project_row_label(project),
                 callback_data=f"show_estimate:{latest.id}",
             )
         ])

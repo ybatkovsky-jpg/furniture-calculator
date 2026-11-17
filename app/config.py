@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     allowed_telegram_ids: str = Field(
         default="", description="ID пользователей, которым разрешён доступ к боту"
     )
+    # P2-15: осознанное разрешение «пустой allowlist = доступ всем» в prod.
+    # По умолчанию False: в prod пустой список — ошибка конфигурации.
+    allow_any_user: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ALLOW_ANY_USER"),
+        description="Разрешить доступ всем при пустом allowlist в prod",
+    )
 
     @staticmethod
     def _parse_ids(raw: str) -> set[str]:
@@ -87,6 +94,13 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 "ADMIN_TELEGRAM_IDS пуст, а ENV=prod. Заполните список ID "
                 "администраторов в .env — иначе управление прайсом недоступно."
+            )
+        # P2-15/S0-4: пустой allowlist в prod = бот открыт любому, кто знает
+        # имя. Требуем явный ALLOW_ANY_USER=true, иначе падаем на старте.
+        if self.is_production and not self.allowed_ids and not self.allow_any_user:
+            raise RuntimeError(
+                "ALLOWED_TELEGRAM_IDS пуст, а ENV=prod. Заполните allowlist "
+                "или явно разрешите доступ всем: ALLOW_ANY_USER=true."
             )
 
     # Vision LLM — Z.ai (основной: GLM-5V-Turbo) / RouterAI.ru (ансамбль: Qwen3-VL)
@@ -178,6 +192,15 @@ class Settings(BaseSettings):
     noncash_markup: float = 1.13
     sheet_utilization: float = 0.85
 
+    # Налоговый режим (подтверждён: УСН «доходы минус расходы», 15%,
+    # Хабаровский край; НДС не применяется). Налог считается от прибыли и
+    # НЕ влияет на цену клиенту; нужен для управленческого результата.
+    tax_regime: str = "УСН доходы минус расходы"
+    tax_region: str = "Хабаровский край"
+    tax_rate: float = 0.15
+    vat_rate: float = 0.0
+    min_tax_rate: float = 0.01
+
     # Бонус дизайнера
     designer_bonus_rate: float = 0.10
 
@@ -187,6 +210,16 @@ class Settings(BaseSettings):
     company_phone: str = "+7 999 256 3879"
     company_email: str = "pro.mebel25@mail.ru"
     kp_number_prefix: str = "КП-"
+
+
+def mask_database_url(url: str) -> str:
+    """URL БД без пароля для логов (P2-15)."""
+    try:
+        from sqlalchemy.engine import make_url
+
+        return make_url(str(url or "")).render_as_string(hide_password=True)
+    except Exception:  # noqa: BLE001 — маскировка не должна ронять старт
+        return str(url or "")
 
 
 settings = Settings()

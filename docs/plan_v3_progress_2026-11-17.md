@@ -1,4 +1,4 @@
-# План v3 — журнал выполнения (2026-11-17, старт)
+# План v3 — журнал выполнения (2026-11-17)
 
 Отметки: ✅ закрыто с тестом, 🟡 частично, ⬜ не начато.
 Каждая строка подтверждается запуском в этом окружении (дата 17.11.2026).
@@ -8,7 +8,7 @@
 | Пункт | Статус | Доказательство |
 |---|---|---|
 | Backup БД | ✅ | `..\backups\furniture-calculator\furniture_20261117_144800.db`, `integrity_check=ok` |
-| Проверка восстановления | ✅ | копия развёрнута в temp, 8 таблиц, counts совпали с рабочей БД (18/2/122/525/53/0/0/1) |
+| Проверка восстановления | ✅ | копия развёрнута в temp, 8 таблиц, counts совпали (18/2/122/525/53/0/0/1) |
 | Baseline | ✅ | `docs/baseline_2026-11-17.md`: 458 тестов, 59/59, `ruff app` 0, 304/27/18/0 |
 | Ветка для правок | ✅ | `plan-v3/stage-a` от `commit-changes` (8de50b2) |
 | S0-1 ротация ключа | ⛔ блок | требует письменного разрешения собственника |
@@ -18,33 +18,72 @@
 
 | ID | Статус | Что сделано | Тесты |
 |---|---|---|---|
-| P1-01 | ✅ | `CalculationService` (recalculate/preview/apply_discount/clear/set_bonus); 4 обработчика через сервис; AST-сканер запрещает движок в `app/bot` | `test_calculation_service.py` (6), `test_architecture.py` (2) |
-| P0-01 | ✅ | Скидка/наценка/бонус — полный пересчёт (10 компонентов), `quote` обновляется вместе с полями; невалидная скидка БД не меняет | `test_calculation_service.py`, регресс-доказательство старого пути |
-| P0-03 | ✅ | Стекло — элемент на каждую дверь (`module_id`/`door_index`), привязка к модулю, стеклянная дверь не оплачивается как фасад; смешанное стекло блокирует КП | `test_glass_doors_parity.py` (7) |
-| P1-11 | ✅ | Открытие сметы из «Моих проектов» учитывает скидку | `test_discount_survives_reopen` |
-| P1-12 | ✅ | `init_db` → `alembic upgrade head`; `create_all` только в тестах; ошибка миграции останавливает старт | `test_migrations.py` (2) |
-| P2-14 | ✅ | Ш/В ≤ 0 или Г < 0 → `ValueError`; 0×0×0 больше не даёт смету | `test_dimension_validation.py` (5) |
+| P1-01 | ✅ | `CalculationService` — единственная точка пересчёта; 4 обработчика через сервис; AST-сканер | `test_calculation_service.py`, `test_architecture.py` |
+| P0-01 | ✅ | Скидка/наценка/бонус — полный пересчёт, `quote` обновляется атомарно | `test_calculation_service.py` |
+| P0-03 | ✅ | Стекло — элемент на каждую дверь, без двойного фасада; смешанное стекло блокирует КП | `test_glass_doors_parity.py` |
+| P1-11 | ✅ | Открытие сметы учитывает скидку | `test_discount_survives_reopen` |
+| P1-12 | ✅ | `init_db` → `alembic upgrade head` | `test_migrations.py` |
+| P2-14 | ✅ | Ш/В ≤ 0 или Г < 0 → `ValueError` | `test_dimension_validation.py` |
 
-## G2 — Excel = чат = КП (в работе)
+## G2 — Excel = чат = КП
 
-| ID | Статус | Что сделано | Осталось |
+| ID | Статус | Что сделано | Тесты |
 |---|---|---|---|
-| P1-09 | ✅ | Каждое количество `MaterialQuantities` (штанги, сушки, лотки, бутылочницы, гигиенические поддоны, внутренние ящики) → `CostLine`; без цены — `missing` + блок КП | — |
-| P1-02 | ✅ | `below_cost` по `furniture_cash` vs `subtotal` (без доставки), `min_margin_rate` в политике, КП блокируется | порог маржи задаёт собственник |
-| P1-08 | ✅ | Бренд/формат ЛДСП только из позиции ЛДСП; кромка больше не подменяет бренд; SLOTEX 3,6 м² / 2,52 м²; предупреждение при неизвестном формате | формат ТОМЛЕСДРЕВ — от технолога |
-| P1-04 | ✅ | Петли/ручки для 10 типов; `door_system` на модуле; ручки = двери + ящики | подтверждение оператором для `door_system` |
-| P1-05 | ✅ | Цена МДФ за лист → м² по `sheet_width_mm`/`sheet_height_mm` (миграция `f5a2c9d1e8b7`); без формата — блок КП | заполнить форматы у позиций прайса |
-| P1-06 | ✅ | AI-ящики определяются по `drawers.count`/`drawer_counts`/`filling`; выбранная система не перетирается эвристикой | выбор модели на модуль — позже |
-| P0-02 | ⬜ | — | `fill_template_from_quote`: строки из `quote.lines`, финансы из `quote.totals`, паритет ≤ 1 ₽ на 10 сценариях |
+| P0-02 | ✅ | `fill_template_from_quote`: строки из `quote.lines` (явное `CostLine.field`), финансы из `quote.totals`; «ПРОЧЕЕ» с ценой вместо чужой строки FIRMAX/ЛЕМАКОМ; площадь 3 знака | `test_excel_parity.py`, `test_excel_parity_scenarios.py` (10 сценариев) |
+| P1-14 | ✅ | Кнопка «📊 Скачать Excel»: тот же рендер, openpyxl в потоке, временный файл удаляется | `test_excel_export.py` |
+| P1-09 | ✅ | Все количества → `CostLine` (штанги, сушки, лотки, бутылочницы, поддоны, внутренние ящики) | `test_all_quantities_have_lines.py` |
+| P1-02 | ✅ | `below_cost` по полным затратам без доставки; `min_margin_rate`; блок КП | `test_below_cost.py` |
+| P1-08 | ✅ | Бренд/формат ЛДСП только из позиции ЛДСП; SLOTEX 3,6/2,52 м² | `test_ldsp_brand_isolation.py` |
+| P1-04 | ✅ | Петли/ручки 10 типов, `door_system` модуля, ручки = двери + ящики | `test_hinges_handles_types.py` |
+| P1-05 | ✅ | МДФ за лист → м² по `sheet_width_mm/height_mm`; без формата — блок КП | `test_mdf_facade_units.py` |
+| P1-06 | ✅ | AI-ящики по `drawers.count`/`drawer_counts`/`filling`; выбор системы не перетирается | `test_ai_drawers_selection.py` |
+| P1-03 | ✅ | КП из снимка: скидка/наценка/бонус строками, сумма = `final_cash` ±1 ₽ | `test_kp.py` |
+| P2-01 | ✅ | Наценка со знаком «+», скидка «−» (входит в P1-03) | `test_kp.py` |
+
+## G3 — снимок, версии, уверенность
+
+| ID | Статус | Что сделано | Тесты |
+|---|---|---|---|
+| P1-10 | ✅ | `quote` хранит `price_book`/`policy`; сохранённый расчёт не меняется от прайса; `price_mode="current"` — явно; `CalculationVersion` (версии 1,2,3…, reason, created_by) | `test_quote_snapshot.py`, `test_calculation_versions.py` |
+| P1-13 | ✅ | `confidence=low` или `quality<0,6` → КП заблокировано, причина в `quote.blocking_reasons`; ручной ввод не блокируется | `test_recognition_gate.py` |
+| P2-23 | ✅ | `blocking_reasons` — явный список причин | `test_recognition_gate.py` |
+| P2-15 | ✅ | prod требует allowlist (или `ALLOW_ANY_USER=true`); пароль БД не в логе | `test_access_control.py` |
+| P2-18 | ✅ | `fonts-dejavu-core` в Dockerfile | `test_access_control.py` |
+| P2-22 | ✅ | Legacy в «Моих проектах» — «архив», без ложной цены | `test_project_labels.py` |
+
+## Не начато / осталось
+
+| ID | Статус | Комментарий |
+|---|---|---|
+| P1-07 | ⬜ | Режимы `handles/gola/push/lift` и выбор GOLA/LED в UI — 8–12 ч |
+| P2-02 | ⬜ | Excel: доставка в промежуточном итоге (частично: финансы из totals сходится; строка «панели» остаётся) |
+| P2-05/06/07/08/09/10/11/12 | ⬜ | Мелкие дефекты (P2-06 частично закрыт сервисом: `PricingError` до записи) |
+| P2-16 | ⬜ | Редактор модулей (16–24 ч) |
+| P2-17 | 🟡 | Тесты используют `tmp_path` для новых Excel/PDF; `pytest-cov` не подключён |
+| P2-19 | ⬜ | 27 позиций без цены, 18 legacy — решение собственника/данные |
+| P2-21 | ⬜ | Налоговая база — бухгалтер |
+| P2-24/25 | ⬜ | Цена из списка, деньги в копейках |
+| P1-16 | ⬜ | Финансовая модель — решение собственника |
+| P1-15 | ⬜ | Операции/нормы — этап 5 |
 
 ## Проверки на момент записи
 
 ```
-pytest -q                 → 521 passed
+pytest -q                 → 560 passed
 check_phases.py           → 59/59
 ruff check app            → All checks passed
-alembic current           → f5a2c9d1e8b7 (head)
+alembic current           → c9d3e5f7a1b2 (head)
 ```
+
+## Миграции, применённые к data/furniture.db (каждая после копии БД)
+
+| Ревизия | Что |
+|---|---|
+| `f5a2c9d1e8b7` | `price_items.sheet_width_mm/sheet_height_mm` (P1-05) |
+| `b7e1c4a9d2f3` | `calculations.recognition_confidence/quality_score` (P1-13) |
+| `c9d3e5f7a1b2` | таблица `calculation_versions` (P1-10) |
+
+Копии: `furniture_20261117_144800.db`, `_150552`, `_152101`, `_152356`.
 
 ## Коммиты (локальные, без push)
 
@@ -57,4 +96,11 @@ ed8ff32 fix(calc): полные строки, below_cost, бренд ЛДСП (P
 3cc8d4b fix(hardware): петли/ручки по типам и door_system (P1-04)
 aeaa26a fix(facade): МДФ за лист -> м² (P1-05)
 c405b4b fix(drawers): AI-ящики (P1-06)
+6fa3d58 docs: статус плана v3 (первый этап)
+c1effdb feat(excel): Excel из снимка quote — 10 сценариев (P0-02)
+e3fb671 feat(bot): кнопка «Скачать Excel» (P1-14)
+9044c62 fix(kp): строки скидки/наценки/бонуса (P1-03, P2-01)
+94623b0 feat(recognition): low confidence блокирует КП (P1-13, P2-23)
+9be99f7 feat(quote): снимок цен и история версий (P1-10)
+7632b0b fix(security): prod-allowlist, маска URL, шрифты, архив (P2-15, P2-18, P2-22)
 ```

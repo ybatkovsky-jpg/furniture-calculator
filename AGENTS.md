@@ -4,10 +4,10 @@
 > `furniture-calculator` («ПРО МЕБЕЛЬ», Хабаровск).
 > Здесь: **куда мы идём, что нельзя ломать, что уже проверено фактами**.
 > Новые проверенные факты дописываем сюда с датой — не оставляем в чате.
-> Последняя сверка: **2026-11-17** — `pytest` **521 passed**, `check_phases` 59/59,
+> Последняя сверка: **2026-11-17** — `pytest` **560 passed**, `check_phases` 59/59,
 > `ruff check app` — чисто, `VISION_PROVIDER=deepseek` в `.env`.
 > В работу запущен план v3 (`ПЛАН_ИСПРАВЛЕНИЯ_FURNITURE_CALCULATOR_v3_2026-11-17.md`):
-> G0/G1 закрыты, часть G2 (P1-09, P1-02, P1-08, P1-04, P1-05, P1-06); журнал —
+> G0–G3 закрыты по критическим ID (P0-01…P0-03, P1-01…P1-14, часть P2); журнал —
 > `docs/plan_v3_progress_2026-11-17.md`.
 > Дата в заголовках разделов = дата проверки факта.
 
@@ -95,7 +95,7 @@ JSON (`zone_type`, `total_width_mm`, `facades[]`, `drawer_indices[]`, `heights_m
 6. **Не менять основную vision-модель на слабую.** 8B/4B систематически не видят двери/ящики
    (см. §5) — это прямой недосчёт петель и ручек в смете.
 7. **Тесты:** `pytest` из корня (в `pytest.ini` `testpaths = tests` — иначе pytest лезет в `temp/`
-   и падает на разовых скриптах). Сейчас **521 passed**. Правка расчётов без теста не принимается.
+   и падает на разовых скриптах). Сейчас **560 passed**. Правка расчётов без теста не принимается.
 8. **Python 3.12, type hints, async/await, SQLAlchemy 2.0, aiogram 3 FSM.** Не `print()` — `logging`.
    Комментарии, docstring'и, коммиты и сообщения пользователю — **по-русски**.
 9. **Ничего не удалять из `input_images/`, `output/`, `temp/`, `pdfs/`** — это артефакты прогонов
@@ -165,7 +165,7 @@ confidence по доминированию над вторым. Проверен
 
 ## 6. Что известно сломано / в работе
 
-**Сделано 2026-11-17 (план v3 — G0/G1 и часть G2; журнал `docs/plan_v3_progress_2026-11-17.md`):**
+**Сделано 2026-11-17 (план v3 — G0–G3; журнал `docs/plan_v3_progress_2026-11-17.md`):**
 - **G0.** Baseline: 458 passed, 59/59, `ruff app` 0, БД 525/304/27/18/0/53. Backup
   `furniture_20261117_144800.db`; **восстановление проверено** (копия развёрнута, `integrity_check=ok`,
   counts 8 таблиц совпали). Рабочая ветка `plan-v3/stage-a` от `commit-changes` (8de50b2).
@@ -194,9 +194,29 @@ confidence по доминированию над вторым. Проверен
   (2800×2070) = 1 690,82 ₽/м²; без формата — блок КП.
 - **P1-06.** AI-ящики определяются по `drawers.count`/`drawer_counts`/`filling`; выбранная
   система (Legrabox/Tandembox/Boyard) не перетирается эвристикой по ширине.
-- Проверки на 17.11 вечер: **521 passed**, `ruff check app` — чисто.
-- **Дальше по плану:** P0-02 (`fill_template_from_quote`: Excel из снимка, паритет ≤1 ₽
-  на 10 сценариях) — единственный открытый P0; затем P1-03 (строки КП), P1-10 (снимок v3/версии).
+- Проверки на 17.11 вечер: **560 passed**, `check_phases` 59/59, `ruff check app` — чисто.
+- **P0-02 (закрыт).** `fill_template_from_quote`: строки из `quote.lines` (у каждой
+  `CostLine.field` из `row_mapping.json`), финансы из `quote.totals`; позиции без строки
+  (стекло, BLUM/HETTICH, AGT/EVOGLOSS) — в «ПРОЧЕЕ» с ценой из снимка; площадь фасада
+  3 знака. Паритет на 10 сценариях: `cost_price` ≤0,05 ₽, `final_cash` ≤1 ₽, сумма строк =
+  себестоимость, молчаливых нулей нет. Тесты: `test_excel_parity.py`,
+  `test_excel_parity_scenarios.py`. Старый `fill_template_from_pipeline` — deprecated (CLI).
+- **P1-14 (закрыт).** Кнопка «📊 Скачать Excel»: owner-check, legacy блокируется, openpyxl
+  в потоке, временный файл ОС удаляется. `test_excel_export.py`.
+- **P1-03/P2-01 (закрыты).** КП из снимка: материалы по видам + услуги + сопровождение
+  − скидка / + наценка + бонус + доставка = `final_cash` (строка «Округление до рубля»,
+  допуск 1 ₽). Скидка — минус, наценка — плюс. `test_kp.py`.
+- **P1-10 (закрыт по критической части).** `quote` хранит `price_book`/`policy`/`policy_version`;
+  сохранённый расчёт не меняется от нового прайса, `price_mode="current"` — только явно.
+  `CalculationVersion` (миграция `c9d3e5f7a1b2`): версии 1,2,3… без пропусков, reason,
+  created_by, price_list_version. UI списка версий — позже (P2-16).
+- **P1-13/P2-23 (закрыты).** `confidence=low` или `quality_score<0,6` → `can_issue_kp=False`,
+  причина в `quote.blocking_reasons`; ручной ввод без confidence не блокируется.
+- **P2-15/P2-18/P2-22 (закрыты).** prod требует allowlist или `ALLOW_ANY_USER=true`;
+  пароль БД не в логе; `fonts-dejavu-core` в Dockerfile; legacy в «Моих проектах» — «архив».
+- **Дальше по плану:** P1-07 (GOLA/push/lift + UI), P2-16 (редактор модулей), P2-17
+  (`pytest-cov`, изоляция старых тестов), P2-19/P2-21 (прайс/налоги — собственник),
+  P1-16 (утверждение финансовой модели).
 - **Блокировано собственником:** S0-1 ротация ключа, S0-2 очистка истории Git,
   форматы ТОМЛЕСДРЕВ, порог минимальной маржи, 10–20 реальных заказов.
 
@@ -321,7 +341,7 @@ confidence по доминированию над вторым. Проверен
 ## 8. Проверка перед словом «готово»
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q                # ожидаем 521 passed, 0 failed
+.\.venv\Scripts\python.exe -m pytest -q                # ожидаем 560 passed, 0 failed
 $env:PYTHONIOENCODING='utf-8'; .\.venv\Scripts\python.exe scripts\check_phases.py  # ожидаем 59/59
 ```
 

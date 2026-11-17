@@ -267,16 +267,54 @@ def build_cost_lines(
     facades = selected_materials.get("facades")
     facade_price = _price_from(facades)
     facade_unit = _unit_from(facades)
+    facade_area = round(quantities.facades_area_m2, 3)
+    facade_name = (
+        f"Фасады {facades.get('name', '') if isinstance(facades, dict) else ''}"
+    ).strip()
     if facade_price and facade_unit in {"лист", "шт"}:
-        result.missing.append("Фасады: цена должна быть за м²")
-        result.warnings.append(
-            f"Фасады: цена указана за «{facade_unit}», а расход считается в м²"
-        )
+        # P1-05: цена за лист, а расход фасада — в м². Пересчитываем через
+        # формат листа из позиции прайса. Без формата — missing и блок КП,
+        # а не молчаливый ноль или «примерно».
+        width_mm = _to_float(facades.get("sheet_width_mm")) if isinstance(facades, dict) else 0.0
+        height_mm = _to_float(facades.get("sheet_height_mm")) if isinstance(facades, dict) else 0.0
+        if width_mm > 0 and height_mm > 0:
+            sheet_area_m2 = width_mm * height_mm / 1_000_000
+            price_per_m2 = _round(facade_price / sheet_area_m2)
+            result.lines.append(
+                CostLine(
+                    "facade",
+                    facade_name,
+                    facade_area,
+                    "м²",
+                    price_per_m2,
+                    _round(facade_area * price_per_m2),
+                    "selected",
+                    note=(
+                        f"пересчёт с листа: {facade_price:,.2f} ₽ / "
+                        f"{sheet_area_m2:.3f} м² ({width_mm:g}×{height_mm:g} мм)"
+                    ),
+                )
+            )
+            if facade_area <= 0:
+                result.lines.pop()
+        else:
+            result.missing.append("Фасады: не задан формат листа")
+            result.warnings.append(
+                "Фасады: цена указана за лист, но формат листа не задан — "
+                "пересчёт в м² невозможен, КП блокируется"
+            )
+            if facade_area > 0:
+                result.lines.append(
+                    CostLine(
+                        "facade", facade_name, facade_area, "м²",
+                        0.0, 0.0, "missing", "нужен формат листа",
+                    )
+                )
     else:
         add(
             "facade",
-            f"Фасады {facades.get('name', '') if isinstance(facades, dict) else ''}".strip(),
-            round(quantities.facades_area_m2, 3),
+            facade_name,
+            facade_area,
             "м²",
             facade_price,
             "selected",

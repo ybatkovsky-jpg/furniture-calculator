@@ -292,7 +292,10 @@ async def save_facade_selection(callback: CallbackQuery, state: FSMContext, faca
         'price_unit': facade_item.price_unit,
         'thickness_mm': facade_item.thickness_mm,
         'category': facade_item.category,
-        'brand': facade_item.brand
+        'brand': facade_item.brand,
+        # P1-05: формат листа нужен, если цена за лист, а расход — м².
+        'sheet_width_mm': facade_item.sheet_width_mm,
+        'sheet_height_mm': facade_item.sheet_height_mm,
     }
     await state.update_data(selected_materials=selected_materials)
     
@@ -346,7 +349,9 @@ async def process_manual_price(message: Message, state: FSMContext):
             'thickness_mm': facade_item.thickness_mm,
             'category': facade_item.category,
             'brand': facade_item.brand,
-            'manual_price': True
+            'manual_price': True,
+            'sheet_width_mm': facade_item.sheet_width_mm,
+            'sheet_height_mm': facade_item.sheet_height_mm,
         }
         await state.update_data(selected_materials=selected_materials, temp_facade_id=None)
         

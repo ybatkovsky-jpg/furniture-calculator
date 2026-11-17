@@ -32,10 +32,13 @@ def test_init_db_applies_migrations_to_fresh_database(tmp_path):
             connection, "calculations"
         )
         assert {"thickness_mm", "pack_size"} <= _columns(connection, "price_items")
+        assert {"sheet_width_mm", "sheet_height_mm"} <= _columns(
+            connection, "price_items"
+        )
         revision = connection.execute(
             "select version_num from alembic_version"
         ).fetchone()[0]
-        assert revision == "123c453dd1ed"
+        assert revision == "f5a2c9d1e8b7"
     finally:
         connection.close()
 

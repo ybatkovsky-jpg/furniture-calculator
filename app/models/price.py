@@ -33,6 +33,10 @@ class PriceItem(Base):
     # определять поиском подстроки «2» в названии («0.8*22» → 0.8, не 2).
     thickness_mm = Column(Float, nullable=True)
     pack_size = Column(Float, nullable=True)  # листов/метров в упаковке, если цена за упаковку
+    # P1-05: формат листа для позиций, у которых цена за лист, а расход — м²
+    # (EMDIWAY/AGT/EVOGLOSS). Пусто — пересчёт невозможен, строка блокирует КП.
+    sheet_width_mm = Column(Integer, nullable=True)
+    sheet_height_mm = Column(Integer, nullable=True)
     
     # Флаг требования ручного ввода
     requires_manual_price = Column(Integer, default=0)  # 1 = оператор должен ввести цену

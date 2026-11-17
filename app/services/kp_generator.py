@@ -9,6 +9,7 @@ import os
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import ClassVar
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -64,6 +65,13 @@ class KPGenerator:
             ("DejaVuSans", Path("/usr/share/fonts/dejavu/DejaVuSans.ttf")),
             ("Arial", Path("C:/Windows/Fonts/arial.ttf")),
         ]
+        bold_candidates = [
+            ("DejaVuSans-Bold", project_root / "DejaVuSans-Bold.ttf"),
+            ("DejaVuSans-Bold", project_root / "templates" / "DejaVuSans-Bold.ttf"),
+            ("DejaVuSans-Bold", Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
+            ("DejaVuSans-Bold", Path("/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf")),
+            ("Arial-Bold", Path("C:/Windows/Fonts/arialbd.ttf")),
+        ]
         default_font = "Helvetica"
         for font_name, font_path in candidates:
             if not font_path.exists():
@@ -77,6 +85,22 @@ class KPGenerator:
                 continue
         if default_font == "Helvetica":
             logger.warning("Кириллический шрифт не найден — КП может отображаться некорректно")
+
+        # День 4: таблица КП раньше рисовалась Helvetica, даже когда стили
+        # получили DejaVu/Arial — кириллица в таблице ломалась.
+        bold_font = default_font
+        for font_name, font_path in bold_candidates:
+            if not font_path.exists():
+                continue
+            try:
+                pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
+                bold_font = font_name
+                break
+            except Exception:
+                logger.debug("Шрифт %s не загрузился", font_path, exc_info=True)
+                continue
+        self.font_name = default_font
+        self.font_bold = bold_font
 
         # Заголовок компании
         self.styles.add(ParagraphStyle(
@@ -143,8 +167,100 @@ class KPGenerator:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
         return f"{self.kp_prefix}{timestamp}"
 
+    _KIND_TITLES: ClassVar[dict[str, str]] = {
+        "ldsp": "ЛДСП",
+        "hdf": "ХДФ",
+        "edge": "Кромка",
+        "facade": "Фасады",
+        "hinge": "Петли",
+        "drawer": "Ящики",
+        "drawer_internal": "Ящики внутренние",
+        "handle": "Ручки",
+        "gola": "GOLA",
+        "led": "Подсветка LED",
+        "countertop": "Столешница",
+        "fastener": "Крепёж",
+        "glass": "Стекло",
+        "rod": "Штанги",
+        "bottle_holder": "Бутылочницы",
+        "cutlery_tray": "Лотки",
+        "drying_rack": "Сушки",
+        "hygienic_mat": "Гигиенические поддоны",
+    }
+
+    @staticmethod
+    def _row_sum(items: list[list[str]]) -> float:
+        total = 0.0
+        for row in items[1:]:
+            total += float(
+                row[2].replace(" ₽", "").replace(" ", "").replace("\u00a0", "")
+            )
+        return total
+
+    def _create_items_table_from_quote(self, quote: dict) -> list[list[str]]:
+        """P1-03: таблица КП из снимка `quote` (строки + totals).
+
+        Сумма строк = `final_cash` (допуск ₽ — документ округляет до рубля):
+        материалы (по видам) + услуги + сопровождение − скидка / + наценка
+        + бонус дизайнера + доставка. Скидка и бонус — строки таблицы, а не
+        текст после неё, поэтому документ объясняет цену.
+        """
+        totals = quote.get("totals") or {}
+        items: list[list[str]] = [["Наименование", "Количество", "Стоимость"]]
+
+        def add(name: str, quantity: str, amount: float) -> None:
+            if abs(float(amount or 0)) >= 0.005:
+                items.append([name, quantity, self._format_currency(float(amount))])
+
+        # Материалы и комплектующие — по видам строк.
+        by_kind: dict[str, float] = {}
+        for line in quote.get("lines") or []:
+            amount = float(line.get("amount") or 0)
+            if amount <= 0:
+                continue
+            kind = str(line.get("kind") or "")
+            by_kind[kind] = by_kind.get(kind, 0.0) + amount
+        for kind, amount in by_kind.items():
+            add(self._KIND_TITLES.get(kind, "Прочие материалы"), "по расчёту", amount)
+
+        # Услуги и производные.
+        add("Изготовление", "услуга", totals.get("manufacturing"))
+        add("Монтаж", "услуга", totals.get("installation"))
+        add("Замер", "услуга", totals.get("measurement"))
+        add("Проектировка", "услуга", totals.get("design"))
+        add("Прочие расходы", "услуга", totals.get("overhead"))
+        accompaniment = sum(
+            float(totals.get(field) or 0)
+            for field in ("profit", "tech_director", "manager_salary", "designer_salary")
+        )
+        add("Сопровождение заказа", "услуга", accompaniment)
+
+        # Скидка / наценка — знак явный (P2-01: раньше «Наценка: -X»).
+        discount = float(totals.get("discount_amount") or 0)
+        if discount > 0:
+            add("Скидка", "—", -discount)
+        elif discount < 0:
+            items.append(["Наценка", "—", "+" + self._format_currency(abs(discount))])
+
+        bonus = float(totals.get("designer_bonus_amount") or 0)
+        if bonus > 0:
+            add("Бонус дизайнера", "—", bonus)
+
+        add("Доставка", "услуга", totals.get("delivery_client"))
+
+        # Округление до рубля: сумма отформатированных строк = итог.
+        final_cash = float(totals.get("final_cash") or 0)
+        delta = round(final_cash) - round(self._row_sum(items))
+        if delta:
+            add("Округление до рубля", "—", delta)
+        return items
+
     def _create_items_table(self, calculation: Calculation) -> list[list[str]]:
         """Создать таблицу с позициями для КП."""
+        quote = getattr(calculation, "quote", None) or {}
+        if quote.get("lines") and quote.get("totals"):
+            return self._create_items_table_from_quote(quote)
+
         items = []
 
         # Заголовки таблицы
@@ -163,6 +279,8 @@ class KPGenerator:
             if "ldsp" in selected_materials:
                 ldsp = selected_materials["ldsp"]
                 add_item(f"ЛДСП {ldsp.get('name', '')}", "по расчёту", material_cost)
+            else:
+                add_item("Материалы", "по расчёту", material_cost)
 
         # Кромка
         edge_cost = getattr(calculation, 'edge_cost', 0) or 0
@@ -222,6 +340,23 @@ class KPGenerator:
 
         design_fee = getattr(calculation, 'design_fee', 0) or 0
         add_item("Проектировка", "услуга", design_fee)
+
+        # День 4: чтобы сумма строк таблицы сходилась с итогом, показываем
+        # прочие расходы и сопровождение (прибыль + тех. директор + менеджер +
+        # дизайнер). Раньше этих строк не было, и таблица не сходилась с итогом.
+        overhead = getattr(calculation, 'overhead', 0) or 0
+        add_item("Прочие расходы", "услуга", overhead)
+
+        accompaniment = sum(
+            getattr(calculation, field, 0) or 0
+            for field in (
+                "profit",
+                "tech_director_salary",
+                "manager_salary",
+                "designer_salary",
+            )
+        )
+        add_item("Сопровождение заказа", "услуга", accompaniment)
 
         return items
 
@@ -302,7 +437,8 @@ class KPGenerator:
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                 ('ALIGN', (1, 0), (2, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, 0), (-1, -1), self.font_name),
+                ('FONTNAME', (0, 0), (-1, 0), self.font_bold),
                 ('FONTSIZE', (0, 0), (-1, 0), 10),
                 ('FONTSIZE', (0, 1), (-1, -1), 9),
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
@@ -313,6 +449,10 @@ class KPGenerator:
             table.setStyle(table_style)
             story.append(table)
             story.append(Spacer(1, 15))
+
+        # P1-03: строки скидки/бонуса/наценки уже внутри таблицы (если есть снимок
+        # с totals) — отдельный текст после таблицы не нужен и дублировал бы суммы.
+        _quote_has_totals = bool((getattr(calculation, "quote", None) or {}).get("totals"))
 
         # Скидка (если есть)
         discount_text = ""
@@ -326,13 +466,13 @@ class KPGenerator:
         discount_value = getattr(calculation, 'discount_value', 0)
         markup_type = getattr(calculation, 'markup_type', None)
 
-        if discount_amount != 0:
+        if discount_amount != 0 and not _quote_has_totals:
             if discount_type == "percent":
                 discount_text = f"Скидка {discount_value}%: {self._format_currency(-abs(discount_amount))}"
             elif discount_type == "fixed":
                 discount_text = f"Скидка: {self._format_currency(-abs(discount_amount))}"
             elif markup_type in ["percent", "fixed"]:
-                discount_text = f"Наценка: {self._format_currency(discount_amount)}"
+                discount_text = f"Наценка: +{self._format_currency(abs(discount_amount))}"
 
             if discount_text:
                 story.append(Paragraph(discount_text, self.styles['NormalText']))

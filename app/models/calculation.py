@@ -85,6 +85,11 @@ class Calculation(Base):
     # по наличию верхних баз: «Кухня» для любого шкафа).
     zone_type = Column(String(50), nullable=True)
 
+    # P1-13: уверенность распознавания и оценка качества листа. Низкая
+    # уверенность блокирует КП (оператор подтверждает состав вручную).
+    recognition_confidence = Column(String(20), nullable=True)  # high|medium|low
+    quality_score = Column(Float, nullable=True)  # 0..1
+
     # P0-02/P1-10: полный снимок расчёта — строки CostLine, предупреждения,
     # признак блокировки КП, версия движка. Старые поля сохраняются для
     # совместимости; quote читается Excel/КП.

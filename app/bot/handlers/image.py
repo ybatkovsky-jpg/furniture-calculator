@@ -14,7 +14,10 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 
-from app.bot.keyboards.inline import recognition_result_keyboard
+from app.bot.keyboards.inline import (
+    album_preview_keyboard,
+    recognition_result_keyboard,
+)
 from app.db.session import get_session
 from app.models import Calculation
 from app.services.access import get_owned_project
@@ -189,49 +192,61 @@ async def process_pdf_album(message: Message, state: FSMContext, bot: Bot):
         )
         return
 
-    modules = []
-    for room in result.rooms:
-        for module in room.modules:
-            modules.append({
-                "type": module.type,
-                "width": module.width,
-                "depth": module.depth,
-                "height": module.height,
-                "quantity": module.quantity,
-                "has_glass": module.has_glass,
-                "facades": module.facades,
-                "drawers": module.drawers,
-                "shelves": module.shelves,
-                "is_corner": module.is_corner,
-            })
-
-    if not modules:
+    # День 3: сначала показываем распознанное и не сохраняем в расчёт до
+    # подтверждения оператора. Комнаты храним отдельно, чтобы не смешать зоны.
+    album_rooms = [
+        {
+            "name": room.room_name,
+            "zone_type": room.zone_type,
+            "confidence": room.confidence,
+            "quality_score": room.quality_score,
+            "modules": [_module_to_dict(module) for module in room.modules],
+        }
+        for room in result.rooms
+        if room.modules
+    ]
+    if not album_rooms:
         await status.edit_text("❌ Модули не распознаны. Проверьте качество скана.")
         return
 
-    async for session in get_session():
-        calculation = Calculation(
-            project_id=project_id,
-            modules=modules,
-            zone_type=result.rooms[0].zone_type,
-        )
-        session.add(calculation)
-        await session.commit()
-        await session.refresh(calculation)
-        calculation_id = calculation.id
-        break
-
-    rooms_summary = ", ".join(
-        f"{room.room_name} ({len(room.modules)})" for room in result.rooms
+    await state.update_data(
+        album_rooms=album_rooms,
+        project_id=project_id,
+        album_confidence=result.confidence,
     )
     await status.edit_text(
-        f"✅ Альбом распознан: {len(result.rooms)} помещений, "
-        f"{len(modules)} модулей.\n{rooms_summary}"
+        build_album_preview(album_rooms),
+        reply_markup=album_preview_keyboard(),
     )
 
-    from app.bot.handlers.materials import start_material_selection
 
-    await start_material_selection(message, calculation_id, state)
+def _module_to_dict(module) -> dict:
+    """Модуль распознавания → JSON для Calculation (без потери полей)."""
+    return {
+        "type": module.type,
+        "width": module.width,
+        "depth": module.depth,
+        "height": module.height,
+        "quantity": module.quantity,
+        "has_glass": module.has_glass,
+        "facades": module.facades,
+        "drawers": module.drawers,
+        "shelves": module.shelves,
+        "is_corner": module.is_corner,
+        "notes": module.notes,
+    }
+
+
+def _count(value) -> int:
+    """Количество из facades/drawers: dict {"count": N}, int или None."""
+    if isinstance(value, dict):
+        try:
+            return int(value.get("count") or 0)
+        except (TypeError, ValueError):
+            return 0
+    if isinstance(value, int):
+        return value
+    return 0
 
 
 async def show_recognition_result(
@@ -250,57 +265,26 @@ async def show_recognition_result(
         project_id=project_id
     )
 
-    # Если уверенность низкая - переходим на ручной ввод
+    # День 3: низкая уверенность — не тупик. Оператор видит то же самое и
+    # может подтвердить, исправить или отправить новое фото.
     if result.confidence == "low":
-        await message.answer(
-            f"{text}\n\n⚠️ Распознавание неуверенное. Переходим к ручному вводу модулей.",
-            reply_markup=None
+        text += (
+            "\n\n⚠️ Уверенность низкая: проверьте размеры, двери и ящики. "
+            "Лучше нажать «Скорректировать» и ввести модули вручную."
         )
-        # Здесь можно вызвать функцию ручного ввода
-        # await start_manual_input(message, state)
-        return
 
-    # Показываем результат с кнопками подтверждения
-    await message.answer(
-        text,
-        reply_markup=recognition_result_keyboard()
-    )
-
+    await message.answer(text, reply_markup=recognition_result_keyboard())
     await state.set_state(ImageRecognitionState.showing_result)
 
 
 def format_recognition_result(result: RecognitionResult) -> str:
-    """Форматировать результат распознавания для отображения."""
+    """Форматировать результат распознавания для отображения.
+
+    День 3: показываем не только Ш×Г, но и высоту, число корпусов, дверей,
+    ящиков и стекло — иначе оператор не может проверить то, что попадёт в смету.
+    """
     if not result.modules:
         return "❌ Не удалось распознать модули на чертеже."
-
-    # Группируем модули по типу и размерам
-    module_counts = {}
-
-    for module in result.modules:
-        # Определяем ключ для группировки
-        if module.type == "corner" or module.is_corner:
-            key = f"corner_{module.width}x{module.depth}"
-            display_type = "corner"
-        else:
-            key = f"{module.type}_{module.width}x{module.depth}"
-            display_type = module.type
-
-        if key not in module_counts:
-            module_counts[key] = {
-                "display_type": display_type,
-                "type": module.type,
-                "width": module.width,
-                "depth": module.depth,
-                "height": module.height,
-                "quantity": 0,
-                "has_glass": module.has_glass,
-                "is_corner": module.type == "corner" or module.is_corner
-            }
-        module_counts[key]["quantity"] += module.quantity
-
-    # Форматируем текст
-    lines = ["🎯 Найдено на чертеже:"]
 
     type_names = {
         "lower_base": "Нижняя база",
@@ -308,32 +292,123 @@ def format_recognition_result(result: RecognitionResult) -> str:
         "penal": "Пенал",
         "column": "Колонна",
         "tumbler": "Тумба",
-        "corner": "Верхняя база угловой модуль"
+        "cabinet": "Тумба",
+        "corner": "Угловой модуль",
     }
 
-    for key, info in module_counts.items():
-        type_name = type_names.get(info["display_type"], info["display_type"])
-        glass_note = " (со стеклом)" if info["has_glass"] else ""
+    # Группируем одинаковые модули (тип + габарит + двери/ящики/стекло).
+    module_counts: dict[tuple, dict] = {}
+    for module in result.modules:
+        is_corner = module.type == "corner" or module.is_corner
+        display_type = "corner" if is_corner else module.type
+        key = (
+            display_type,
+            module.width,
+            module.depth,
+            module.height,
+            _count(module.facades),
+            _count(module.drawers),
+            bool(module.has_glass),
+        )
+        if key not in module_counts:
+            module_counts[key] = {
+                "type": display_type,
+                "width": module.width,
+                "depth": module.depth,
+                "height": module.height,
+                "quantity": 0,
+                "doors": 0,
+                "drawers": 0,
+                "has_glass": module.has_glass,
+                "notes": [],
+            }
+        info = module_counts[key]
+        info["quantity"] += module.quantity
+        info["doors"] += _count(module.facades) * module.quantity
+        info["drawers"] += _count(module.drawers) * module.quantity
+        if module.notes:
+            info["notes"].append(module.notes)
 
-        if info["is_corner"]:
-            line = f"• {type_name} {info['width']}×{info['depth']} — {info['quantity']} шт.{glass_note}"
-        else:
-            line = f"• {type_name} {info['width']}×{info['depth']} — {info['quantity']} шт.{glass_note}"
+    lines = ["🎯 Найдено на чертеже:"]
+    if result.zone_type:
+        lines.append(f"🏠 Зона: {result.zone_type}")
+    lines.append("")
 
+    for info in module_counts.values():
+        type_name = type_names.get(info["type"], info["type"])
+        parts = [
+            f"• {type_name} {info['width']}×{info['depth']}×{info['height']} мм",
+            f"{info['quantity']} корп.",
+        ]
+        if info["doors"]:
+            parts.append(f"{info['doors']} двер.")
+        if info["drawers"]:
+            parts.append(f"{info['drawers']} ящ.")
+        if info["has_glass"]:
+            parts.append("стекло")
+        line = " — ".join([parts[0], ", ".join(parts[1:])])
+        if info["notes"]:
+            line += f" (⚠ {info['notes'][0]})"
         lines.append(line)
 
     if result.notes:
         lines.append(f"\n📝 Примечания: {result.notes}")
 
-    # Уровень уверенности
-    confidence_emoji = {
-        "high": "🟢",
-        "medium": "🟡",
-        "low": "🔴"
-    }
+    confidence_emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}
     conf_emoji = confidence_emoji.get(result.confidence, "❓")
     lines.append(f"\n{conf_emoji} Уверенность распознавания: {result.confidence}")
 
+    return "\n".join(lines)
+
+
+def build_album_preview(rooms: list[dict]) -> str:
+    """Текст предпросмотра PDF-альбома: комнаты и модули до сохранения."""
+    total_modules = sum(
+        sum(int(module.get("quantity") or 0) for module in room.get("modules", []))
+        for room in rooms
+    )
+    lines = [
+        f"📐 Распознано помещений: {len(rooms)}, модулей: {total_modules}.",
+        (
+            "Проверьте комнаты и модули. Только после «Подтвердить» они попадут "
+            "в отдельные расчёты (по комнате на расчёт)."
+        ),
+    ]
+    type_names = {
+        "lower_base": "Нижняя база",
+        "upper_base": "Верхняя база",
+        "penal": "Пенал",
+        "column": "Колонна",
+        "tumbler": "Тумба",
+        "cabinet": "Тумба",
+        "corner": "Угловой модуль",
+    }
+    for room in rooms:
+        modules = room.get("modules", [])
+        lines.append("")
+        lines.append(
+            f"🏠 {room.get('name') or 'Без названия'} — "
+            f"{len(modules)} поз., {sum(int(m.get('quantity') or 0) for m in modules)} корп."
+        )
+        for module in modules:
+            type_name = type_names.get(module.get("type"), module.get("type"))
+            quantity = int(module.get("quantity") or 0)
+            parts = [
+                (
+                    f"  • {type_name} "
+                    f"{module.get('width')}×{module.get('depth')}×{module.get('height')} мм"
+                ),
+                f"{module.get('quantity', 1)} корп.",
+            ]
+            doors = _count(module.get("facades")) * quantity
+            drawers = _count(module.get("drawers")) * quantity
+            if doors:
+                parts.append(f"{doors} двер.")
+            if drawers:
+                parts.append(f"{drawers} ящ.")
+            if module.get("has_glass"):
+                parts.append("стекло")
+            lines.append(" — ".join([parts[0], ", ".join(parts[1:])]))
     return "\n".join(lines)
 
 
@@ -378,26 +453,15 @@ async def confirm_recognition(callback: CallbackQuery, state: FSMContext):
             await session.refresh(calculation)
 
         # Конвертируем модули в формат для сохранения
-        modules_data = []
-        for module in result.modules:
-            module_dict = {
-                "type": module.type,
-                "width": module.width,
-                "depth": module.depth,
-                "height": module.height,
-                "quantity": module.quantity,
-                "has_glass": module.has_glass,
-                "facades": module.facades,
-                "drawers": module.drawers,
-                "shelves": module.shelves
-            }
-            modules_data.append(module_dict)
+        modules_data = [_module_to_dict(module) for module in result.modules]
 
         # Сохраняем модули и тип помещения (P1-20): раньше zone_type терялся,
         # и расчёт угадывал «Кухня» по наличию верхних баз.
         calculation.modules = modules_data
         if result.zone_type:
             calculation.zone_type = result.zone_type
+        # P1-13: низкая уверенность сохраняется и блокирует КП до проверки.
+        calculation.recognition_confidence = result.confidence
         await session.commit()
         break
 
@@ -414,16 +478,139 @@ async def confirm_recognition(callback: CallbackQuery, state: FSMContext):
     await start_material_selection(callback.message, calculation.id, state)
 
 
-@router.callback_query(F.data == "correct_recognition")
-async def correct_recognition(callback: CallbackQuery, state: FSMContext):
-    """Пользователь хочет скорректировать распознавание."""
-    await callback.message.answer(
-        "🔧 Переходим к ручному вводу модулей для коррекции."
+async def _create_room_calculations(
+    project_id: int, rooms: list[dict], user_id: int
+) -> list[int]:
+    """Создать по одному расчёту на комнату (зоны не смешиваются)."""
+    calculation_ids: list[int] = []
+    async for session in get_session():
+        project = await get_owned_project(session, project_id, user_id)
+        if project is None:
+            return []
+        for room in rooms:
+            calculation = Calculation(
+                project_id=project_id,
+                modules=list(room.get("modules") or []),
+                zone_type=room.get("zone_type"),
+                recognition_confidence=room.get("confidence"),
+                quality_score=room.get("quality_score"),
+            )
+            session.add(calculation)
+            await session.flush()
+            calculation_ids.append(calculation.id)
+        await session.commit()
+        break
+    return calculation_ids
+
+
+async def _start_manual_input_for_calculation(
+    message: Message, state: FSMContext, calculation_id: int
+) -> None:
+    """Запустить ручной ввод в существующий расчёт (без очистки состояния)."""
+    from app.bot.keyboards.inline import get_module_type_keyboard
+    from app.bot.states.manual_input import ManualInputStates
+
+    await state.update_data(calculation_id=calculation_id, current_modules=[])
+    await state.set_state(ManualInputStates.waiting_for_module_type)
+    await message.answer(
+        "Выберите тип модуля:",
+        reply_markup=get_module_type_keyboard(),
     )
 
-    # Очищаем состояние и переходим к ручному вводу
-    await state.clear()
-    # await start_manual_input(callback.message, state)
+
+@router.callback_query(F.data == "correct_recognition")
+async def correct_recognition(callback: CallbackQuery, state: FSMContext):
+    """Пользователь хочет скорректировать распознавание.
+
+    День 3: не очищаем состояние «в никуда». Распознанные модули сохраняем в
+    черновой расчёт, затем запускаем ручной ввод в этот же расчёт.
+    """
+    data = await state.get_data()
+    result: RecognitionResult | None = data.get("recognition_result")
+    project_id = data.get("project_id")
+    if not result or not project_id or not callback.from_user:
+        await callback.answer("❌ Данные распознавания не найдены", show_alert=True)
+        return
+
+    calculations = await _create_room_calculations(
+        project_id,
+        [{"name": "Правка", "zone_type": result.zone_type,
+          "modules": [_module_to_dict(module) for module in result.modules]}],
+        callback.from_user.id,
+    )
+    if not calculations:
+        await callback.answer("❌ Проект не найден", show_alert=True)
+        return
+
+    await callback.message.answer(
+        "✏️ Распознанные модули сохранены в черновик. "
+        "Введите модули заново (или добавьте недостающие) — текущий черновик "
+        "перезапишется после выбора материалов."
+    )
+    await _start_manual_input_for_calculation(
+        callback.message, state, calculations[0]
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "confirm_album")
+async def confirm_album(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение PDF-альбома: по одному расчёту на комнату."""
+    data = await state.get_data()
+    rooms: list[dict] = data.get("album_rooms") or []
+    project_id = data.get("project_id")
+    if not rooms or not project_id or not callback.from_user:
+        await callback.answer("❌ Данные альбома не найдены", show_alert=True)
+        return
+
+    calculation_ids = await _create_room_calculations(
+        project_id, rooms, callback.from_user.id
+    )
+    if not calculation_ids:
+        await callback.answer("❌ Проект не найден", show_alert=True)
+        return
+
+    await state.update_data(
+        calculation_id=calculation_ids[0],
+        album_calc_ids=calculation_ids[1:],
+    )
+    await callback.message.edit_text(
+        f"✅ Сохранено расчётов по комнатам: {len(calculation_ids)}. "
+        "Зоны не смешаны.\n"
+        f"Начинаем с первой комнаты: {rooms[0].get('name') or 'без названия'}."
+    )
+    await callback.answer()
+
+    from app.bot.handlers.materials import start_material_selection
+
+    await start_material_selection(callback.message, calculation_ids[0], state)
+
+
+@router.callback_query(F.data == "correct_album")
+async def correct_album(callback: CallbackQuery, state: FSMContext):
+    """Исправление альбома: сохраняем комнаты как черновики и вводим вручную."""
+    data = await state.get_data()
+    rooms: list[dict] = data.get("album_rooms") or []
+    project_id = data.get("project_id")
+    if not rooms or not project_id or not callback.from_user:
+        await callback.answer("❌ Данные альбома не найдены", show_alert=True)
+        return
+
+    calculation_ids = await _create_room_calculations(
+        project_id, rooms, callback.from_user.id
+    )
+    if not calculation_ids:
+        await callback.answer("❌ Проект не найден", show_alert=True)
+        return
+
+    await callback.message.answer(
+        f"✏️ Распознанные комнаты сохранены черновиками ({len(calculation_ids)} шт.). "
+        "Введите первую комнату вручную; остальные черновики останутся в проекте."
+    )
+    await _start_manual_input_for_calculation(
+        callback.message, state, calculation_ids[0]
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "retry_recognition")

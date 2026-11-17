@@ -23,6 +23,10 @@ from app.services.cost_calc import DiscountInfo
 from app.services.price_book import load_price_book
 from app.services.pricing_policy import PricingPolicy, load_default_policy
 
+# P1-13: ниже этих значений КП не выпускается без проверки оператора.
+LOW_CONFIDENCE_LEVELS = {"low"}
+QUALITY_SCORE_MIN = 0.6
+
 
 def discount_info_from(calculation: Calculation) -> DiscountInfo:
     """DiscountInfo из полей расчёта — единственное место такого перевода."""
@@ -114,6 +118,36 @@ class CalculationService:
             policy=policy,
         )
 
+    @staticmethod
+    def _apply_recognition_gate(
+        calculation: Calculation, result: CalculationResult
+    ) -> None:
+        """P1-13: низкая уверенность распознавания блокирует КП.
+
+        Ошибка распознавания (0008/0011) не должна превращаться в неверную
+        смету, выпущенную клиенту. Обход — только явным подтверждением
+        оператора (повторный пересчёт с исправленным составом).
+        """
+        confidence = str(
+            getattr(calculation, "recognition_confidence", "") or ""
+        ).strip().lower()
+        quality = getattr(calculation, "quality_score", None)
+        reason = ""
+        if confidence in LOW_CONFIDENCE_LEVELS:
+            reason = (
+                "Низкая уверенность распознавания: проверьте состав модулей "
+                "перед выпуском КП"
+            )
+        elif quality is not None and float(quality) < QUALITY_SCORE_MIN:
+            reason = (
+                f"Низкое качество распознавания (score {float(quality):.2f} < "
+                f"{QUALITY_SCORE_MIN}): требуется проверка оператора"
+            )
+        if reason:
+            result.can_issue_kp = False
+            if reason not in result.warnings:
+                result.warnings.append(reason)
+
     async def recalculate(
         self,
         calculation: Calculation,
@@ -135,6 +169,7 @@ class CalculationService:
             discount=discount,
             has_spec=has_spec,
         )
+        self._apply_recognition_gate(calculation, result)
         apply_result(calculation, result, reason=reason)
         if commit:
             await self.session.commit()

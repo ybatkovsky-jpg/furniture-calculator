@@ -59,6 +59,20 @@ def apply_result(
         "warnings": result.warnings,
         "missing_prices": result.missing_prices,
         "can_issue_kp": result.can_issue_kp,
+        # P1-13/P2-23: почему КП заблокировано — явный список, а не «магия».
+        "recognition": {
+            "confidence": calculation.recognition_confidence,
+            "quality_score": calculation.quality_score,
+        },
+        "blocking_reasons": (
+            []
+            if result.can_issue_kp
+            else (
+                list(result.missing_prices)
+                or list(result.warnings)
+                or ["КП заблокировано: проверьте смету"]
+            )
+        ),
         "bom": [asdict(module_bom) for module_bom in result.bom],
         "nesting": asdict(result.nesting) if result.nesting else None,
         "cost_price": breakdown.cost_price,

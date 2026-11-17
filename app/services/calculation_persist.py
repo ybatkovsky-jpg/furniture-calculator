@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from datetime import UTC, datetime
 
 from app.models.calculation import Calculation
@@ -64,6 +64,9 @@ def apply_result(
         "cost_price": breakdown.cost_price,
         "discount_amount": breakdown.discount_amount,
         "total_base_cash": breakdown.total_base_cash,
+        "furniture_cash": breakdown.furniture_cash,
+        "below_cost": breakdown.below_cost,
+        "below_cost_gap": breakdown.below_cost_gap,
         "delivery_client": breakdown.delivery_client,
         "delivery_internal": breakdown.delivery_internal,
         "tax": {
@@ -78,4 +81,11 @@ def apply_result(
         },
         "total_cash": result.total_cash,
         "total_noncash": result.total_noncash,
+        # P0-02/P1-10: полная финансовая разбивка в снимке. Документы
+        # (Excel/КП) берут итоги отсюда, а не пересчитывают по ячейкам.
+        "totals": {
+            item.name: getattr(breakdown, item.name)
+            for item in fields(breakdown)
+            if item.name != "warnings"
+        },
     }

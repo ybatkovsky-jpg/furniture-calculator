@@ -80,8 +80,21 @@ class CostBreakdown:
     # === Безнал ===
     final_noncash: float = 0          # итого безнал
 
+    # === Налоги (УСН 15%, НДС 0) — управленческий результат, не цена ===
+    tax_base: float = 0
+    tax_usn: float = 0
+    min_tax: float = 0
+    tax_accrual: float = 0
+    vat: float = 0
+    net_profit: float = 0
+
     # === Предупреждения валидатора ===
     warnings: list[str] = field(default_factory=list)
+
+    # === P1-02: цена ниже полных затрат ===
+    below_cost: bool = False
+    below_cost_gap: float = 0
+    furniture_cash: float = 0     # цена мебели без клиентской доставки
 
 
 def calculate_cost(
@@ -109,6 +122,8 @@ def calculate_cost(
     delivery_fee: float = 6500,
     delivery_fee_client: float = 10000,
     noncash_markup: float = 1.13,
+    # P1-02: минимальная маржа над полными затратами (0 = не ниже затрат).
+    min_margin_rate: float = 0.0,
     # Скидка / наценка / бонус
     discount: DiscountInfo | None = None,
 ) -> CostBreakdown:
@@ -191,11 +206,12 @@ def calculate_cost(
     r.design = _round_half_up(r.manufacturing * design_rate)
     r.overhead = _round_half_up(r.cost_price * overhead_rate)
 
-    # 3. Итого
+    # 3. Итого. Внутренняя доставка не входит в расчётную базу B: по
+    # финансовой политике §6 она учитывается отдельно как расход, а клиенту
+    # предъявляется D_client = 10 000 ₽ отдельной строкой (без наценки 30%).
     r.subtotal = (
         r.cost_price + r.manufacturing + r.installation +
-        r.measurement + r.delivery_internal +
-        r.design + r.overhead
+        r.measurement + r.design + r.overhead
     )
     r.profit = _round_half_up(r.subtotal * profit_rate)
     r.total_with_profit = r.subtotal + r.profit
@@ -243,26 +259,54 @@ def calculate_cost(
     if disc.designer_bonus_enabled and disc.designer_bonus_rate > 0:
         # Формула: финал = цена / (1 - ставка)
         # Верифицировано: 26500 / 0.9 = 29444.44
-        r.final_cash = _round_half_up(
+        furniture_cash = _round_half_up(
             r.price_after_discount / (1 - disc.designer_bonus_rate), 2
         )
         r.designer_bonus_amount = _round_half_up(
-            r.final_cash - r.price_after_discount, 2
+            furniture_cash - r.price_after_discount, 2
         )
     else:
-        r.final_cash = r.price_after_discount
+        furniture_cash = r.price_after_discount
         r.designer_bonus_amount = 0
 
-    # 6. Безнал
-    r.final_noncash = _round_half_up(r.final_cash * noncash_markup, 2)
+    # 6. Клиентская доставка — отдельной строкой, без наценки 30% и без
+    # безналичной наценки: это не мебель и не налог (политика §6).
+    r.furniture_cash = _round_half_up(furniture_cash, 2)
+    r.final_cash = _round_half_up(furniture_cash + r.delivery_client, 2)
+    r.final_noncash = _round_half_up(
+        furniture_cash * noncash_markup + r.delivery_client, 2
+    )
 
-    # 7. Инвариант: итог не может быть отрицательным или ниже себестоимости.
+    # P1-02: защита от убытка по ПОЛНЫМ затратам. Раньше сравнивали
+    # final_cash (с доставкой 10 000) с cost_price (только материалы):
+    # скидка 50 % ниже полных затрат на 14 261 ₽, а warnings был пуст.
+    min_price = _round_half_up(r.subtotal * (1 + float(min_margin_rate or 0)))
+    if r.furniture_cash < min_price:
+        r.below_cost = True
+        r.below_cost_gap = _round_half_up(min_price - r.furniture_cash)
+        r.warnings.append(
+            "Цена мебели ниже полных затрат на "
+            f"{r.below_cost_gap:,.0f} ₽: выпуск КП требует подтверждения директора"
+        )
+
+    # 7. УСН 15% от прибыли; НДС 0. На цену клиенту не влияет.
+    from app.services.tax_policy import TaxPolicy
+
+    tax = TaxPolicy.from_config().calculate(
+        revenue=r.final_cash,
+        deductible_expenses=r.cost_price + r.delivery_internal,
+    )
+    r.tax_base = tax.tax_base
+    r.tax_usn = tax.tax_usn
+    r.min_tax = tax.min_tax
+    r.tax_accrual = tax.tax_accrual
+    r.vat = tax.vat
+    r.net_profit = tax.net_profit
+
+    # 8. Жёсткий инвариант: итог не может быть отрицательным. Проверка «ниже
+    # затрат» — выше (P1-02), она сравнивает цену мебели без доставки с
+    # полными затратами, а не с материалами.
     if r.final_cash < 0:
         raise PricingError("Итоговая цена отрицательна — проверьте скидку")
-    if r.final_cash < r.cost_price:
-        r.warnings.append(
-            "Итоговая цена ниже себестоимости: выпуск КП требует "
-            "ручного подтверждения"
-        )
 
     return r

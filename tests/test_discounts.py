@@ -113,12 +113,21 @@ def test_discount_equal_to_base_is_allowed():
     result = _base(discount=DiscountInfo())
     base = result.total_base_cash
     ok = _base(discount=DiscountInfo(discount_type="fixed", discount_value=base))
-    assert ok.final_cash == 0
+    # Мебель обнулилась скидкой, но доставка клиенту (10 000 ₽) остаётся
+    # отдельной строкой и не входит в базу скидки.
+    assert ok.final_cash == ok.delivery_client
 
 
 def test_below_cost_price_warns_but_calculates():
-    """Ниже себестоимости — предупреждение (КП блокируется), не падение."""
+    """P1-02: ниже ПОЛНЫХ затрат — предупреждение (КП блокируется), не падение.
+
+    Раньше сравнивали final_cash (с доставкой) с материалами; теперь —
+    цену мебели без доставки с subtotal, поэтому скидка 95 % попадает в флаг
+    below_cost с явным разрывом.
+    """
     result = _base(discount=DiscountInfo(discount_type="percent", discount_value=95))
     assert result.final_cash >= 0
+    assert result.below_cost is True
+    assert result.below_cost_gap > 0
     assert result.warnings
-    assert "ниже себестоимости" in result.warnings[0]
+    assert "ниже полных затрат" in result.warnings[0]

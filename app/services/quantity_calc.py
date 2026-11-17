@@ -48,8 +48,14 @@ SHEET_LDSP_BY_BRAND = {
     "EXTRAVERT": {"width_mm": 2750, "height_mm": 1830, "area_m2": 5.0325},
     "LAMARTY":   {"width_mm": 2800, "height_mm": 2070, "area_m2": 5.796},
     "EMDIWAY":   {"width_mm": 2800, "height_mm": 2070, "area_m2": 5.796},
+    # P1-08: SLOTEX — свой формат (раньше падал в default 5,796 м² и завышал
+    # число листов). 3000×1200 = 3,6 м²; длинный 4200×600 = 2,52 м².
+    "SLOTEX":    {"width_mm": 3000, "height_mm": 1200, "area_m2": 3.6},
     "default":   {"width_mm": 2800, "height_mm": 2070, "area_m2": 5.796},
 }
+
+# Длинный формат SLOTEX (4200×600 = 2,52 м²) — для узких длинных деталей.
+SHEET_LDSP_SLOTEX_LONG = {"width_mm": 4200, "height_mm": 600, "area_m2": 2.52}
 
 # МДФ: стандартный лист + большой формат
 SHEET_MDF_STANDARD = {"width_mm": 2800, "height_mm": 1220, "area_m2": 3.416}
@@ -190,7 +196,7 @@ def detect_material_properties(materials: list[str]) -> dict:
     materials_upper = " ".join(m.upper() for m in materials)
 
     # ── Бренд ЛДСП ──
-    for brand in ["EGGER", "EXTRAVERT", "LAMARTY"]:
+    for brand in ["EGGER", "EXTRAVERT", "LAMARTY", "SLOTEX"]:
         if brand in materials_upper:
             result["brand"] = brand
             break
@@ -295,6 +301,10 @@ def calculate_quantities(
     room_name: str = "",
     materials: list[str] | None = None,
     *,
+    # P1-08: бренд/формат ЛДСП определяются ТОЛЬКО по выбранной позиции
+    # «ЛДСП», а не по объединённому списку (кромка EGGER больше не делает
+    # ЛДСП SLOTEX «EGGER» и не меняет число листов).
+    ldsp_name: str | None = None,
     zone_type: str | None = None,           # NEW: тип помещения из AI
     has_spec: bool = False,          # если есть spec.yaml — не автодобавлять
     # P1-02: платные автопозиции — opt-in. По умолчанию False: раньше кухня
@@ -339,17 +349,31 @@ def calculate_quantities(
 
     # Определяем свойства материала (единая функция)
     mat_props = detect_material_properties(materials)
-    if mat_props["surface"] == "texture":
+    # P1-08: свойства ЛДСП (бренд, формат, текстура) — только из позиции ЛДСП.
+    brand_props = (
+        detect_material_properties([ldsp_name]) if ldsp_name else mat_props
+    )
+    if brand_props["surface"] == "texture":
         q.ldsp_material = "текстура"
 
     # ── Размер листа по бренду ──
-    brand = mat_props.get("brand", "unknown")
+    brand = brand_props.get("brand", "unknown")
     sheet_ldsp = SHEET_LDSP_BY_BRAND.get(brand, SHEET_LDSP_BY_BRAND["default"])
+    if brand == "unknown":
+        q.warnings.append(
+            "Бренд ЛДСП не определён: использован формат листа по умолчанию "
+            f"{sheet_ldsp['width_mm']}×{sheet_ldsp['height_mm']} мм — проверьте"
+        )
+    elif brand not in SHEET_LDSP_BY_BRAND:
+        q.warnings.append(
+            f"Формат листа для бренда {brand} не задан: использован формат "
+            f"по умолчанию {sheet_ldsp['width_mm']}×{sheet_ldsp['height_mm']} мм"
+        )
     sheet_area_m2 = sheet_ldsp["area_m2"]
     q.ldsp_brand = brand if brand != "unknown" else ""
 
     # Коэффициент запаса
-    is_texture = mat_props["surface"] == "texture"
+    is_texture = brand_props["surface"] == "texture"
     waste_ldsp = WASTE_FACTOR_TEXTURE if is_texture else WASTE_FACTOR_PLAIN
 
     total_hdf_area = 0.0

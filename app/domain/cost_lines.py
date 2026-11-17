@@ -64,7 +64,9 @@ class CostLine:
     """Одна строка себестоимости."""
 
     kind: str          # ldsp | edge | facade | hdf | hinge | drawer | handle |
-                       # gola | led | countertop | fastener | glass
+                       # gola | led | countertop | fastener | glass |
+                       # rod | bottle_holder | cutlery_tray | drying_rack |
+                       # hygienic_mat | drawer_internal
     name: str
     quantity: float
     unit: str
@@ -413,6 +415,66 @@ def build_cost_lines(
         quantities.plinth_strips,
         "шт",
         price_book.get("plinth"),
+        "price_book",
+    )
+
+    # ── Комплектующие, которые раньше были только в Excel (P1-09) ──────
+    # Правило: каждое поле MaterialQuantities с quantity > 0 получает строку.
+    # Цены — из прайса; нет цены → missing и блокировка КП, а не молчаливый 0.
+    add(
+        "rod",
+        "Штанга круглая D25",
+        quantities.rods_round_count,
+        "шт",
+        price_book.get("rods_round"),
+        "price_book",
+    )
+    add(
+        "rod",
+        "Штанга прямоугольная (антискользящая)",
+        quantities.rods_rectangular_count,
+        "шт",
+        price_book.get("rods_rectangular"),
+        "price_book",
+    )
+    add(
+        "bottle_holder",
+        f"Бутылочница ({quantities.bottle_holder_type or 'Flora'})",
+        quantities.bottle_holder_count,
+        "шт",
+        price_book.get("bottle_holder"),
+        "price_book",
+    )
+    add(
+        "cutlery_tray",
+        "Лоток для столовых приборов",
+        quantities.cutlery_tray_count,
+        "шт",
+        price_book.get("cutlery_tray"),
+        "price_book",
+    )
+    add(
+        "drying_rack",
+        f"Сушка для посуды ({quantities.drying_rack_type or 'Alba'})",
+        quantities.drying_rack_count,
+        "шт",
+        price_book.get("drying_rack"),
+        "price_book",
+    )
+    add(
+        "hygienic_mat",
+        "Гигиенический поддон / коврик",
+        quantities.hygienic_mat_count,
+        "шт",
+        price_book.get("hygienic_mat"),
+        "price_book",
+    )
+    add(
+        "drawer_internal",
+        "Ящик внутренний (для приборов)",
+        quantities.drawers_internal_count,
+        "шт",
+        price_book.get("drawers_internal"),
         "price_book",
     )
 

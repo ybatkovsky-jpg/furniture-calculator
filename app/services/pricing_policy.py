@@ -36,6 +36,8 @@ class PricingPolicy:
     delivery_fee: float = 6500.0
     delivery_fee_client: float = 10000.0
     noncash_markup: float = 1.13
+    # P1-02: минимальная маржа над полными затратами (0 = не ниже затрат).
+    min_margin_rate: float = 0.0
     designer_bonus_rate: float = 0.10
     sheet_utilization: float = 0.85
 
@@ -55,6 +57,7 @@ class PricingPolicy:
             delivery_fee=settings.delivery_fee,
             delivery_fee_client=settings.delivery_fee_client,
             noncash_markup=settings.noncash_markup,
+            min_margin_rate=getattr(settings, "min_margin_rate", 0.0),
             designer_bonus_rate=settings.designer_bonus_rate,
             sheet_utilization=settings.sheet_utilization,
         )
@@ -90,6 +93,7 @@ class PricingPolicy:
             "delivery_fee": self.delivery_fee,
             "delivery_fee_client": self.delivery_fee_client,
             "noncash_markup": self.noncash_markup,
+            "min_margin_rate": self.min_margin_rate,
         }
 
     @property
@@ -105,6 +109,7 @@ class PricingPolicy:
             "manager_rate": self.manager_rate,
             "designer_rate": self.designer_rate,
             "noncash_markup": self.noncash_markup,
+            "min_margin_rate": self.min_margin_rate,
             "sheet_utilization": self.sheet_utilization,
         }
 

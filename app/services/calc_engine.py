@@ -127,12 +127,14 @@ def calculate_full_cost(
         hinge_brand = str(_hw_cfg["brand"])
     recognized = [_dict_to_recognized_module(m) for m in modules]
     material_names = _extract_material_names(selected_materials)
+    ldsp_name = _extract_ldsp_name(selected_materials)
     if not zone_type:
         zone_type = _infer_zone_type(modules)
     quantities = calculate_quantities(
         recognized,
         "",
         material_names,
+        ldsp_name=ldsp_name,
         zone_type=zone_type,
         hinge_brand=hinge_brand,
         has_spec=has_spec,
@@ -198,13 +200,24 @@ def calculate_full_cost(
     result.edge_cost = round(totals.get("edge", 0.0), 2)
     result.facade_cost = round(totals.get("facade", 0.0), 2)
     result.hardware_cost = round(
-        totals.get("hinge", 0.0) + totals.get("drawer", 0.0) + totals.get("handle", 0.0),
+        totals.get("hinge", 0.0) + totals.get("drawer", 0.0)
+        + totals.get("handle", 0.0) + totals.get("drawer_internal", 0.0),
         2,
     )
     result.glass_cost = round(totals.get("glass", result.glass_cost), 2)
     result.lighting_cost = round(totals.get("led", 0.0), 2)
     result.countertop_cost = round(totals.get("countertop", 0.0), 2)
-    result.accessories_cost = round(totals.get("gola", 0.0), 2)
+    # P1-09: штанги, сушки, лотки, бутылочницы, гигиенические поддоны —
+    # теперь входят в себестоимость, а не «есть только в Excel».
+    result.accessories_cost = round(
+        totals.get("gola", 0.0)
+        + totals.get("rod", 0.0)
+        + totals.get("bottle_holder", 0.0)
+        + totals.get("cutlery_tray", 0.0)
+        + totals.get("drying_rack", 0.0)
+        + totals.get("hygienic_mat", 0.0),
+        2,
+    )
     result.fastener_cost = round(totals.get("fastener", 0.0), 2)
     result.subcontractor_cost = 0.0
 
@@ -256,9 +269,16 @@ def calculate_full_cost(
         delivery_fee=policy.delivery_fee,
         delivery_fee_client=policy.delivery_fee_client,
         noncash_markup=policy.noncash_markup,
+        min_margin_rate=policy.min_margin_rate,
         # Скидки
         discount=discount
     )
+
+    # P1-02: предупреждения финансовой формулы (например, «ниже полных
+    # затрат») должны доходить до чата/КП, а не только лежать в breakdown.
+    result.warnings.extend(result.cost_breakdown.warnings)
+    if result.cost_breakdown.below_cost:
+        result.can_issue_kp = False
 
     # Финальные цены
     result.total_cash = result.cost_breakdown.final_cash
@@ -344,12 +364,35 @@ def _extract_handle_price(selected_hardware: dict) -> float:
     return 0.0
 
 
+def _extract_ldsp_name(selected_materials: dict) -> str | None:
+    """Имя выбранной позиции ЛДСП (P1-08).
+
+    Бренд и формат листа определяются только по ней: раньше в объединённый
+    список попадала кромка, и «кромка EGGER» подменяла бренд ЛДСП SLOTEX.
+    """
+    if not isinstance(selected_materials, dict):
+        return None
+    value = selected_materials.get("ldsp")
+    if isinstance(value, dict):
+        name = value.get("name")
+        return str(name) if name else None
+    if isinstance(value, list) and value and isinstance(value[0], dict):
+        name = value[0].get("name")
+        return str(name) if name else None
+    return None
+
+
 def _extract_material_names(selected_materials: dict) -> list:
-    """Имена материалов (для quantity_calc.detect_material_properties)."""
+    """Имена материалов для определения типа фасада/стекла.
+
+    P1-08: кромка сюда НЕ входит — «Кромка ПВХ» ошибочно делала все фасады
+    ПВХ, а бренд кромки подменял бренд ЛДСП. Для бренда ЛДСП есть отдельный
+    `_extract_ldsp_name`.
+    """
     names = []
     if not isinstance(selected_materials, dict):
         return names
-    for key in ("ldsp", "facades", "edge"):
+    for key in ("ldsp", "facades"):
         v = selected_materials.get(key)
         if isinstance(v, dict) and v.get("name"):
             names.append(str(v["name"]))

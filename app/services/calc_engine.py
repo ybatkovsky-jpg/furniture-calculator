@@ -53,6 +53,10 @@ class CalculationResult:
     bom: list[ModuleBOM] = field(default_factory=list)
     nesting: NestingResult | None = None
 
+    # P1-10: снимок цен и коэффициентов, по которому посчитан результат.
+    price_book: dict[str, float] = field(default_factory=dict)
+    policy: dict[str, float] = field(default_factory=dict)
+
     # Количества прочих позиций из quantity_calc (для показа в смете)
     hdf_sheets: int = 0
     led_strip_m: float = 0
@@ -183,6 +187,8 @@ def calculate_full_cost(
     result.missing_prices = list(lines_result.missing)
     result.can_issue_kp = lines_result.can_issue_kp
     result.bom = build_bom(modules)
+    result.price_book = dict(price_book or {})
+    result.policy = dict(policy.as_dict())
     # S5-03: раскрой по габариту листа выбранного бренда ЛДСП.
     from app.services.quantity_calc import SHEET_LDSP_BY_BRAND
 

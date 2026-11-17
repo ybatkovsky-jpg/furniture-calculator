@@ -12,16 +12,24 @@
 
 from __future__ import annotations
 
-from typing import Any
+import copy
+from typing import Any, Literal
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.calculation import Calculation
+from app.models.calculation_version import CalculationVersion
+from app.models.price import PriceItem
 from app.services.calc_engine import CalculationResult, calculate_full_cost
 from app.services.calculation_persist import apply_result
 from app.services.cost_calc import DiscountInfo
 from app.services.price_book import load_price_book
-from app.services.pricing_policy import PricingPolicy, load_default_policy
+from app.services.pricing_policy import (
+    PricingPolicy,
+    coerce_policy,
+    load_default_policy,
+)
 
 # P1-13: ниже этих значений КП не выпускается без проверки оператора.
 LOW_CONFIDENCE_LEVELS = {"low"}
@@ -104,8 +112,29 @@ class CalculationService:
         has_spec: bool = False,
         price_book: dict[str, float] | None = None,
         policy: PricingPolicy | None = None,
+        price_mode: Literal["snapshot", "current"] = "snapshot",
     ) -> CalculationResult:
-        """Превью сохранённого расчёта (скидка по умолчанию — из самой записи)."""
+        """Превью сохранённого расчёта.
+
+        P1-10: по умолчанию цены и коэффициенты берутся из снимка `quote`
+        (сохранённый расчёт не «плывёт» от изменения прайса). `price_mode=
+        "current"` — только явная команда «обновить по текущему прайсу».
+        """
+        stored_quote = calculation.quote if isinstance(calculation.quote, dict) else {}
+        if price_mode == "current":
+            # Явное «обновить по текущему прайсу»: читаем заново, без кэша
+            # сервиса (кэш держит цены на момент первого пересчёта).
+            if price_book is None:
+                price_book = await load_price_book(self.session)
+            if policy is None:
+                policy = await load_default_policy(self.session)
+        if price_mode == "snapshot":
+            stored_book = stored_quote.get("price_book")
+            if price_book is None and isinstance(stored_book, dict) and stored_book:
+                price_book = dict(stored_book)
+            stored_policy = stored_quote.get("policy")
+            if policy is None and isinstance(stored_policy, dict) and stored_policy:
+                policy = coerce_policy(stored_policy)
         return await self.preview(
             calculation.modules,
             calculation.selected_materials,
@@ -148,6 +177,42 @@ class CalculationService:
             if reason not in result.warnings:
                 result.warnings.append(reason)
 
+    async def _record_version(
+        self,
+        calculation: Calculation,
+        reason: str,
+        user_id: int | None,
+    ) -> CalculationVersion:
+        """P1-10: сохранить неизменяемую версию снимка расчёта."""
+        if calculation.id is None:
+            await self.session.flush()
+        last_no = await self.session.scalar(
+            select(func.max(CalculationVersion.version_no)).where(
+                CalculationVersion.calculation_id == calculation.id
+            )
+        )
+        quote = dict(calculation.quote or {})
+        stamp = await self.session.scalar(select(func.max(PriceItem.updated_at)))
+        price_list_version = str(
+            quote.get("price_list_version")
+            or (stamp.isoformat() if stamp is not None else "")
+            or quote.get("created_at")
+            or ""
+        )
+        # Снимок версии не зависит от последующих правок Calculation.quote.
+        version = CalculationVersion(
+            calculation_id=calculation.id,
+            version_no=int(last_no or 0) + 1,
+            reason=reason,
+            quote=copy.deepcopy(quote),
+            price_list_version=price_list_version or None,
+            policy_version=quote.get("policy_version"),
+            engine_version=quote.get("engine_version"),
+            created_by=user_id,
+        )
+        self.session.add(version)
+        return version
+
     async def recalculate(
         self,
         calculation: Calculation,
@@ -156,6 +221,8 @@ class CalculationService:
         reason: str = "manual",
         commit: bool = True,
         has_spec: bool = False,
+        price_mode: Literal["snapshot", "current"] = "snapshot",
+        user_id: int | None = None,
     ) -> CalculationResult:
         """Полный пересчёт расчёта и атомарная запись результата.
 
@@ -168,9 +235,11 @@ class CalculationService:
             calculation,
             discount=discount,
             has_spec=has_spec,
+            price_mode=price_mode,
         )
         self._apply_recognition_gate(calculation, result)
         apply_result(calculation, result, reason=reason)
+        await self._record_version(calculation, reason, user_id)
         if commit:
             await self.session.commit()
         return result
@@ -187,6 +256,7 @@ class CalculationService:
         designer_bonus_rate: float | None = None,
         reason: str = "discount",
         commit: bool = True,
+        user_id: int | None = None,
     ) -> CalculationResult:
         """Сменить скидку/наценку/бонус и пересчитать полным путём.
 
@@ -221,6 +291,7 @@ class CalculationService:
         calculation.designer_bonus_enabled = 1 if new_discount.designer_bonus_enabled else 0
         calculation.designer_bonus_rate = new_discount.designer_bonus_rate
         apply_result(calculation, result, reason=reason)
+        await self._record_version(calculation, reason, user_id)
         if commit:
             await self.session.commit()
         return result
@@ -231,6 +302,7 @@ class CalculationService:
         *,
         reason: str = "discount_removed",
         commit: bool = True,
+        user_id: int | None = None,
     ) -> CalculationResult:
         """Убрать скидку и наценку, сохранив бонус дизайнера."""
         return await self.apply_discount(
@@ -241,6 +313,7 @@ class CalculationService:
             markup_value=0,
             reason=reason,
             commit=commit,
+            user_id=user_id,
         )
 
     async def set_designer_bonus(
@@ -250,6 +323,7 @@ class CalculationService:
         *,
         reason: str = "designer_bonus",
         commit: bool = True,
+        user_id: int | None = None,
     ) -> CalculationResult:
         """Включить/выключить бонус дизайнера полным пересчётом."""
         return await self.apply_discount(
@@ -261,4 +335,5 @@ class CalculationService:
             designer_bonus_enabled=enabled,
             reason=reason,
             commit=commit,
+            user_id=user_id,
         )

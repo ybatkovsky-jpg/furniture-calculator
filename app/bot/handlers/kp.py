@@ -234,7 +234,8 @@ async def create_calculation_variant(callback: CallbackQuery):
 
         service = CalculationService(session)
         result = await service.recalculate(
-            new_calculation, reason="variant", commit=False
+            new_calculation, reason="variant", commit=False,
+            user_id=callback.from_user.id,
         )
         await session.commit()
 

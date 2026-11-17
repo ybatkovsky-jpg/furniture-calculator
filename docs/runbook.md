@@ -95,7 +95,7 @@ for t in ('projects', 'calculations', 'price_items'):
 .\.venv\Scripts\python.exe -m alembic current
 ```
 
-Ожидаемо: `alembic current` показывает `b7e1c4a9d2f3 (head)`. Откат — только из
+Ожидаемо: `alembic current` показывает `c9d3e5f7a1b2 (head)`. Откат — только из
 копии БД: миграции обратимы не везде, а данные важнее схемы.
 
 ## 5. Журнал проверок

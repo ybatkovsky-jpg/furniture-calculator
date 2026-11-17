@@ -38,6 +38,8 @@ class PricingPolicy:
     noncash_markup: float = 1.13
     # P1-02: минимальная маржа над полными затратами (0 = не ниже затрат).
     min_margin_rate: float = 0.0
+    # P1-10: версия политики — попадает в снимок и версию расчёта.
+    version: str = "1.0"
     designer_bonus_rate: float = 0.10
     sheet_utilization: float = 0.85
 
@@ -58,6 +60,7 @@ class PricingPolicy:
             delivery_fee_client=settings.delivery_fee_client,
             noncash_markup=settings.noncash_markup,
             min_margin_rate=getattr(settings, "min_margin_rate", 0.0),
+            version="1.0",
             designer_bonus_rate=settings.designer_bonus_rate,
             sheet_utilization=settings.sheet_utilization,
         )
@@ -72,7 +75,7 @@ class PricingPolicy:
             values[field_name] = base.__dict__[field_name] if value is None else float(value)
         return cls(**values)
 
-    def as_dict(self) -> dict[str, float]:
+    def as_dict(self) -> dict[str, Any]:
         """Словарь для `calculate_cost` (совместимость со старым API)."""
         data = asdict(self)
         # calculate_cost ожидает delivery_fee/delivery_fee_client под этими именами.
@@ -110,6 +113,7 @@ class PricingPolicy:
             "designer_rate": self.designer_rate,
             "noncash_markup": self.noncash_markup,
             "min_margin_rate": self.min_margin_rate,
+            "version": self.version,
             "sheet_utilization": self.sheet_utilization,
         }
 

@@ -60,6 +60,9 @@ def apply_result(
         "missing_prices": result.missing_prices,
         "can_issue_kp": result.can_issue_kp,
         # P1-13/P2-23: почему КП заблокировано — явный список, а не «магия».
+        "price_book": result.price_book,
+        "policy": result.policy,
+        "policy_version": str((result.policy or {}).get("version") or "1.0"),
         "recognition": {
             "confidence": calculation.recognition_confidence,
             "quality_score": calculation.quality_score,

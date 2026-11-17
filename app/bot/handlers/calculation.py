@@ -51,7 +51,10 @@ async def start_calculation(callback: CallbackQuery, state: FSMContext):
         # не собирает прайс/политику вручную и не пишет поля расчёта сам.
         service = CalculationService(session)
         try:
-            result = await service.recalculate(calculation, reason="initial")
+            result = await service.recalculate(
+                calculation, reason="initial", price_mode="current",
+                user_id=callback.from_user.id,
+            )
 
             # Показываем смету
             await show_estimate(callback.message, calculation, result)

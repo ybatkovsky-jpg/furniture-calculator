@@ -142,6 +142,7 @@ async def process_discount_value(message: Message, state: FSMContext):
                     discount_type=discount_type,
                     discount_value=value,
                     reason="discount",
+                    user_id=message.from_user.id,
                 )
             elif discount_type in ("markup_percent", "markup_fixed"):
                 result = await service.apply_discount(
@@ -149,6 +150,7 @@ async def process_discount_value(message: Message, state: FSMContext):
                     markup_type=discount_type.replace("markup_", ""),
                     markup_value=value,
                     reason="markup",
+                    user_id=message.from_user.id,
                 )
             else:
                 await message.answer("Ошибка: неизвестный тип скидки")
@@ -201,7 +203,8 @@ async def toggle_designer_bonus(callback: CallbackQuery):
         service = CalculationService(session)
         try:
             await service.set_designer_bonus(
-                calculation, not bool(calculation.designer_bonus_enabled)
+                calculation, not bool(calculation.designer_bonus_enabled),
+                user_id=callback.from_user.id,
             )
         except PricingError as exc:
             await callback.answer(f"❌ {exc}", show_alert=True)
@@ -236,7 +239,9 @@ async def remove_discount(callback: CallbackQuery):
 
         # Сбрасываем скидку/наценку и пересчитываем единым сервисом (P1-01).
         service = CalculationService(session)
-        await service.clear_discount(calculation)
+        await service.clear_discount(
+            calculation, user_id=callback.from_user.id
+        )
         break
 
     await callback.answer("Скидка убрана")

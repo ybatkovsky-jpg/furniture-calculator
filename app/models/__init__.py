@@ -4,6 +4,7 @@
 
 from app.models.base import Base
 from app.models.calculation import Calculation, CommercialOffer
+from app.models.calculation_version import CalculationVersion
 from app.models.glass import GlassType
 from app.models.price import PriceHistory, PriceItem
 from app.models.project import Project
@@ -13,6 +14,7 @@ __all__ = [
     "Base",
     "CalcSettings",
     "Calculation",
+    "CalculationVersion",
     "CommercialOffer",
     "GlassType",
     "PriceHistory",

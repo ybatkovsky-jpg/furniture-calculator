@@ -2,12 +2,19 @@
 Конфигурация SQLAlchemy сессий для асинхронной работы с БД.
 """
 
+import asyncio
+import logging
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # Создаём асинхронный движок SQLite
 engine = create_async_engine(
@@ -54,16 +61,45 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
-async def init_db():
-    """
-    Создать все таблицы в БД.
-    
-    Вызывается при старте приложения.
-    """
-    from app.models import Base
+def _run_migrations_sync() -> None:
+    """Применить `alembic upgrade head` синхронно (Alembic не async).
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    P1-12: `create_all` не добавляет колонки в существующую БД, поэтому новый
+    код на старой базе падал на `thickness_mm`/`quote`. Теперь схема
+    обновляется миграциями; ошибка миграции — падение старта с понятным
+    текстом, а не работа на неполной схеме.
+    """
+    from alembic.config import Config
+
+    from alembic import command
+
+    ini_path = _PROJECT_ROOT / "alembic.ini"
+    if not ini_path.exists():
+        raise RuntimeError(
+            f"Не найден alembic.ini по пути {ini_path}. "
+            "Запустите бота из корня проекта."
+        )
+    cfg = Config(str(ini_path))
+    cfg.set_main_option("script_location", str(_PROJECT_ROOT / "alembic"))
+    try:
+        command.upgrade(cfg, "head")
+    except Exception as exc:
+        raise RuntimeError(
+            "Не удалось применить миграции Alembic. "
+            "Сделайте копию БД и выполните `alembic upgrade head` вручную; "
+            f"причина: {exc}"
+        ) from exc
+
+
+async def init_db():
+    """Обновить схему БД миграциями Alembic (P1-12).
+
+    Вызывается при старте приложения. `create_all` оставлен только для
+    тестов/одноразовых скриптов (`Base.metadata.create_all`), потому что он
+    не умеет добавлять колонки в уже существующие таблицы.
+    """
+    await asyncio.to_thread(_run_migrations_sync)
+    logger.info("✓ Миграции Alembic применены (head)")
 
 
 async def drop_db():

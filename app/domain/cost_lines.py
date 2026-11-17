@@ -78,6 +78,9 @@ class CostLine:
     # Нужно, чтобы проверить «одна дверь не оплачена дважды».
     module_id: int | None = None
     door_index: int | None = None
+    # P0-02: поле строки шаблона Excel (см. templates/row_mapping.json).
+    # None — строки в шаблоне нет, документ покажет её в блоке «ПРОЧЕЕ».
+    field: str | None = None
 
 
 @dataclass
@@ -136,6 +139,79 @@ def _drawer_unit_price(selection: Any) -> float | None:
     return _price_from(selection)
 
 
+def _ldsp_field(quantities: MaterialQuantities) -> str:
+    """Поле шаблона для ЛДСП по бренду и текстуре (P0-02)."""
+    brand = str(quantities.ldsp_brand or "").upper()
+    texture = str(quantities.ldsp_material or "") == "текстура"
+    if brand == "EXTRAVERT":
+        return "ldsp_sheets_texture_extravert" if texture else "ldsp_sheets_plain_extravert"
+    if brand == "LAMARTY":
+        return "ldsp_sheets_texture_lamarty" if texture else "ldsp_sheets_plain_lamarty"
+    if brand == "ТОМЛЕСДРЕВ":
+        return "ldsp_sheets_tomlesdrev"
+    return "ldsp_sheets_texture" if texture else "ldsp_sheets_plain"
+
+
+def _facade_field(facades: Any) -> str | None:
+    """Поле шаблона для фасада по названию/категории выбранной позиции."""
+    if not isinstance(facades, dict):
+        return None
+    text = f"{facades.get('name', '')} {facades.get('category', '')}".upper()
+    if "TITAN" in text:
+        return "facades_m2_emdiway_titan"
+    if "EMDIWAY" in text:
+        return "facades_m2_emdiway"
+    if "МАТОВ" in text or "ЛАКОКРАСК" in text:
+        return "facades_m2_paint_matte"
+    if "ГЛЯНЕЦ" in text or "ГЛЯНЦ" in text:
+        return "facades_m2_paint_gloss"
+    if "ПВХ" in text:
+        return "facades_m2_pvh_s"
+    return None
+
+
+def _mdf_edge_field(facades: Any) -> str:
+    """Поле кромки МДФ по бренду фасада (P0-06: одна позиция — одна строка)."""
+    text = ""
+    if isinstance(facades, dict):
+        text = f"{facades.get('name', '')} {facades.get('category', '')}".upper()
+    if "EMDIWAY" in text or "EMDIWEY" in text:
+        return "edge_mdf_1mm_emdiway"
+    if "EVOGLOSS" in text or "EVO " in text:
+        return "edge_mdf_1mm_evo"
+    if "AGT" in text:
+        return "edge_mdf_1mm_agt"
+    if "ETERNO" in text:
+        return "edge_mdf_1mm_eterno"
+    if "SM`ART" in text or "SMART" in text:
+        return "edge_mdf_1mm_smart"
+    return "edge_mdf_1mm_kromka"
+
+
+def _hinge_field(hinges: Any) -> str | None:
+    """Поле шаблона для петель: FIRMAX есть в шаблоне, BLUM/HETTICH — нет.
+
+    Честнее показать BLUM/HETTICH в «ПРОЧЕЕ», чем молча записать их в строку
+    FIRMAX (именно это занижало Excel, P0-02).
+    """
+    if not isinstance(hinges, dict):
+        return None
+    text = f"{hinges.get('brand', '')} {hinges.get('name', '')}".upper()
+    if "FIRMAX" in text:
+        return "hinges_firmax_closer"
+    return None
+
+
+def _drawer_field(system: str | None) -> str:
+    """Поле шаблона для выбранной системы ящиков (P1-06)."""
+    upper = str(system or "").upper()
+    if "LEGRABOX" in upper:
+        return "drawers_legrabox"
+    if "TANDEMBOX" in upper:
+        return "drawers_tandembox"
+    return "drawers_boyard_start"
+
+
 def build_cost_lines(
     quantities: MaterialQuantities,
     selected_materials: dict[str, Any],
@@ -159,6 +235,7 @@ def build_cost_lines(
         source: str,
         block: bool = True,
         min_price: float = 0.0,
+        field: str | None = None,
     ) -> None:
         quantity = _to_float(quantity)
         if quantity <= 0:
@@ -171,7 +248,10 @@ def build_cost_lines(
                 else "цена не задана"
             )
             result.lines.append(
-                CostLine(kind, name, quantity, unit, price_value, 0.0, "missing", reason)
+                CostLine(
+                    kind, name, quantity, unit, price_value, 0.0, "missing", reason,
+                    field=field,
+                )
             )
             if block:
                 result.missing.append(f"{name} ({quantity:g} {unit})")
@@ -180,7 +260,7 @@ def build_cost_lines(
         result.lines.append(
             CostLine(
                 kind, name, _round(quantity, 3), unit, price_value,
-                _round(quantity * price_value), source,
+                _round(quantity * price_value), source, field=field,
             )
         )
 
@@ -215,6 +295,7 @@ def build_cost_lines(
             ldsp_price,
             "selected",
             min_price=100.0,
+            field=_ldsp_field(quantities),
         )
 
     # ── ХДФ (задние стенки) ────────────────────────────────────────
@@ -225,6 +306,7 @@ def build_cost_lines(
         "лист",
         price_book.get("hdf"),
         "price_book",
+        field="hdf_sheets",
     )
 
     # ── Кромка по толщинам ─────────────────────────────────────────
@@ -258,9 +340,15 @@ def build_cost_lines(
                 f"Кромка {thickness:g} мм: цена взята по {nearest:g} мм "
                 "(проверьте прайс по толщинам)"
             )
+        edge_field = {
+            0.4: "edge_04_m",
+            0.8: "edge_08_m",
+            2.0: "edge_2_m",
+            1.0: _mdf_edge_field(selected_materials.get("facades")),
+        }[thickness]
         add(
             "edge", f"{label} ({thickness:g} мм)", metres, "м",
-            price, source, min_price=1.0,
+            price, source, min_price=1.0, field=edge_field,
         )
 
     # ── Фасады ─────────────────────────────────────────────────────
@@ -293,6 +381,7 @@ def build_cost_lines(
                         f"пересчёт с листа: {facade_price:,.2f} ₽ / "
                         f"{sheet_area_m2:.3f} м² ({width_mm:g}×{height_mm:g} мм)"
                     ),
+                    field=_facade_field(facades),
                 )
             )
             if facade_area <= 0:
@@ -308,6 +397,7 @@ def build_cost_lines(
                     CostLine(
                         "facade", facade_name, facade_area, "м²",
                         0.0, 0.0, "missing", "нужен формат листа",
+                        field=_facade_field(facades),
                     )
                 )
     else:
@@ -318,6 +408,7 @@ def build_cost_lines(
             "м²",
             facade_price,
             "selected",
+            field=_facade_field(facades),
         )
 
     # ── Фурнитура ──────────────────────────────────────────────────
@@ -329,6 +420,7 @@ def build_cost_lines(
         "шт",
         _price_from(hinges),
         "selected",
+        field=_hinge_field(hinges),
     )
 
     add(
@@ -338,6 +430,7 @@ def build_cost_lines(
         "шт",
         _drawer_unit_price(selected_hardware.get("drawers")),
         "selected",
+        field=_drawer_field(quantities.drawer_system),
     )
 
     handles_sel = selected_hardware.get("handles")
@@ -357,6 +450,7 @@ def build_cost_lines(
                 0.0,
                 "missing",
                 "модель не выбрана",
+                field="handles_count",
             )
         )
     else:
@@ -367,6 +461,7 @@ def build_cost_lines(
             "шт",
             handles_price,
             "selected",
+            field="handles_count",
         )
 
     # ── GOLA / LED (кухня) ─────────────────────────────────────────
@@ -377,6 +472,7 @@ def build_cost_lines(
         "шт",
         price_book.get("gola_horizontal"),
         "price_book",
+        field="gola_horizontal_3m",
     )
     add(
         "gola",
@@ -385,6 +481,7 @@ def build_cost_lines(
         "шт",
         price_book.get("gola_vertical"),
         "price_book",
+        field="gola_vertical_3m",
     )
 
     add(
@@ -394,6 +491,7 @@ def build_cost_lines(
         "м",
         price_book.get("led_strip"),
         "price_book",
+        field="led_strip_5m",
     )
     add(
         "led",
@@ -402,6 +500,7 @@ def build_cost_lines(
         "шт",
         price_book.get("led_power"),
         "price_book",
+        field="led_power_supply",
     )
     add(
         "led",
@@ -410,6 +509,7 @@ def build_cost_lines(
         "шт",
         price_book.get("led_sensor"),
         "price_book",
+        field="led_sensor",
     )
 
     # ── Столешница ─────────────────────────────────────────────────
@@ -420,6 +520,7 @@ def build_cost_lines(
         "м",
         price_book.get("countertop"),
         "price_book",
+        field="countertop_length_m",
     )
 
     # ── Крепёж ─────────────────────────────────────────────────────
@@ -430,6 +531,7 @@ def build_cost_lines(
         "шт",
         price_book.get("confirmat"),
         "price_book",
+        field="confirmat_count",
     )
     add(
         "fastener",
@@ -438,6 +540,7 @@ def build_cost_lines(
         "шт",
         price_book.get("adjustable_feet"),
         "price_book",
+        field="adjustable_feet",
     )
     add(
         "fastener",
@@ -446,6 +549,7 @@ def build_cost_lines(
         "шт",
         price_book.get("wall_mount"),
         "price_book",
+        field="wall_mounts",
     )
     add(
         "fastener",
@@ -454,6 +558,7 @@ def build_cost_lines(
         "шт",
         price_book.get("plinth"),
         "price_book",
+        field="plinth_strips",
     )
 
     # ── Комплектующие, которые раньше были только в Excel (P1-09) ──────
@@ -466,6 +571,7 @@ def build_cost_lines(
         "шт",
         price_book.get("rods_round"),
         "price_book",
+        field="rods_round",
     )
     add(
         "rod",
@@ -474,6 +580,7 @@ def build_cost_lines(
         "шт",
         price_book.get("rods_rectangular"),
         "price_book",
+        field="rods_rectangular",
     )
     add(
         "bottle_holder",
@@ -482,6 +589,11 @@ def build_cost_lines(
         "шт",
         price_book.get("bottle_holder"),
         "price_book",
+        field=(
+            "bottle_holder_kvadro"
+            if str(quantities.bottle_holder_type or "").lower() == "kvadro"
+            else "bottle_holder_flora"
+        ),
     )
     add(
         "cutlery_tray",
@@ -490,6 +602,7 @@ def build_cost_lines(
         "шт",
         price_book.get("cutlery_tray"),
         "price_book",
+        field="cutlery_tray",
     )
     add(
         "drying_rack",
@@ -498,6 +611,11 @@ def build_cost_lines(
         "шт",
         price_book.get("drying_rack"),
         "price_book",
+        field=(
+            "drying_rack_boyard"
+            if str(quantities.drying_rack_type or "").lower() == "boyard"
+            else "drying_rack_alba"
+        ),
     )
     add(
         "hygienic_mat",
@@ -506,6 +624,7 @@ def build_cost_lines(
         "шт",
         price_book.get("hygienic_mat"),
         "price_book",
+        field="hygienic_mat",
     )
     add(
         "drawer_internal",
@@ -514,6 +633,7 @@ def build_cost_lines(
         "шт",
         price_book.get("drawers_internal"),
         "price_book",
+        field="drawers_internal_tandembox",
     )
 
     # ── Стекло ─────────────────────────────────────────────────────

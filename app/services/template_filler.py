@@ -13,9 +13,9 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from app.config import settings
 from app.domain.money import money_float, rub_float
 from app.services.full_pipeline import PipelineResult, RoomSpec
+from app.services.price_catalog import PriceCatalogItem, find_price
 from app.services.project_spec import (
     ProjectSpec,
     apply_spec_to_quantities,
@@ -166,15 +166,15 @@ def _build_quantity_map(
     if q.facades_area_m2 > 0:
         ft = mat_props["facade_type"]
         if ft == "emdiway_titan":
-            m["facades_m2_emdiway_titan"] = round(q.facades_area_m2, 1)
+            m["facades_m2_emdiway_titan"] = round(q.facades_area_m2, 3)
         elif ft == "emdiway":
-            m["facades_m2_emdiway"] = round(q.facades_area_m2, 1)
+            m["facades_m2_emdiway"] = round(q.facades_area_m2, 3)
         elif ft == "paint_matte":
-            m["facades_m2_paint_matte"] = round(q.facades_area_m2, 1)
+            m["facades_m2_paint_matte"] = round(q.facades_area_m2, 3)
         elif ft == "paint_gloss":
-            m["facades_m2_paint_gloss"] = round(q.facades_area_m2, 1)
+            m["facades_m2_paint_gloss"] = round(q.facades_area_m2, 3)
         elif ft == "pvh":
-            m["facades_m2_pvh_s"] = round(q.facades_area_m2, 1)
+            m["facades_m2_pvh_s"] = round(q.facades_area_m2, 3)
         else:
             # P1-17: тип фасада не выбран — не подставляем «ПВХ» и не
             # добавляем площадь в ЛДСП. Пусть оператор укажет тип явно.
@@ -233,9 +233,10 @@ def _build_quantity_map(
 
     # ── НОВЫЕ ПОЛЯ (v2.0) ──
 
-    # Столешница
+    # Столешница (День 4: без округления до 0.1 — чат считает по 0.01 м,
+    # иначе Excel и чат расходятся на десятки рублей).
     if q.countertop_length_m > 0:
-        m["countertop_length_m"] = round(q.countertop_length_m, 1)
+        m["countertop_length_m"] = round(q.countertop_length_m, 3)
 
     # Крепёж
     if q.confirmat_count > 0:
@@ -259,7 +260,7 @@ def _build_quantity_map(
 
     # Плёнка ПВХ
     if q.pvc_film_m2 > 0:
-        m["pvc_film_m2"] = round(q.pvc_film_m2, 1)
+        m["pvc_film_m2"] = round(q.pvc_film_m2, 3)
 
     # Кромка МДФ: P0-06 — одна позиция пишется ровно в одну строку шаблона.
     # Раньше шесть записей row_mapping использовали одно поле, и цикл заполнял
@@ -290,6 +291,8 @@ def fill_template_from_pipeline(
     output_path: str,
     project_spec: ProjectSpec | None = None,
     pricing_policy=None,
+    price_catalog: list[PriceCatalogItem] | None = None,
+    price_book: dict[str, float] | None = None,
 ) -> str:
     """
     Главная функция: заполнить шаблон на основе результатов конвейера.
@@ -305,11 +308,20 @@ def fill_template_from_pipeline(
         template_path: путь к файлу-шаблону (Таблица для расчетов пустая.xlsx)
         output_path: путь для сохранения заполненного файла
         project_spec: загруженная спецификация проекта (опционально)
+        price_catalog: активные позиции прайса (load_price_catalog); без него
+            цены не подставляются, а позиции уходят в «⚠ Проблемы»
+        price_book: те же цены, что чат берёт через load_price_book (ХДФ,
+            столешница, крепёж, GOLA, LED, ручки)
 
     Returns:
         путь к созданному файлу
     """
     from openpyxl import load_workbook
+
+    logger.warning(
+        "fill_template_from_pipeline устарел (P0-02): Excel из снимка — "
+        "fill_template_from_quote; старый путь оставлен только для CLI-отладки"
+    )
 
     # P1-01: коэффициенты в финансовой секции — из единой политики, а не
     # зашитые в шаблон 0.8/0.55/0.08/0.05.
@@ -320,10 +332,15 @@ def fill_template_from_pipeline(
     # Загружаем шаблон
     logger.info(f"📄 Загрузка шаблона: {template_path}")
     wb = load_workbook(template_path)
-    # P1-01: цены Excel — из того же прайса БД, что и чат (где находится
-    # совпадение по ключевым словам и единице). Ненайденные строки остаются
-    # с ценой шаблона — это легаси, оно видно в отчёте.
-    db_prices = _load_db_prices()
+    # День 2: цены Excel — только из того же прайса БД, что и чат. Цена
+    # шаблона больше не используется: если в прайсе нет однозначной позиции,
+    # строка остаётся без цены и попадает в «⚠ Проблемы».
+    catalog = list(price_catalog or [])
+    if not catalog:
+        logger.warning(
+            "Прайс не передан в Excel: цены не подставляются, все позиции "
+            "с количеством уйдут в «⚠ Проблемы»"
+        )
 
     template_ws = wb["Рассчет"]
     rooms_with_modules = [r for r in pipeline_result.rooms if r.modules]
@@ -374,6 +391,7 @@ def fill_template_from_pipeline(
         # одного значения. Иначе дубли маппинга писали объём в 5 строк.
         filled_rows = []
         room_unfilled: list[dict] = []
+        room_missing_prices: list[dict] = []  # строка есть, но цены в прайсе нет
         written_fields: set[str] = set()
         written_row_numbers: set[int] = set()
         for keywords, field, unit, multiplier in ROW_MAPPING:
@@ -401,18 +419,27 @@ def fill_template_from_pipeline(
                     # Записываем ТОЛЬКО в колонку E (5)
                     cell = new_ws.cell(row=row_num, column=5)
                     cell.value = final_value
-                    # Цену берём из БД, кроме LED-бухты (цена за 5 м, а не за м).
-                    if field != "led_strip_5m":
-                        db_price = _find_db_price(db_prices, keywords, unit)
-                        if db_price is not None:
-                            new_ws.cell(row=row_num, column=4).value = db_price
-                    # P2-16: пишем значение, а не формулу — openpyxl data_only
-                    # не увидит кэш, а формулы в Excel по плану не живут.
-                    price_value = new_ws.cell(row=row_num, column=4).value
-                    if isinstance(price_value, (int, float)):
+                    # Цена — из единого прайса. Для LED-бухты прайс хранит
+                    # цену за метр, а строка шаблона — за бухту 5 м.
+                    price = _resolve_row_price(
+                        catalog, field, keywords, unit, price_book
+                    )
+                    if price is not None:
+                        new_ws.cell(row=row_num, column=4).value = price
                         new_ws.cell(row=row_num, column=6).value = money_float(
-                            final_value * float(price_value)
+                            final_value * price
                         )
+                    else:
+                        # День 2: цена шаблона не подставляется молча.
+                        new_ws.cell(row=row_num, column=4).value = None
+                        new_ws.cell(row=row_num, column=6).value = 0
+                        room_missing_prices.append({
+                            "room": sheet_name,
+                            "material": " + ".join(keywords[:2]),
+                            "expected_value": f"{final_value} {unit}",
+                            "field": field,
+                            "problem": "цена не найдена в прайсе",
+                        })
                     filled_rows.append((row_num, keywords[0], final_value, unit))
                     logger.debug(
                         f"  {sheet_name}: R{row_num} «{keywords[0][:40]}...» → "
@@ -432,7 +459,9 @@ def fill_template_from_pipeline(
                         f"  {sheet_name}: ⚠ не найдена строка для {keywords}"
                     )
 
-        added_extra = _append_unfilled_rows(new_ws, room_unfilled, db_prices)
+        added_extra = _append_unfilled_rows(
+            new_ws, room_unfilled, catalog, price_book
+        )
         if added_extra:
             logger.info(
                 "  %s: %d ненайденных позиций добавлены в «ПРОЧЕЕ»",
@@ -440,6 +469,7 @@ def fill_template_from_pipeline(
                 len(added_extra),
             )
         unfilled_items.extend(room_unfilled)
+        unfilled_items.extend(room_missing_prices)
 
         logger.info(
             f"✅ {sheet_name}: заполнено {len(filled_rows)} строк, "
@@ -482,6 +512,196 @@ def fill_template_from_pipeline(
     # Сохраняем
     wb.save(output_path)
     logger.info(f"💾 Сохранено: {output_path}")
+    return output_path
+
+
+def _field_keywords() -> dict[str, list[str]]:
+    """{поле шаблона: ключевые слова} из row_mapping.json (первое вхождение)."""
+    mapping: dict[str, list[str]] = {}
+    for keywords, field, _unit, _multiplier in ROW_MAPPING:
+        mapping.setdefault(field, list(keywords))
+    return mapping
+
+
+def _clean_quantity(quantity: float, unit: str) -> float | int:
+    """Количество для ячейки: м²/м — 3 знака, штуки — целыми (без 0,1 м²!)."""
+    value = float(quantity or 0)
+    if unit.strip().lower() in {"м²", "м2", "м"}:
+        return round(value, 3)
+    rounded = round(value)
+    if abs(value - rounded) < 1e-9:
+        return int(rounded)
+    return round(value, 3)
+
+
+def _insert_rows_with_merges(ws, row_index: int, amount: int) -> None:
+    """`insert_rows` с переносом объединённых ячеек (openpyxl их не сдвигает).
+
+    Без этого новые строки попадали внутрь merge `A346:F346` и значения
+    молча не записывались (ячейка MergedCell только для чтения).
+    """
+    ranges: list[tuple[int, int, int, int]] = []
+    for merged in list(ws.merged_cells.ranges):
+        if merged.min_row >= row_index:
+            ranges.append(
+                (merged.min_row, merged.min_col, merged.max_row, merged.max_col)
+            )
+            ws.unmerge_cells(str(merged))
+    ws.insert_rows(row_index, amount=amount)
+    for min_row, min_col, max_row, max_col in ranges:
+        ws.merge_cells(
+            start_row=min_row + amount,
+            start_column=min_col,
+            end_row=max_row + amount,
+            end_column=max_col,
+        )
+
+
+def _append_quote_extra_rows(ws, lines: list[dict]) -> None:
+    """P0-02: строки, которых нет в шаблоне, — в блок «ПРОЧЕЕ» перед сметой.
+
+    Значения берутся из снимка (`quote.lines`), а не пересчитываются.
+    """
+    if not lines:
+        return
+
+    summary_row = None
+    for row in range(1, min(ws.max_row, 800) + 1):
+        value = str(ws.cell(row=row, column=1).value or "").strip().upper()
+        if value.startswith("РАСЧЁТ СТОИМОСТИ"):
+            summary_row = row
+            break
+    if summary_row is None:
+        summary_row = ws.max_row + 1
+
+    insert_at = max(2, summary_row - 1)
+    _insert_rows_with_merges(ws, insert_at, len(lines) + 1)
+    ws.cell(insert_at, 1).value = "ПРОЧЕЕ (из снимка расчёта)"
+    for offset, line in enumerate(lines, start=1):
+        row = insert_at + offset
+        ws.cell(row=row, column=1).value = line.get("name") or "Прочее"
+        ws.cell(row=row, column=4).value = float(line.get("unit_price") or 0)
+        ws.cell(row=row, column=5).value = _clean_quantity(
+            line.get("quantity") or 0, str(line.get("unit") or "")
+        )
+        ws.cell(row=row, column=6).value = money_float(line.get("amount") or 0)
+
+
+def fill_template_from_quote(
+    quote: dict,
+    template_path: str,
+    output_path: str,
+    *,
+    sheet_name: str | None = None,
+) -> str:
+    """P0-02: заполнить Excel из неизменяемого снимка `quote`.
+
+    В отличие от `fill_template_from_pipeline`, здесь НЕТ второго расчёта:
+    - количества и суммы строк — из `quote["lines"]` (с поле `field` из
+      `build_cost_lines`, см. `templates/row_mapping.json`);
+    - финансовая секция — из `quote["totals"]` (те же числа, что чат/КП);
+    - позиции без строки в шаблоне (стекло, BLUM/HETTICH, AGT/EVOGLOSS…)
+      попадают в блок «ПРОЧЕЕ» с ценой и суммой из снимка, а не в молчаливый
+      ноль и не в чужую строку FIRMAX/ЛЕМАКОМ.
+
+    Критерий паритета: сумма строк = `cost_price`, итог = `final_cash`.
+    """
+    from openpyxl import load_workbook
+
+    if not quote or not quote.get("lines"):
+        raise ValueError("Снимок расчёта пуст: нечего заполнять в Excel")
+    totals = quote.get("totals") or {}
+    if not totals:
+        raise ValueError("В снимке нет финансовой разбивки (totals)")
+
+    wb = load_workbook(template_path)
+    if "Рассчет" not in wb.sheetnames:
+        raise ValueError("В шаблоне нет листа «Рассчет»")
+    ws = wb["Рассчет"]
+    for name in list(wb.sheetnames):
+        if name != "Рассчет":
+            wb.remove(wb[name])
+
+    if sheet_name:
+        ws.title = _clean_sheet_name(sheet_name)[:31]
+
+    field_rows = _field_keywords()
+    used_rows: set[int] = set()
+    extras: list[dict] = []
+
+    for line in quote["lines"]:
+        quantity = float(line.get("quantity") or 0)
+        if quantity <= 0:
+            continue
+        row = None
+        field = line.get("field")
+        if field:
+            keywords = field_rows.get(str(field))
+            if keywords:
+                candidate = _find_row_for_material(ws, keywords)
+                if candidate and candidate not in used_rows:
+                    row = candidate
+        if row:
+            used_rows.add(row)
+            ws.cell(row=row, column=4).value = float(line.get("unit_price") or 0)
+            ws.cell(row=row, column=5).value = _clean_quantity(
+                quantity, str(line.get("unit") or "")
+            )
+            ws.cell(row=row, column=6).value = money_float(line.get("amount") or 0)
+        else:
+            extras.append(line)
+
+    _append_quote_extra_rows(ws, extras)
+
+    # ── Финансовая секция: значения из снимка, не пересчёт ──
+    manufacturing_row = _find_row_by_label(ws, "ИЗГОТОВЛЕНИЕ")
+    profit_row = _find_row_by_label(ws, "ПЛАНИРУЕМАЯ ПРИБЫЛЬ")
+
+    def put(label: str, value: float | None, start: int = 1) -> None:
+        row = _find_row_by_label(ws, label, start=start)
+        if row is not None:
+            ws.cell(row=row, column=5).value = money_float(float(value or 0))
+
+    put("СЕБЕСТОИМОСТЬ", totals.get("cost_price"))
+    put("ИЗГОТОВЛЕНИЕ", totals.get("manufacturing"))
+    put("МОНТАЖ", totals.get("installation"))
+    put("ЗАМЕР", totals.get("measurement"))
+    put("ДОСТАВКА", totals.get("delivery_client"))
+    put("ПРОЕКТИРОВКА", totals.get("design"))
+    put("ПРОЧИЕ РАСХОДЫ", totals.get("overhead"))
+
+    subtotal_row = _find_row_by_label(
+        ws, "ИТОГО:", start=(manufacturing_row or 1)
+    )
+    if subtotal_row:
+        ws.cell(row=subtotal_row, column=5).value = rub_float(
+            float(totals.get("subtotal") or 0)
+        )
+    put("ПЛАНИРУЕМАЯ ПРИБЫЛЬ", totals.get("profit"))
+    total_row = _find_row_by_label(ws, "ИТОГО:", start=(profit_row or 1) + 1)
+    if total_row:
+        ws.cell(row=total_row, column=5).value = rub_float(
+            float(totals.get("total_with_profit") or 0)
+        )
+    put("ТЕХНИЧЕСКИЙ ДИРЕКТОР", totals.get("tech_director"))
+    put("МЕНЕДЖЕР", totals.get("manager_salary"))
+    put("ИТОГО за наличку", totals.get("final_cash"))
+    put("безнал", totals.get("final_noncash"))
+
+    # Формулы шаблона в неиспользуемых строках пусть пересчитает Excel.
+    try:
+        wb.calculation.fullCalcOnLoad = True
+    except Exception:
+        logger.debug("Не удалось включить fullCalcOnLoad", exc_info=True)
+
+    wb.save(output_path)
+    logger.info(
+        "💾 Excel из снимка: %s (строк: %s, себестоимость: %s, итог: %s)",
+        output_path,
+        len(quote["lines"]),
+        totals.get("cost_price"),
+        totals.get("final_cash"),
+    )
     return output_path
 
 
@@ -717,7 +937,7 @@ def _add_problems_sheet(wb: Workbook, unfilled_items: list):
 
     # Заголовки
     ws["A1"] = "Помещение"
-    ws["B1"] = "Материал (не найдена строка в шаблоне)"
+    ws["B1"] = "Материал / причина"
     ws["C1"] = "Ожидаемое значение"
     ws["D1"] = "Действие оператора"
 
@@ -739,7 +959,7 @@ def _add_problems_sheet(wb: Workbook, unfilled_items: list):
         action = (
             "Добавлено в блок «ПРОЧЕЕ» (цена из прайса)"
             if item.get("added_to_extra")
-            else "Цена не найдена — внести вручную"
+            else item.get("problem", "Цена не найдена — внести вручную")
         )
         ws.cell(row=i, column=4, value=action)
 
@@ -831,66 +1051,50 @@ def _add_furniture_header(ws, room: RoomSpec):
     logger.info(f"🧩 {room.room_name}: шапка «Мебель:» — {len(lines)} модулей")
 
 
-_UNIT_ALIASES = {
-    "листов": "лист",
-    "лист": "лист",
-    "м.п.": "м",
-    "м.п": "м",
-    "м": "м",
-    "м²": "м²",
-    "м2": "м²",
-    "шт": "шт",
+def _resolve_row_price(
+    catalog: list[PriceCatalogItem],
+    field: str,
+    keywords: list[str],
+    unit: str,
+    price_book: dict[str, float] | None = None,
+) -> float | None:
+    """Цена строки шаблона из единого прайса (День 2/4).
+
+    Для позиций, которые чат берёт из `load_price_book` (ХДФ, столешница,
+    крепёж, GOLA, LED, ручки), Excel использует тот же словарь — иначе
+    чат и Excel расходятся. Остальные строки подбираются по каталогу.
+    LED-бухта: в прайсе цена за метр, в шаблоне — за бухту 5 м.
+    """
+    book = price_book or {}
+    key = _PRICE_BOOK_FIELD.get(field)
+    if key and key in book:
+        price = float(book[key])
+        if field == "led_strip_5m":
+            return round(price * 5, 2)
+        return price
+
+    if field == "led_strip_5m":
+        match = find_price(catalog, keywords, "м")
+        return round(match.item.price * 5, 2) if match else None
+    match = find_price(catalog, keywords, unit)
+    return match.item.price if match else None
+
+
+# Поля шаблона, которые чат тарифицирует через `load_price_book`.
+_PRICE_BOOK_FIELD = {
+    "hdf_sheets": "hdf",
+    "gola_horizontal_3m": "gola_horizontal",
+    "gola_vertical_3m": "gola_vertical",
+    "led_strip_5m": "led_strip",
+    "led_power_supply": "led_power",
+    "led_sensor": "led_sensor",
+    "countertop_length_m": "countertop",
+    "confirmat_count": "confirmat",
+    "adjustable_feet": "adjustable_feet",
+    "wall_mounts": "wall_mount",
+    "plinth_strips": "plinth",
+    "handles_count": "handles",
 }
-
-
-def _normalize_unit(unit: str) -> str:
-    return _UNIT_ALIASES.get(str(unit or "").strip().lower(), str(unit or "").strip().lower())
-
-
-def _load_db_prices() -> list[dict]:
-    """Цены активного прайса из SQLite (синхронно, для Excel-поколения)."""
-    import sqlite3
-
-    url = settings.database_url
-    prefix = "sqlite+aiosqlite:///"
-    if not url.startswith(prefix):
-        return []
-    db_path = url[len(prefix):]
-    db_path = db_path.removeprefix("./")
-    try:
-        con = sqlite3.connect(db_path)
-    except sqlite3.Error:
-        return []
-    try:
-        rows = con.execute(
-            "SELECT name, category, unit_price, price_unit FROM price_items "
-            "WHERE is_active=1 AND unit_price IS NOT NULL"
-        ).fetchall()
-    except sqlite3.Error:
-        return []
-    finally:
-        con.close()
-    return [
-        {"name": name, "category": category, "price": float(price), "unit": unit}
-        for name, category, price, unit in rows
-    ]
-
-
-def _find_db_price(prices: list[dict], keywords: list[str], unit: str) -> float | None:
-    """Найти цену в прайсе по ключевым словам строки и совместимой единице."""
-    wanted_unit = _normalize_unit(unit)
-    keys = [" ".join(str(k).replace("ё", "е").casefold().split()) for k in keywords]
-    for item in prices:
-        text = " ".join(
-            str(item["name"]).replace("ё", "е").casefold().split()
-            + str(item["category"]).replace("ё", "е").casefold().split()
-        )
-        if not all(key in text for key in keys):
-            continue
-        if wanted_unit and _normalize_unit(item["unit"]) != wanted_unit:
-            continue
-        return item["price"]
-    return None
 
 
 def _parse_expected_quantity(text: str) -> tuple[float, str]:
@@ -907,7 +1111,12 @@ def _parse_expected_quantity(text: str) -> tuple[float, str]:
     return value, match.group(2).strip()
 
 
-def _append_unfilled_rows(ws, items: list[dict], db_prices: list[dict]) -> list[dict]:
+def _append_unfilled_rows(
+    ws,
+    items: list[dict],
+    catalog: list[PriceCatalogItem],
+    price_book: dict[str, float] | None = None,
+) -> list[dict]:
     """P1-18: ненайденные строки → блок «ПРОЧЕЕ» с ценой из прайса.
 
     Блок вставляется ПЕРЕД финансовой секцией, поэтому попадает в
@@ -919,7 +1128,13 @@ def _append_unfilled_rows(ws, items: list[dict], db_prices: list[dict]) -> list[
         quantity, unit = _parse_expected_quantity(item.get("expected_value", ""))
         if quantity <= 0:
             continue
-        price = _find_db_price(db_prices, item.get("keywords", []), unit)
+        price = _resolve_row_price(
+            catalog,
+            str(item.get("field") or ""),
+            item.get("keywords", []),
+            unit,
+            price_book,
+        )
         if price is None:
             continue
         priced.append((item, quantity, unit, price))
@@ -1015,18 +1230,27 @@ def _apply_pricing_policy(ws, policy) -> bool:
     manufacturing = rub_float(cost * policy.manufacturing_rate)
     installation = rub_float(cost * policy.installation_rate)
     measurement = rub_float(policy.measurement_fee)
-    delivery = rub_float(policy.delivery_fee)
+    # День 4: клиенту — 10 000 ₽ отдельной строкой; внутренняя доставка
+    # (policy.delivery_fee) в расчётную базу и наценку не входит.
+    delivery = rub_float(policy.delivery_fee_client)
     design = rub_float(manufacturing * policy.design_rate)
     overhead = rub_float(cost * policy.overhead_rate)
-    subtotal = rub_float(
-        cost + manufacturing + installation + measurement + delivery + design + overhead
+    # Не округляем промежуточный итог до прибыли: чат считает прибыль от
+    # неокруглённой суммы, иначе Excel расходится на 1–2 ₽ (День 4).
+    subtotal = (
+        cost + manufacturing + installation + measurement + design + overhead
     )
     profit = rub_float(subtotal * policy.profit_rate)
-    total_with_profit = rub_float(subtotal + profit)
+    total_with_profit = subtotal + profit
     tech = rub_float(total_with_profit * policy.tech_director_rate)
     manager = rub_float(total_with_profit * policy.manager_rate)
-    cash = rub_float(total_with_profit + tech + manager)
-    noncash = money_float(cash * policy.noncash_markup)
+    furniture_cash = total_with_profit + tech + manager
+    cash = money_float(furniture_cash + delivery)
+    noncash = money_float(furniture_cash * policy.noncash_markup + delivery)
+
+    # В ячейки пишем округлённые значения (деньги — до копеек/рубля).
+    subtotal_cell = rub_float(subtotal)
+    total_with_profit_cell = rub_float(total_with_profit)
 
     for row, value in (
         (cost_row, cost),
@@ -1036,9 +1260,9 @@ def _apply_pricing_policy(ws, policy) -> bool:
         (delivery_row, delivery),
         (design_row, design),
         (overhead_row, overhead),
-        (subtotal_row, subtotal),
+        (subtotal_row, subtotal_cell),
         (profit_row, profit),
-        (total_row, total_with_profit),
+        (total_row, total_with_profit_cell),
         (tech_row, tech),
         (manager_row, manager),
         (cash_row, cash),
@@ -1124,14 +1348,24 @@ async def run_pipeline_and_fill_template(
 
     print_result(result)
 
-    # Шаг 2: Заполнение шаблона
+    # Шаг 2: Заполнение шаблона (цены — из единого прайса БД, как в чате).
     print()
     print("📊 Заполнение шаблона...")
+    from app.db.session import AsyncSessionLocal
+    from app.services.price_book import load_price_book
+    from app.services.price_catalog import load_price_catalog
+
+    async with AsyncSessionLocal() as session:
+        price_catalog = await load_price_catalog(session)
+        price_book = await load_price_book(session)
+
     path = fill_template_from_pipeline(
         pipeline_result=result,
         template_path=template_path,
         output_path=output_path,
         project_spec=project_spec,
+        price_catalog=price_catalog,
+        price_book=price_book,
     )
 
     rooms_filled = len([r for r in result.rooms if r.modules])

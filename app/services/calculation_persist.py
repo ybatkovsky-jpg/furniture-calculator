@@ -89,3 +89,19 @@ def apply_result(
             if item.name != "warnings"
         },
     }
+
+
+def quote_from_result(
+    result: CalculationResult,
+    calculation: Calculation | None = None,
+    *,
+    reason: str = "preview",
+) -> dict:
+    """Собрать снимок `quote` из результата без сохранения в БД.
+
+    Нужен документам (Excel/КП) и тестам: один и тот же формат снимка,
+    что пишется в `Calculation.quote`.
+    """
+    target = calculation or Calculation()
+    apply_result(target, result, reason=reason)
+    return dict(target.quote or {})

@@ -128,6 +128,7 @@ def calculate_full_cost(
     recognized = [_dict_to_recognized_module(m) for m in modules]
     material_names = _extract_material_names(selected_materials)
     ldsp_name = _extract_ldsp_name(selected_materials)
+    drawer_system = _drawer_system_from_selection(selected_hardware)
     if not zone_type:
         zone_type = _infer_zone_type(modules)
     quantities = calculate_quantities(
@@ -135,6 +136,7 @@ def calculate_full_cost(
         "",
         material_names,
         ldsp_name=ldsp_name,
+        drawer_system=drawer_system,
         zone_type=zone_type,
         hinge_brand=hinge_brand,
         has_spec=has_spec,
@@ -362,6 +364,31 @@ def _extract_handle_price(selected_hardware: dict) -> float:
     if isinstance(handles, list) and handles and isinstance(handles[0], dict):
         return float(handles[0].get("price") or 0)
     return 0.0
+
+
+def _drawer_system_from_selection(selected_hardware: dict) -> str | None:
+    """Система ящиков по выбранной позиции (P1-06).
+
+    `selected_hardware["drawers"]` — dict (UI) или список (старые данные).
+    Имя позиции определяет и цену, и строку Excel; раньше выбор модели
+    никак не влиял на `q.drawer_system` (всегда Tandembox).
+    """
+    if not isinstance(selected_hardware, dict):
+        return None
+    drawers = selected_hardware.get("drawers")
+    name = ""
+    if isinstance(drawers, dict):
+        name = str(drawers.get("name") or "")
+    elif isinstance(drawers, list) and drawers and isinstance(drawers[0], dict):
+        name = str(drawers[0].get("name") or "")
+    upper = name.upper()
+    if "LEGRABOX" in upper:
+        return "Legrabox"
+    if "TANDEMBOX" in upper:
+        return "Tandembox"
+    if "BOYARD" in upper or "СТАРТ" in upper or "START" in upper:
+        return "Boyard Start"
+    return None
 
 
 def _extract_ldsp_name(selected_materials: dict) -> str | None:

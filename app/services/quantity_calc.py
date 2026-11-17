@@ -305,6 +305,33 @@ def _estimate_door_weight_kg(module, facade_count: int, mat_props: dict) -> floa
     )
 
 
+def module_has_drawers(module: dict) -> bool:
+    """Есть ли в модуле ящики — по любой из трёх схем (P1-06).
+
+    Распознавание (image.py) хранит `drawers: {"count": N}` (или список),
+    встречается `drawer_counts`, ручной ввод — `filling="drawers"`.
+    Раньше проверялся только `filling`, поэтому AI-модули с ящиками не
+    доходили до выбора системы и КП блокировался на «Ящики без цены».
+    """
+    drawers = module.get("drawers")
+    if isinstance(drawers, dict) and int(drawers.get("count") or 0) > 0:
+        return True
+    if isinstance(drawers, (list, tuple)) and len(drawers) > 0:
+        return True
+    if (
+        isinstance(drawers, (int, float))
+        and not isinstance(drawers, bool)
+        and drawers > 0
+    ):
+        return True
+    counts = module.get("drawer_counts")
+    if isinstance(counts, dict) and any(int(v or 0) > 0 for v in counts.values()):
+        return True
+    if isinstance(counts, (list, tuple)) and any(int(v or 0) > 0 for v in counts):
+        return True
+    return str(module.get("filling") or "").strip().lower() == "drawers"
+
+
 def calculate_quantities(
     modules: list[RecognizedModule],
     room_name: str = "",
@@ -314,6 +341,7 @@ def calculate_quantities(
     # «ЛДСП», а не по объединённому списку (кромка EGGER больше не делает
     # ЛДСП SLOTEX «EGGER» и не меняет число листов).
     ldsp_name: str | None = None,
+    drawer_system: str | None = None,        # P1-06: выбранная система ящиков
     zone_type: str | None = None,           # NEW: тип помещения из AI
     has_spec: bool = False,          # если есть spec.yaml — не автодобавлять
     # P1-02: платные автопозиции — opt-in. По умолчанию False: раньше кухня
@@ -341,6 +369,8 @@ def calculate_quantities(
     - Раздвижные двери vs распашные (петли только для hinged)
     """
     q = MaterialQuantities()
+    if drawer_system:
+        q.drawer_system = drawer_system
     q.has_sink = bool(has_sink)  # до расчёта ХДФ, а не после (P2-01)
     materials = materials or []
 
@@ -613,14 +643,16 @@ def calculate_quantities(
             drawer_count = module.drawers.get("count", 1)
             q.drawers_count += drawer_count * qty
 
-            # Определяем систему ящиков по ширине фасада
-            facade_w = module.width
-            if facade_w > 900:
-                q.drawer_system = "Legrabox"
-            elif facade_w > 600:
-                q.drawer_system = "Tandembox"
-            else:
-                q.drawer_system = "Boyard Start"
+            # Определяем систему ящиков по ширине фасада — только если
+            # оператор не выбрал модель явно (P1-06: выбор важнее эвристики).
+            if not drawer_system:
+                facade_w = module.width
+                if facade_w > 900:
+                    q.drawer_system = "Legrabox"
+                elif facade_w > 600:
+                    q.drawer_system = "Tandembox"
+                else:
+                    q.drawer_system = "Boyard Start"
 
         # Счётчики для Gola, столешницы, крепежа
         if module.type == "lower_base":

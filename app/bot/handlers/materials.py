@@ -11,6 +11,7 @@ from app.bot.states.materials import MaterialSelectionStates
 from app.db.session import get_session
 from app.models.price import PriceItem
 from app.services.access import get_owned_calculation
+from app.services.quantity_calc import module_has_drawers
 
 router = Router()
 
@@ -691,8 +692,11 @@ async def check_for_drawers(message: Message, state: FSMContext):
             await message.answer("❌ Ошибка: модули не найдены")
             return
         
+        # P1-06: `filling` есть только у ручного ввода. Распознанные модули
+        # хранят drawers={"count": N} / drawer_counts — их тоже надо ловить,
+        # иначе AI-проект с ящиками не доходит до выбора системы.
         has_drawers = any(
-            module.get('filling') == 'drawers' 
+            isinstance(module, dict) and module_has_drawers(module)
             for module in calculation.modules
         )
         break

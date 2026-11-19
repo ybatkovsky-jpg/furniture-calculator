@@ -25,7 +25,7 @@ import httpx
 from PIL import Image
 
 from app.config import settings
-from app.services import recognition_cache
+from app.services import image_prep, recognition_cache
 from app.services.furniture_defaults import get_rules
 from app.services.recognition_protocol import door_count_of, scale_ok_meta
 from app.services.recognition_quality import assess as assess_composition
@@ -1009,8 +1009,23 @@ class GeminiImageAnalyzer:
         try:
             client = await self._get_client()
 
+            # П5: проверяем скан до модели — тёмный/смазанный не читается.
+            self._image_flags = []
+            self._image_skew = 0.0
+            try:
+                scan = image_prep.assess(image_path)
+                self._image_flags = list(scan.flags)
+                self._image_skew = scan.skew_deg
+                if not scan.ok:
+                    logger.warning("Скан плохого качества: %s", "; ".join(scan.flags))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Не удалось проверить качество скана: %s", exc)
+
             # Предобработка изображения
             image = Image.open(image_path)
+            if abs(getattr(self, "_image_skew", 0.0)) > image_prep.SKEW_WARN_DEG:
+                image = image_prep.deskew(image, self._image_skew)
+                logger.info("Выровнен наклон %.1f°", self._image_skew)
             from PIL import ImageEnhance, ImageFilter
             enhancer = ImageEnhance.Contrast(image)
             image = enhancer.enhance(1.3)
@@ -1181,8 +1196,8 @@ class GeminiImageAnalyzer:
                 return [], None, [], "low", self._build_meta([], 0, {}, None)
             return [], None, [], "low"
 
-    @staticmethod
     def _build_meta(
+        self,
         modules: list["RecognizedModule"],
         total_width_mm,
         heights_mm,
@@ -1201,6 +1216,8 @@ class GeminiImageAnalyzer:
             "quality_flags": list(quality.flags),
             "coverage": quality.coverage,
             "doors_per_m": quality.doors_per_m,
+            "image_flags": list(getattr(self, "_image_flags", []) or []),
+            "image_skew_deg": float(getattr(self, "_image_skew", 0.0) or 0.0),
         }
 
     def _facades_to_modules(

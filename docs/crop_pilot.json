@@ -1,0 +1,220 @@
+[
+  {
+    "modules": 7,
+    "doors": 10,
+    "drawers": 0,
+    "crop": "r0c0",
+    "zone": "Кухня",
+    "modules_list": [
+      {
+        "type": "corner",
+        "width": 600,
+        "height": 820,
+        "quantity": 1,
+        "doors": 1
+      },
+      {
+        "type": "penal",
+        "width": 600,
+        "height": 2500,
+        "quantity": 2,
+        "doors": 1
+      },
+      {
+        "type": "lower_base",
+        "width": 600,
+        "height": 820,
+        "quantity": 2,
+        "doors": 1
+      },
+      {
+        "type": "lower_base",
+        "width": 378,
+        "height": 820,
+        "quantity": 1,
+        "doors": 1
+      },
+      {
+        "type": "upper_base",
+        "width": 600,
+        "height": 720,
+        "quantity": 2,
+        "doors": 1
+      },
+      {
+        "type": "upper_base",
+        "width": 629,
+        "height": 720,
+        "quantity": 1,
+        "doors": 1
+      },
+      {
+        "type": "upper_base",
+        "width": 300,
+        "height": 720,
+        "quantity": 1,
+        "doors": 1
+      }
+    ]
+  },
+  {
+    "modules": 12,
+    "doors": 15,
+    "drawers": 1,
+    "crop": "r0c1",
+    "zone": "Кухня",
+    "modules_list": [
+      {
+        "type": "corner",
+        "width": 600,
+        "height": 820,
+        "quantity": 1,
+        "doors": 1
+      },
+      {
+        "type": "lower_base",
+        "width": 592,
+        "height": 820,
+        "quantity": 1,
+        "doors": 1
+      },
+      {
+        "type": "lower_base",
+        "width": 606,
+        "height": 820,
+        "quantity": 1,
+        "doors": 1
+      },
+      {
+        "type": "lower_base",
+        "width": 600,
+        "height": 820,
+        "quantity": 2,
+        "doors": 0
+      },
+      {
+        "type": "lower_base",
+        "width": 282,
+        "height": 820,
+        "quantity": 1,
+        "doors": 1
+      },
+      {
+        "type": "upper_base",
+        "width": 341,
+        "height": 720,
+        "quantity": 1,
+        "doors": 1
+      },
+      {
+        "type": "upper_base",
+        "width": 345,
+        "height": 720,
+        "quantity": 1,
+        "doors": 1
+      },
+      {
+        "type": "upper_base",
+        "width": 261,
+        "height": 720,
+        "quantity": 1,
+        "doors": 1
+      },
+      {
+        "type": "upper_base",
+        "width": 600,
+        "height": 720,
+        "quantity": 2,
+        "doors": 2
+      },
+      {
+        "type": "upper_base",
+        "width": 282,
+        "height": 720,
+        "quantity": 1,
+        "doors": 1
+      },
+      {
+        "type": "penal",
+        "width": 600,
+        "height": 2500,
+        "quantity": 1,
+        "doors": 2
+      },
+      {
+        "type": "penal",
+        "width": 250,
+        "height": 2500,
+        "quantity": 1,
+        "doors": 1
+      }
+    ]
+  },
+  {
+    "modules": 5,
+    "doors": 8,
+    "drawers": 0,
+    "crop": "r1c0",
+    "zone": "Кухня",
+    "modules_list": [
+      {
+        "type": "penal",
+        "width": 600,
+        "height": 2500,
+        "quantity": 1,
+        "doors": 1
+      },
+      {
+        "type": "upper_base",
+        "width": 478,
+        "height": 720,
+        "quantity": 1,
+        "doors": 1
+      },
+      {
+        "type": "upper_base",
+        "width": 419,
+        "height": 720,
+        "quantity": 2,
+        "doors": 1
+      },
+      {
+        "type": "lower_base",
+        "width": 730,
+        "height": 820,
+        "quantity": 1,
+        "doors": 2
+      },
+      {
+        "type": "lower_base",
+        "width": 600,
+        "height": 820,
+        "quantity": 2,
+        "doors": 1
+      }
+    ]
+  },
+  {
+    "modules": 2,
+    "doors": 4,
+    "drawers": 2,
+    "crop": "r1c1",
+    "zone": "Кухня",
+    "modules_list": [
+      {
+        "type": "lower_base",
+        "width": 600,
+        "height": 820,
+        "quantity": 2,
+        "doors": 1
+      },
+      {
+        "type": "upper_base",
+        "width": 600,
+        "height": 720,
+        "quantity": 2,
+        "doors": 1
+      }
+    ]
+  }
+]

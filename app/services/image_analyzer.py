@@ -25,6 +25,7 @@ import httpx
 from PIL import Image
 
 from app.config import settings
+from app.services import recognition_cache
 from app.services.furniture_defaults import get_rules
 from app.services.recognition_protocol import door_count_of, scale_ok_meta
 from app.services.recognition_quality import assess as assess_composition
@@ -976,6 +977,29 @@ class GeminiImageAnalyzer:
         Returns:
             (modules, zone_type, materials, confidence[, meta])
         """
+        # Повторяемость: тот же лист + тот же промпт → тот же результат.
+        # Модель при temperature=0 всё равно «плывёт» (16 → 19 → 17 дверей),
+        # поэтому кэш обязателен, а не оптимизация.
+        cached = None
+        try:
+            cached = recognition_cache.load(image_path, UNIFIED_PROMPT_V2)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Кэш распознавания недоступен: %s", exc)
+        if cached and cached.get("data"):
+            payload = cached["data"]
+            modules = recognition_cache.dicts_to_modules(payload.get("modules") or [])
+            zone_cached = payload.get("zone_type")
+            if return_meta:
+                meta = self._build_meta(
+                    modules,
+                    payload.get("total_width_mm") or 0,
+                    payload.get("heights_mm") or {},
+                    zone_cached,
+                )
+                meta["from_cache"] = True
+                return modules, zone_cached, payload.get("materials") or [], payload.get("confidence") or "low", meta
+            return modules, zone_cached, payload.get("materials") or [], payload.get("confidence") or "low"
+
         targets = self._unified_targets()
         logger.info(
             "🎯 Единый анализ: "
@@ -1124,6 +1148,26 @@ class GeminiImageAnalyzer:
                 drawer_indices,
                 drawer_counts,
             )
+
+            # Кладём в кэш: следующий прогон того же листа будет идентичным.
+            try:
+                recognition_cache.save(
+                    image_path,
+                    UNIFIED_PROMPT_V2,
+                    {
+                        "modules": recognition_cache.modules_to_dicts(modules),
+                        "zone_type": zone_type,
+                        "materials": materials,
+                        "confidence": confidence,
+                        "total_width_mm": int(total_width_mm or 0),
+                        "heights_mm": dict(heights_mm or {}),
+                        "door_count": int(door_count_of(modules)),
+                    },
+                    approved=False,
+                    attempts=1,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Не удалось сохранить кэш распознавания: %s", exc)
 
             if return_meta:
                 return modules, zone_type, materials, confidence, self._build_meta(

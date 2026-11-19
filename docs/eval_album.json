@@ -30,24 +30,23 @@
     "total_width_mm": 4860,
     "expected_width_mm": 4860,
     "width_delta_pct": 0.0,
-    "modules_width_sum_mm": 6480,
-    "lower_width_mm": 4860,
-    "upper_width_mm": 6480,
-    "coverage": 1.333,
-    "doors": 17,
+    "modules_width_sum_mm": 5540,
+    "lower_width_mm": 4914,
+    "upper_width_mm": 5540,
+    "coverage": 1.14,
+    "doors": 16,
     "expected_doors": 15,
     "drawers": 1,
-    "modules": 12,
+    "modules": 9,
     "confidence": "medium",
     "scale_ok": true,
     "quality_score": 0.65,
     "quality_flags": [
-      "покрытие 133% > 110% — не сходится с габаритом"
+      "покрытие 114% > 110% — не сходится с габаритом"
     ],
     "model_confidence": "medium",
     "flags": [
-      "покрытие 133% > 110% — состав не сходится с габаритом",
-      "дверей 17, ожидалось 15"
+      "покрытие 114% > 110% — состав не сходится с габаритом"
     ]
   },
   {

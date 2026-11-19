@@ -2,11 +2,11 @@
 Модели для управления прайсом и историей цен.
 """
 
-from datetime import datetime
 
 from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
+from app.db.time import utc_now
 from app.models.base import Base
 
 
@@ -47,8 +47,8 @@ class PriceItem(Base):
     
     # Управление
     is_active = Column(Integer, default=1)  # 1 = активна, 0 = архив
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
     
     # Связь с историей цен
     history = relationship("PriceHistory", back_populates="price_item", cascade="all, delete-orphan")
@@ -78,7 +78,7 @@ class PriceHistory(Base):
     # Метаданные
     changed_by = Column(String(100), nullable=True)  # Кто изменил (логин оператора)
     change_reason = Column(String(255), nullable=True)  # Причина изменения
-    changed_at = Column(DateTime, default=datetime.utcnow, index=True)
+    changed_at = Column(DateTime, default=utc_now, index=True)
 
     def __repr__(self):
         return f"<PriceHistory {self.item_id}: {self.old_price}→{self.new_price}>"

@@ -2,10 +2,10 @@
 Модель для типов стекла и их характеристик.
 """
 
-from datetime import datetime
 
 from sqlalchemy import JSON, Column, DateTime, Float, Integer, String
 
+from app.db.time import utc_now
 from app.models.base import Base
 
 
@@ -49,8 +49,8 @@ class GlassType(Base):
     # Управление
     is_active = Column(Integer, default=1)  # 1 = активен, 0 = архив
     description = Column(String(255), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     def __repr__(self):
         return f"<GlassType {self.name}>"

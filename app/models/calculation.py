@@ -2,11 +2,11 @@
 Модели для расчётов и коммерческих предложений.
 """
 
-from datetime import datetime
 
 from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
+from app.db.time import utc_now
 from app.models.base import Base
 
 
@@ -136,8 +136,8 @@ class Calculation(Base):
     # ===== УПРАВЛЕНИЕ =====
     
     status = Column(String(50), default="draft")  # draft | sent | approved | archived
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now, index=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
     
     # Связь с КП
     commercial_offers = relationship(
@@ -176,9 +176,9 @@ class CommercialOffer(Base):
     
     # Управление
     status = Column(String(50), default="draft")  # draft | sent | approved | rejected | paid
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utc_now, index=True)
     sent_at = Column(DateTime, nullable=True)  # Когда отправлено клиенту
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     def __repr__(self):
         return f"<CommercialOffer {self.offer_number}>"

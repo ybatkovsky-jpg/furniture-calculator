@@ -2,10 +2,10 @@
 Модель для настроек расчётов.
 """
 
-from datetime import datetime
 
 from sqlalchemy import Column, DateTime, Float, Integer, String
 
+from app.db.time import utc_now
 from app.models.base import Base
 
 
@@ -69,8 +69,8 @@ class CalcSettings(Base):
     is_default = Column(Integer, default=0)  # 1 = используется по умолчанию
     is_active = Column(Integer, default=1)  # 1 = активен, 0 = архив
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     def __repr__(self):
         return f"<CalcSettings {self.name}>"

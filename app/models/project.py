@@ -2,11 +2,11 @@
 Модель для проектов клиентов.
 """
 
-from datetime import datetime
 
 from sqlalchemy import Column, DateTime, Integer, String, Text
 from sqlalchemy.orm import relationship
 
+from app.db.time import utc_now
 from app.models.base import Base
 
 
@@ -33,8 +33,8 @@ class Project(Base):
     status = Column(String(50), default="draft")  # draft | active | completed | archived
     
     # История
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now, index=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
     
     # Связь с расчётами
     calculations = relationship(

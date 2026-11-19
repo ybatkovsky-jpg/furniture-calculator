@@ -12,6 +12,7 @@
 """
 
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -88,6 +89,48 @@ class CalculationResult:
             self.cost_breakdown = CostBreakdown()
 
 
+def _apply_nesting_sheets(
+    quantities,
+    nesting: NestingResult,
+    reserve_rate: float = 0.0,
+    sheet_area_m2: float = 0.0,
+) -> None:
+    """P1-16: количество листов ЛДСП для цены — по занятой площади раскроя.
+
+    Решение собственника 17.11.2026: берём занятую деталями площадь по раскрою,
+    умножаем на 1,3 (запас 30 %) и делим на площадь листа, округляя ВВЕРХ.
+    Пример: занято 40 % листа → 0,4 × 1,3 = 0,52 → 1 лист.
+
+    Если раскрой не смог разместить ЛДСП-деталь (габарит больше листа),
+    остаёмся на расчёте по площади и предупреждаем.
+    """
+    unplaced_ldsp = [
+        item for item in nesting.unplaced if item.get("material") == "ЛДСП"
+    ]
+    if unplaced_ldsp:
+        quantities.warnings.append(
+            "Раскрой: часть деталей ЛДСП не размещена на листе — "
+            "листы посчитаны по площади"
+        )
+        return
+    used_m2 = sum(
+        layout.used_area_m2
+        for layout in nesting.layouts
+        if layout.material == "ЛДСП"
+    )
+    if used_m2 <= 0 or sheet_area_m2 <= 0:
+        quantities.ldsp_sheets = 0
+        return
+    with_reserve = used_m2 * (1 + max(0.0, float(reserve_rate or 0.0)))
+    area_sheets = math.ceil(with_reserve / sheet_area_m2)
+    # Лист, который раскрой занял хотя бы частично, всё равно покупается целым:
+    # если из остатка деталей не выходит, доля листа не экономит деньги.
+    touched_sheets = len(
+        [layout for layout in nesting.layouts if layout.material == "ЛДСП"]
+    )
+    quantities.ldsp_sheets = max(area_sheets, touched_sheets, 1)
+
+
 def calculate_full_cost(
     modules: list[dict],
     selected_materials: dict[str, Any],
@@ -98,6 +141,7 @@ def calculate_full_cost(
     zone_type: str | None = None,
     price_book: dict[str, float] | None = None,
     has_spec: bool = False,
+    options: dict | None = None,
 ) -> CalculationResult:
     """
     Полный расчёт стоимости заказа.
@@ -134,6 +178,8 @@ def calculate_full_cost(
     ldsp_name = _extract_ldsp_name(selected_materials)
     drawer_system = _drawer_system_from_selection(selected_hardware)
     handle_mode = _handle_mode_from_selection(selected_hardware)
+    if (options or {}).get("gola"):
+        handle_mode = "gola"
     if not zone_type:
         zone_type = _infer_zone_type(modules)
     quantities = calculate_quantities(
@@ -148,14 +194,14 @@ def calculate_full_cost(
         has_spec=has_spec,
         # P1-02: платные автопозиции — только по явному выбору оператора,
         # а не молча по умолчанию (раньше +36 366 ₽ на кухню).
-        auto_accessories=False,
+        auto_accessories=bool((options or {}).get("accessories")),
         auto_drawers=False,
-        auto_led=False,
-        auto_gola=False,
+        auto_led=bool((options or {}).get("led")),
+        auto_gola=bool((options or {}).get("gola")),
     )
 
-    result.sheets_calc.total_sheets = quantities.ldsp_sheets
-    result.sheets_calc.total_area_m2 = round(quantities.ldsp_area_m2, 3)
+    # total_sheets/total_area_m2 заполняются после раскроя (п.4): цена ЛДСП
+    # теперь берётся из раскроя, а не из площади × 1,3 (P1-16).
 
     # Количества прочих позиций (ХДФ, подсветка, GOLA, столешница) — для показа в смете
     result.hdf_sheets = quantities.hdf_sheets
@@ -174,7 +220,34 @@ def calculate_full_cost(
     result.glass_calc = calculate_glass_for_modules(modules_with_glass)
     result.glass_cost = float(result.glass_calc.total_cost or 0)
 
-    # 4. Полный CostBreakdown: каждая позиция — строка с ценой и источником
+    # 4. Раскрой ДО себестоимости: P1-16 — листы ЛДСП в цену берутся из
+    # раскроя, а не из «площадь × 1,3». BOM и nesting строятся по тем же
+    # модулям, что и количества, поэтому цена и производственные данные
+    # больше не расходятся.
+    from app.services.quantity_calc import SHEET_LDSP_BY_BRAND
+
+    result.bom = build_bom(modules)
+    ldsp_sheet = SHEET_LDSP_BY_BRAND.get(
+        quantities.ldsp_brand, SHEET_LDSP_BY_BRAND["default"]
+    )
+    result.nesting = nest_bom(
+        result.bom,
+        sheet_sizes={"ЛДСП": (ldsp_sheet["width_mm"], ldsp_sheet["height_mm"])},
+        # Направление рисунка: у текстурного ЛДСП детали не крутим.
+        grain_locked=str(quantities.ldsp_material or "") == "текстура",
+    )
+    _apply_nesting_sheets(
+        quantities,
+        result.nesting,
+        reserve_rate=policy.sheet_reserve_rate,
+        sheet_area_m2=(
+            ldsp_sheet["width_mm"] * ldsp_sheet["height_mm"] / 1_000_000
+        ),
+    )
+    result.sheets_calc.total_sheets = quantities.ldsp_sheets
+    result.sheets_calc.total_area_m2 = round(quantities.ldsp_area_m2, 3)
+
+    # 5. Полный CostBreakdown: каждая позиция — строка с ценой и источником
     # (P0-02). Кромка берётся из quantities, edge_calc больше не участвует.
     lines_result = build_cost_lines(
         quantities,
@@ -188,19 +261,8 @@ def calculate_full_cost(
     result.warnings = list(quantities.warnings) + list(lines_result.warnings)
     result.missing_prices = list(lines_result.missing)
     result.can_issue_kp = lines_result.can_issue_kp
-    result.bom = build_bom(modules)
     result.price_book = dict(price_book or {})
     result.policy = dict(policy.as_dict())
-    # S5-03: раскрой по габариту листа выбранного бренда ЛДСП.
-    from app.services.quantity_calc import SHEET_LDSP_BY_BRAND
-
-    ldsp_sheet = SHEET_LDSP_BY_BRAND.get(
-        quantities.ldsp_brand, SHEET_LDSP_BY_BRAND["default"]
-    )
-    result.nesting = nest_bom(
-        result.bom,
-        sheet_sizes={"ЛДСП": (ldsp_sheet["width_mm"], ldsp_sheet["height_mm"])},
-    )
     # P1-17: тип фасада не выбран — КП не выпускаем до явного выбора.
     if any("Тип фасада не выбран" in warning for warning in quantities.warnings):
         result.can_issue_kp = False
@@ -272,6 +334,7 @@ def calculate_full_cost(
         installation_rate=policy.installation_rate,
         design_rate=policy.design_rate,
         overhead_rate=policy.overhead_rate,
+        risk_reserve_rate=getattr(policy, "risk_reserve_rate", 0.0),
         profit_rate=policy.profit_rate,
         tech_director_rate=policy.tech_director_rate,
         manager_rate=policy.manager_rate,

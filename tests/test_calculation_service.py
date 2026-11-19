@@ -111,7 +111,9 @@ def test_recalculate_is_full_and_persisted():
         result = await service.recalculate(calculation, reason="initial")
 
         # Все 10 компонентов на месте: скидка больше не увидит «дыру».
-        assert result.cost_breakdown.cost_price == 23473
+        # 23 578 = 23 473 + 105 ₽: P2-12 — скрытая кромка 0,4 мм больше не
+        # уменьшается от добавления дверей (16 м вместо 10).
+        assert result.cost_breakdown.cost_price == 23578
         assert calculation.cost_price == result.cost_breakdown.cost_price
         assert calculation.final_price_cash == result.total_cash
         assert calculation.final_price_noncash == result.total_noncash
@@ -215,12 +217,56 @@ def test_clear_discount_returns_to_base():
         service = CalculationService(session)
         base = await service.recalculate(calculation, reason="initial")
         await service.apply_discount(
-            calculation, discount_type="percent", discount_value=15
+            calculation, discount_type="percent", discount_value=10
         )
         cleared = await service.clear_discount(calculation)
         assert abs(cleared.total_cash - base.total_cash) <= 0.01
         assert calculation.discount_type is None
         assert calculation.discount_value == 0
+
+    _run(scenario)
+
+
+def test_discount_above_ten_percent_requires_approval():
+    """P1-16: скидка 15 % без согласования директора не применяется."""
+
+    async def scenario(session, calculation):
+        service = CalculationService(session)
+        await service.recalculate(calculation, reason="initial")
+        before = (calculation.final_price_cash, calculation.discount_type)
+
+        with pytest.raises(PricingError, match="согласование директора"):
+            await service.apply_discount(
+                calculation, discount_type="percent", discount_value=15
+            )
+
+        assert (calculation.final_price_cash, calculation.discount_type) == before
+
+        # Согласование — явный флаг: тогда та же скидка проходит.
+        approved = await service.apply_discount(
+            calculation,
+            discount_type="percent",
+            discount_value=15,
+            allow_above_limit=True,
+        )
+        assert approved is not None
+        assert calculation.discount_value == 15
+
+    _run(scenario)
+
+
+def test_ten_percent_discount_passes_margin_gate():
+    """10 % при пороге маржи 15 % не уводит цену ниже порога."""
+
+    async def scenario(session, calculation):
+        service = CalculationService(session)
+        result = await service.recalculate(calculation, reason="initial")
+        discounted = await service.apply_discount(
+            calculation, discount_type="percent", discount_value=10
+        )
+        assert discounted.cost_breakdown.below_cost is False
+        assert discounted.can_issue_kp is True
+        assert discounted.total_cash < result.total_cash
 
     _run(scenario)
 

@@ -97,8 +97,10 @@ def test_calculation_with_discount():
         discount_info=discount_info
     )
 
-    # Цена со скидкой должна быть меньше базовой
-    assert result.total_cash < result.cost_breakdown.total_base_cash
+    # Цена мебели со скидкой должна быть меньше базовой; доставка клиенту
+    # добавляется отдельно и в сравнение не входит.
+    furniture_cash = result.total_cash - result.cost_breakdown.delivery_client
+    assert furniture_cash < result.cost_breakdown.total_base_cash
 
 
 def test_calculation_with_designer_bonus():

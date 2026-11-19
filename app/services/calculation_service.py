@@ -18,6 +18,7 @@ from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.validation import PricingError
 from app.models.calculation import Calculation
 from app.models.calculation_version import CalculationVersion
 from app.models.price import PriceItem
@@ -257,6 +258,7 @@ class CalculationService:
         reason: str = "discount",
         commit: bool = True,
         user_id: int | None = None,
+        allow_above_limit: bool = False,
     ) -> CalculationResult:
         """Сменить скидку/наценку/бонус и пересчитать полным путём.
 
@@ -264,6 +266,12 @@ class CalculationService:
         валидация `PricingError`), и только если оно прошло — поля расчёта
         меняются. Поэтому невалидная скидка не оставляет «полусостояние»
         в БД (P2-06).
+
+        P1-16: скидка выше `policy.max_discount_percent` (10 % по решению
+        собственника 17.11) требует согласования директора. Согласование —
+        явный `allow_above_limit=True`; обычный путь менеджера его не
+        передаёт, поэтому скидка 15 % вернёт `PricingError` с текстом для
+        оператора, а не молча применится.
         """
         new_discount = DiscountInfo(
             discount_type=discount_type,
@@ -283,6 +291,24 @@ class CalculationService:
         )
 
         result = await self.preview_calculation(calculation, discount=new_discount)
+
+        # P1-16: потолок скидки без согласования. Проверка после превью —
+        # чтобы для фиксированной скидки знать базу и её эквивалент в процентах.
+        if not allow_above_limit:
+            policy = await self._get_policy()
+            limit = float(policy.max_discount_percent or 0.0)
+            breakdown = result.cost_breakdown
+            base = float(breakdown.total_base_cash or 0.0)
+            effective = 0.0
+            if new_discount.discount_type == "percent" and limit > 0:
+                effective = float(new_discount.discount_value or 0.0)
+            elif new_discount.discount_type == "fixed" and limit > 0 and base > 0:
+                effective = float(breakdown.discount_amount or 0.0) / base * 100
+            if effective > limit + 1e-9:
+                raise PricingError(
+                    f"Скидка {effective:.1f}% выше потолка {limit:g}% — "
+                    "нужно согласование директора"
+                )
 
         calculation.discount_type = new_discount.discount_type
         calculation.discount_value = new_discount.discount_value

@@ -24,7 +24,7 @@ from app.domain.catalog import build_catalog
 from app.models.calculation import Calculation
 from app.models.price import PriceItem
 from app.models.project import Project
-from app.services.access import get_owned_calculation
+from app.services.access import get_owned_calculation, get_owned_project
 from app.services.calculation_service import CalculationService
 from app.services.pricing_policy import load_default_policy
 
@@ -91,7 +91,10 @@ async def show_projects(message: Message, state: FSMContext):
         )
         return
 
-    await state.update_data(project_id=projects[0].id)
+    # P2-05: раньше здесь безусловно записывался id ПЕРВОГО (самого свежего)
+    # проекта. Пользователь открывал список, затем отправлял фото — и файл
+    # уходил в чужой проект. Теперь project_id ставится только явным выбором
+    # проекта (кнопка в списке) и проверяется по владельцу.
     rows = []
     for project in projects:
         if not project.calculations:
@@ -119,6 +122,13 @@ async def show_projects(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("project_no_calc:"))
 async def project_without_calculation(callback: CallbackQuery, state: FSMContext):
     project_id = int(callback.data.split(":")[1])
+    # P2-05: чужой project_id не должен становиться «текущим проектом».
+    async for session in get_session():
+        project = await get_owned_project(session, project_id, callback.from_user.id)
+        break
+    if project is None:
+        await callback.answer("Проект не найден", show_alert=True)
+        return
     await state.update_data(project_id=project_id)
     await callback.message.answer(
         "В проекте ещё нет расчёта. Отправьте фото чертежа или PDF-альбом, "
@@ -128,7 +138,7 @@ async def project_without_calculation(callback: CallbackQuery, state: FSMContext
 
 
 @router.callback_query(F.data.startswith("show_estimate:"))
-async def show_estimate_callback(callback: CallbackQuery):
+async def show_estimate_callback(callback: CallbackQuery, state: FSMContext):
     """Открыть смету по кнопке (P1-08)."""
     calculation_id = int(callback.data.split(":")[1])
 
@@ -142,7 +152,12 @@ async def show_estimate_callback(callback: CallbackQuery):
         # P1-11: скидка берётся из самого расчёта, иначе экран показывал
         # цену без скидки. Пересчёт — через единый сервис (P1-01).
         result = await CalculationService(session).preview_calculation(calculation)
+        project_id = calculation.project_id
         break
+
+    # P2-05: открытие сметы — явный выбор проекта; следующие загрузки
+    # (фото/PDF) идут именно в него, а не в первый из списка.
+    await state.update_data(project_id=project_id)
 
     await show_estimate(callback.message, calculation, result)
     await callback.answer()

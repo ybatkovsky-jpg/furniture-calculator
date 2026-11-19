@@ -5,6 +5,9 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
 .venv/
 venv/
 data/
@@ -29,3 +32,20 @@ backups/
 .session/
 .zcode/
 .kilo/
+
+# Клиентские данные и тяжёлые артефакты (ПДн не в Git)
+Olga_project/
+KP/
+audit_tmp/
+_audit_work/
+*.docx
+79dfd81d8a367f5ef802960b2bedd0fc.jpg
+# Отчёты PRO100 и сканы КП содержат имена клиентских проектов
+docs/pro100_reports/
+docs/pro100_*.json
+docs/kp_*.json
+docs/olga_coef_scan.json
+docs/xlsx_edge_scan.json
+docs/price_snapshot_2026-11-17.json
+docs/prompt_ab_render_2026-11-17.json
+docs/kp_vs_project_pairs.json

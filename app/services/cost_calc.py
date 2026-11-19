@@ -2,7 +2,7 @@
 ПОЛНАЯ формула расчёта с скидками/наценками/бонусами.
 
 Верифицировано на данных из прайса:
-- Лист "Влад и Кристина": коэффициенты 0.80, 0.55, 0.10, 0.05, 0.30, 0.015, 1.13 ✓
+- Лист "Влад и Кристина": коэффициенты 0.80, 0.55, 0.10, 0.05, 0.30, 0.015, 1.10 ✓
 - Лист "РАСЧЕТ ЗЕРКАЛ": бонус дизайнера = цена / (1 - 0.10) ✓
 - Лист "СТОЛЕШНИЦЫ": та же формула бонуса ✓
 """
@@ -55,14 +55,15 @@ class CostBreakdown:
     # === Рассчитываемые поля ===
     cost_price: float = 0           # себестоимость (сумма всего)
     manufacturing: float = 0        # изготовление = себестоимость × 0.80
-    installation: float = 0         # монтаж = себестоимость × 0.55
+    installation: float = 0         # монтаж = 15 % от конечной цены клиента
     measurement: float = 0          # замер (фикс.)
     delivery_internal: float = 0    # доставка (себестоимость)
     delivery_client: float = 0      # доставка (клиенту)
     design: float = 0               # проектировка = изготовление × 0.10
     overhead: float = 0             # прочие = себестоимость × 0.05
+    risk_reserve: float = 0         # запас на возможные ошибки
     subtotal: float = 0             # промежуточный итог
-    profit: float = 0               # прибыль = итого × 0.30
+    profit: float = 0               # прибыль = итого × 0.35
     total_with_profit: float = 0    # итого с прибылью
     tech_director: float = 0        # тех. директор = (итого + прибыль) × 0.015
     manager_salary: float = 0       # менеджер
@@ -111,17 +112,18 @@ def calculate_cost(
     fastener_cost: float = 0,
     # Коэффициенты
     manufacturing_rate: float = 0.80,
-    installation_rate: float = 0.55,
+    installation_rate: float = 0.15,
     design_rate: float = 0.10,
     overhead_rate: float = 0.05,
-    profit_rate: float = 0.30,
+    profit_rate: float = 0.35,
+    risk_reserve_rate: float = 0.0,
     tech_director_rate: float = 0.015,
     manager_rate: float = 0.0,
     designer_rate: float = 0.0,       # ставка дизайнера (не бонус!)
     measurement_fee: float = 2500,
     delivery_fee: float = 6500,
     delivery_fee_client: float = 10000,
-    noncash_markup: float = 1.13,
+    noncash_markup: float = 1.10,
     # P1-02: минимальная маржа над полными затратами (0 = не ниже затрат).
     min_margin_rate: float = 0.0,
     # Скидка / наценка / бонус
@@ -199,19 +201,37 @@ def calculate_cost(
 
     # 2. Производные
     r.manufacturing = _round_half_up(r.cost_price * manufacturing_rate)
-    r.installation = _round_half_up(r.cost_price * installation_rate)
     r.measurement = measurement_fee
     r.delivery_internal = delivery_fee
     r.delivery_client = delivery_fee_client
     r.design = _round_half_up(r.manufacturing * design_rate)
     r.overhead = _round_half_up(r.cost_price * overhead_rate)
+    # Небольшой запас на ошибки распознавания/состава (решение 18.11).
+    r.risk_reserve = _round_half_up(r.cost_price * risk_reserve_rate)
+
+    # Монтаж — 15 % от конечной цены клиента (решение 19.11). Он входит в базу,
+    # на него начисляются прибыль и зарплаты, поэтому считаем его из уравнения:
+    #   install = rate × (A + install) × K, где K — все наценки поверх базы,
+    #   A — база без монтажа. Отсюда install = rate × K × A / (1 − rate × K).
+    base_without_install = (
+        r.cost_price + r.manufacturing + r.measurement +
+        r.design + r.overhead + r.risk_reserve
+    )
+    markup = (
+        (1 + profit_rate)
+        * (1 + tech_director_rate + manager_rate + designer_rate)
+    )
+    share = installation_rate * markup
+    r.installation = _round_half_up(
+        base_without_install * share / (1 - share) if share < 1 else 0.0
+    )
 
     # 3. Итого. Внутренняя доставка не входит в расчётную базу B: по
     # финансовой политике §6 она учитывается отдельно как расход, а клиенту
     # предъявляется D_client = 10 000 ₽ отдельной строкой (без наценки 30%).
     r.subtotal = (
         r.cost_price + r.manufacturing + r.installation +
-        r.measurement + r.design + r.overhead
+        r.measurement + r.design + r.overhead + r.risk_reserve
     )
     r.profit = _round_half_up(r.subtotal * profit_rate)
     r.total_with_profit = r.subtotal + r.profit

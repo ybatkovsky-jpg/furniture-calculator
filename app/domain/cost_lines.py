@@ -36,26 +36,46 @@ def _to_float(value: Any) -> float:
 
 
 def _price_from(selection: Any) -> float | None:
-    """Цена из выбранной позиции (dict) или списка позиций."""
+    """Цена из выбранной позиции (dict) или списка позиций.
+
+    P2-24: для списка берётся ПЕРВАЯ позиция с ценой (порядок списка — это
+    порядок приоритета выбора), а не среднее арифметическое. Среднее давало
+    цену, которой нет ни в прайсе, ни в выборе оператора: «ЛДСП 5100 и 5600»
+    превращались в 5350 ₽ за лист. Одна позиция — одна цена, объяснимая
+    ссылкой на прайс.
+    """
     if isinstance(selection, dict):
         price = selection.get("price", selection.get("unit_price"))
         if price is not None:
             return _to_float(price)
     if isinstance(selection, list) and selection:
-        prices = [
-            _to_float(item.get("price", item.get("unit_price")))
-            for item in selection
-            if isinstance(item, dict)
-        ]
-        prices = [p for p in prices if p > 0]
-        if prices:
-            return sum(prices) / len(prices)
+        for item in selection:
+            if not isinstance(item, dict):
+                continue
+            price = item.get("price", item.get("unit_price"))
+            if price is None:
+                continue
+            value = _to_float(price)
+            if value > 0:
+                return value
     return None
 
 
 def _unit_from(selection: Any) -> str:
     if isinstance(selection, dict):
         return str(selection.get("price_unit") or selection.get("unit") or "")
+    return ""
+
+
+def _brand_from(selection: Any) -> str:
+    """Бренд выбранной позиции (dict или список); пусто — бренд неизвестен."""
+    if isinstance(selection, dict):
+        return str(selection.get("brand") or "").strip().upper()
+    if isinstance(selection, list):
+        for item in selection:
+            brand = _brand_from(item)
+            if brand:
+                return brand
     return ""
 
 
@@ -311,6 +331,15 @@ def build_cost_lines(
 
     # ── Кромка по толщинам ─────────────────────────────────────────
     edge_prices = _edge_price_map(selected_materials.get("edge"))
+    # P2-07: LAMARTY-кромка без цены молча заменялась EGGER «первой подходящей».
+    # Подмена остаётся (иначе нет цены), но теперь она видна оператору.
+    ldsp_brand = _brand_from(selected_materials.get("ldsp"))
+    edge_brand = _brand_from(selected_materials.get("edge"))
+    if ldsp_brand and edge_brand and ldsp_brand != edge_brand:
+        result.warnings.append(
+            f"Кромка: бренд {edge_brand} не совпадает с ЛДСП {ldsp_brand} — "
+            "проверьте, не подставлена ли кромка только из-за наличия цены"
+        )
     for thickness, metres, label in (
         (0.4, quantities.edge_04_m, "Кромка 0,4 мм"),
         (0.8, quantities.edge_08_m, "Кромка 0,8 мм"),

@@ -62,26 +62,29 @@ def test_template_has_fastener_and_countertop_rows():
 
 
 def test_db_price_matches_keywords_and_unit():
-    from app.services.template_filler import _find_db_price
+    from app.services.price_catalog import PriceCatalogItem, find_price
 
     prices = [
-        {"name": "LAMARTY однотон", "category": "ЛДСП", "price": 5100, "unit": "лист"},
-        {"name": "EGGER 0,8*19", "category": "Кромка", "price": 34, "unit": "м"},
+        PriceCatalogItem(1, "LAMARTY однотон", "ЛДСП", "LAMARTY", 5100, "лист", None),
+        PriceCatalogItem(2, "EGGER 0,8*19", "Кромка", "EGGER", 34, "м", 0.8),
     ]
-    assert _find_db_price(prices, ["LAMARTY", "однотон"], "листов") == 5100
-    assert _find_db_price(prices, ["EGGER 0,8*19"], "м.п.") == 34
+    assert find_price(prices, ["LAMARTY", "однотон"], "листов").item.price == 5100
+    assert find_price(prices, ["EGGER 0,8*19"], "м.п.").item.price == 34
     # Несовместимая единица не должна подставляться.
-    assert _find_db_price(prices, ["EGGER 0,8*19"], "листов") is None
+    assert find_price(prices, ["EGGER 0,8*19"], "листов") is None
 
 
 def test_unfilled_item_goes_to_proche_with_price():
     """P1-18: ненайденная строка с ценой в прайсе попадает в «ПРОЧЕЕ»."""
     from openpyxl import load_workbook
+    from app.services.price_catalog import PriceCatalogItem
     from app.services.template_filler import _append_unfilled_rows, _find_row_by_label
 
     wb = load_workbook(ROOT / "templates" / "Таблица для расчетов пустая.xlsx")
     ws = wb["Рассчет"]
-    prices = [{"name": "Столешница ЛДСП", "category": "Столешницы", "price": 3000, "unit": "м"}]
+    prices = [
+        PriceCatalogItem(1, "Столешница ЛДСП", "Столешницы", None, 3000, "м", None)
+    ]
     items = [{
         "room": "Кухня",
         "material": "Столешница",

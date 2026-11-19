@@ -58,15 +58,19 @@ def _calc(**kwargs):
 
 
 def test_golden_module_600x560x820_two_doors_two_drawers():
-    """Эталон: ЛДСП 6000, кромка 549, фасады 4850, ХДФ 1530,
-    петли 800, ящики 6000, ручки 2000 (2 двери + 2 ящика, P1-04), крепёж 1744."""
+    """Эталон: ЛДСП 6000 (1 лист), кромка 654, фасады 4850, ХДФ 1530,
+    петли 800, ящики 6000, ручки 2000, крепёж 1744.
+
+    Листы: занято ~0,37 листа × 1,2 = 0,44 → 1 лист (решение собственника:
+    коэффициент 1,2 к занятой доле, округление вверх).
+    """
     result = _calc()
     totals = {}
     for line in result.lines:
         totals[line.kind] = totals.get(line.kind, 0) + line.amount
 
     assert totals["ldsp"] == 6000
-    assert totals["edge"] == 549          # 374 (0.8) + 175 (0.4)
+    assert totals["edge"] == 654          # 374 (0.8) + 280 (0.4: 16 м × 17,5)
     assert totals["facade"] == 4850       # 0.485 м² × 10 000
     assert totals["hdf"] == 1530
     assert totals["hinge"] == 800         # 4 петли × 200
@@ -74,7 +78,7 @@ def test_golden_module_600x560x820_two_doors_two_drawers():
     assert totals["handle"] == 2000       # 2 двери + 2 ящика = 4 ручки × 500 (P1-04)
     assert totals["fastener"] == 1744
 
-    assert result.cost_breakdown.cost_price == 23473
+    assert result.cost_breakdown.cost_price == 23578
     assert abs(sum(line.amount for line in result.lines) - result.cost_breakdown.cost_price) <= 0.01
     assert result.can_issue_kp is True
     assert result.warnings == []
@@ -167,5 +171,5 @@ def test_unknown_facade_not_double_counted_in_ldsp():
         [_module()], materials, _hardware(), [], zone_type="Гостиная",
         price_book=_price_book(),
     )
-    # Один лист ЛДСП (без +15% площади фасадов).
+    # Один лист ЛДСП (без +15% площади фасадов; занято ~0,37 листа × 1,2 → 1).
     assert [l for l in result.lines if l.kind == "ldsp"][0].quantity == 1

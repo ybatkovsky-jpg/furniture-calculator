@@ -607,6 +607,7 @@ def fill_template_from_quote(
     Критерий паритета: сумма строк = `cost_price`, итог = `final_cash`.
     """
     from openpyxl import load_workbook
+    from openpyxl.comments import Comment
 
     if not quote or not quote.get("lines"):
         raise ValueError("Снимок расчёта пуст: нечего заполнять в Excel")
@@ -668,20 +669,46 @@ def fill_template_from_quote(
     put("ЗАМЕР", totals.get("measurement"))
     put("ДОСТАВКА", totals.get("delivery_client"))
     put("ПРОЕКТИРОВКА", totals.get("design"))
-    put("ПРОЧИЕ РАСХОДЫ", totals.get("overhead"))
+    # Запас на возможные ошибки идёт в строку «прочие расходы»,
+    # иначе сумма блока не сходится с ИТОГО.
+    other_total = float(totals.get("overhead") or 0) + float(
+        totals.get("risk_reserve") or 0
+    )
+    put("ПРОЧИЕ РАСХОДЫ", other_total)
 
     subtotal_row = _find_row_by_label(
         ws, "ИТОГО:", start=(manufacturing_row or 1)
     )
+    delivery_row = _find_row_by_label(ws, "ДОСТАВКА")
+    # P2-02: шаблонная формула ИТОГО — =SUM(E347:E353), то есть доставка
+    # клиента входит в блок. Filler перезаписывал ячейку `subtotal` без
+    # доставки, и столбец переставал сходиться с ИТОГО. Пишем сумму блока;
+    # прибыль по-прежнему считается от базы БЕЗ доставки (в политике доставка
+    # не наценивается) — это объясняет комментарий в ячейке.
+    subtotal_value = float(totals.get("subtotal") or 0)
+    delivery_value = float(totals.get("delivery_client") or 0)
+    delivery_in_block = (
+        delivery_row is not None
+        and subtotal_row is not None
+        and delivery_row < subtotal_row
+    )
+    block_total = subtotal_value + (delivery_value if delivery_in_block else 0.0)
+
     if subtotal_row:
-        ws.cell(row=subtotal_row, column=5).value = rub_float(
-            float(totals.get("subtotal") or 0)
-        )
+        ws.cell(row=subtotal_row, column=5).value = rub_float(block_total)
+        if delivery_in_block and delivery_value:
+            ws.cell(row=subtotal_row, column=5).comment = Comment(
+                "ИТОГО блока включает доставку клиенту "
+                f"({delivery_value:,.0f} ₽). Прибыль считается от суммы "
+                "без доставки — она не наценивается.",
+                "furniture-calculator",
+            )
     put("ПЛАНИРУЕМАЯ ПРИБЫЛЬ", totals.get("profit"))
     total_row = _find_row_by_label(ws, "ИТОГО:", start=(profit_row or 1) + 1)
     if total_row:
+        # Как и в шаблоне (E356 = E354 + E355): ИТОГО блока + прибыль.
         ws.cell(row=total_row, column=5).value = rub_float(
-            float(totals.get("total_with_profit") or 0)
+            block_total + float(totals.get("profit") or 0)
         )
     put("ТЕХНИЧЕСКИЙ ДИРЕКТОР", totals.get("tech_director"))
     put("МЕНЕДЖЕР", totals.get("manager_salary"))

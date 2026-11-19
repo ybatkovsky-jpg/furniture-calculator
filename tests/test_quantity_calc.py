@@ -4,7 +4,7 @@
 Покрывают detect_material_properties (единая классификация материалов),
 calculate_quantities (ядро: листы ЛДСП/МДФ/ХДФ, кромка, фасады, петли,
 ручки, ящики, столешница, крепёж, Gola/LED, авто-комплектующие, штанги,
-смежные стенки) и fill_template_for_room (позиции сметы для Excel).
+боковины каждого корпуса) и fill_template_for_room (позиции сметы для Excel).
 
 Стиль — как в test_edge_calc/test_fastener_calc: стабы модулей через
 SimpleNamespace (quantity_calc читает только атрибуты type/width/depth/
@@ -183,6 +183,85 @@ def test_kitchen_single_lower_core():
     assert q.gola_vertical_pcs == 0
 
 
+def test_drawer_only_module_has_no_default_shelf():
+    """P2-10: ящичный корпус не оплачивает полку, которой в нём нет.
+
+    Без полки: боковины 2×0.564×0.824 + дно/крыша 2×0.604×0.564 = 1.610784 м².
+    """
+    q = _calc([_mk("lower_base", 600, dr=3)], ["EGGER U702"], zone_type="kitchen")
+    assert q.ldsp_area_m2 == pytest.approx(1.610784, abs=1e-4)
+
+
+def test_emdiwey_alias_is_recognized():
+    """Прайс пишет EMDIWEY/EMDIVEY — это тот же плитный МДФ, не «unknown»."""
+    for name in ("МДФ EMDIWEY двухсторонний", "EMDIVEY 18", "EMDIWAY"):
+        props = detect_material_properties([name])
+        assert props["facade_type"] == "emdiway", name
+        assert props["mdf_needs_edge"] is True
+
+
+def test_evosoft_film_facade_is_recognized():
+    """EVOSOFT и «МДФ плёнка» — фасад в ПВХ-плёнке, а не «тип не выбран».
+
+    До этого фасады EVOSOFT не попадали в расчёт вообще: `facade_type`
+    оставался unknown, площадь фасадов = 0, смета занижалась на стоимость
+    всех дверей.
+    """
+    assert detect_material_properties(["EVOSOFT 18"])["facade_type"] == "pvh"
+    assert detect_material_properties(["МДФ плёнка"])["facade_type"] == "pvh"
+    assert detect_material_properties(["EVOSOFT 18"])["mdf_needs_edge"] is False
+
+    q = _calc([_mk("lower_base", 600, fc=2)], ["EVOSOFT 18"], zone_type="kitchen")
+    assert q.facades_area_m2 > 0
+    assert not any("Тип фасада не выбран" in w for w in q.warnings)
+
+
+def test_edge_norms_hybrid(monkeypatch):
+    """Гибрид кромки: геометрия, но не ниже нормы на тип.
+
+    Норма выведена из расчётов Olga_project: шкаф для бумаг 5 шт —
+    350 м 0,8 и 200 м 0,4 (70 и 40 м на корпус).
+    """
+    from app.services import quantity_calc as qc
+
+    monkeypatch.setattr(qc, "EDGE_NORMS_ENABLED", True)
+    q = _calc(
+        [_mk("penal", 1000, d=450, h=2550, q=5, s=5, fc=2)],
+        ["ЛДСП LAMARTY"],
+        room="Офис",
+    )
+    assert q.edge_08_m == 350
+    assert q.edge_04_m == 200
+
+
+def test_table_has_no_shelves_or_back():
+    """Стол — столешница и боковины: меньше ЛДСП и нет ХДФ по сравнению
+    с корпусом того же габарита (иначе стол считался как шкаф, +33 %)."""
+    table = _calc([_mk("table", 1800, d=700, h=750)], ["ЛДСП LAMARTY"], room="Офис")
+    cabinet = _calc(
+        [_mk("open_unit", 1800, d=700, h=750, s=1)], ["ЛДСП LAMARTY"], room="Офис"
+    )
+    assert table.ldsp_area_m2 < cabinet.ldsp_area_m2
+    assert table.hdf_sheets == 0
+    assert cabinet.hdf_sheets >= 1
+
+
+def test_doors_do_not_reduce_hidden_edge():
+    """P2-12: добавление дверей не уменьшает кромку скрытых торцов.
+
+    Было: 0,4 мм кромка 16 → 12 → 10 м при 0/1/2 дверях, потому что периметр
+    фасадов вычитался из total, но в total не входил. Правило цеха — «вкруг
+    + 30 %», значит фасадные торцы входят в общий метраж.
+    """
+    no_doors = _calc([_mk("lower_base", 600)], ["EGGER U702"], zone_type="kitchen")
+    one = _calc([_mk("lower_base", 600, fc=1)], ["EGGER U702"], zone_type="kitchen")
+    two = _calc([_mk("lower_base", 600, fc=2)], ["EGGER U702"], zone_type="kitchen")
+
+    assert no_doors.edge_04_m == one.edge_04_m == two.edge_04_m
+    assert one.edge_08_m > no_doors.edge_08_m
+    assert two.edge_08_m > one.edge_08_m
+
+
 def test_gola_is_opt_in():
     """P1-02: GOLA считается только при явном auto_gola=True."""
     q = _calc([_mk("lower_base", 600, fc=1)], ["EGGER U702"],
@@ -334,25 +413,29 @@ def test_drawers_with_facade_handles_counted_together():
 def test_quantity_multiplier_scales_quantities():
     """q=3: площади/петли/опоры ×3; столешница учитывает 3 модуля (1.8+0.05×2)×1.1."""
     q = _calc([_mk("lower_base", 600, q=3)], ["EGGER U702"], zone_type="kitchen")
-    # Экономия 1 смежной стенки: 3×1.95144 − 0.464736 = 5.3896
-    assert q.ldsp_area_m2 == pytest.approx(3 * 1.95144 - 0.564 * 0.824, abs=1e-4)
-    assert q.ldsp_sheets == math.ceil(5.389584 * 1.3 / EGGER_SHEET_M2) == 2
+    # Подтверждено собственником: общих боковин нет, каждый корпус ×3.
+    assert q.ldsp_area_m2 == pytest.approx(3 * 1.95144, abs=1e-4)
+    assert q.ldsp_sheets == math.ceil(3 * 1.95144 * 1.3 / EGGER_SHEET_M2) == 2
     assert q.adjustable_feet == 12
     assert q.countertop_length_m == pytest.approx((1.8 + 2 * 0.05) * 1.1, abs=1e-4)
     assert q.gola_horizontal_m == 0  # P1-02: GOLA не добавляется автоматически
 
 
-def test_shared_sidewalls_saving():
-    """4 одинаковых модуля: 70% из 3 стыков (2 шт.) экономят 2×0.464736 м² ЛДСП."""
-    q = _calc([_mk("lower_base", 600) for _ in range(4)], ["EGGER U702"], zone_type="kitchen")
-    expected = 4 * 1.95144 - 2 * (0.564 * 0.824)
-    assert q.ldsp_area_m2 == pytest.approx(expected, abs=1e-4)
-    # листы: ceil(6.8763×1.3/5.0325)=2
-    assert q.ldsp_sheets == 2
+def test_each_carcass_has_own_sidewalls():
+    """4 одинаковых модуля рядом — 4 полных комплекта боковин, без экономии.
+
+    Раньше вычиталось 70 % стыков (2 боковины) — это занижало ЛДСП и
+    противоречило правилу цеха: каждый корпус со своими боковинами.
+    """
+    q = _calc([_mk("lower_base", 600) for _ in range(4)], ["EGGER U702"],
+              zone_type="kitchen")
+    assert q.ldsp_area_m2 == pytest.approx(4 * 1.95144, abs=1e-4)
+    # листы: ceil(7.80576×1.3/5.0325)=3 (было 2 из-за «экономии»)
+    assert q.ldsp_sheets == 3
 
 
-def test_shared_sides_only_same_type_and_depth():
-    """Модули разной глубины не делят стенки (нет экономии).
+def test_different_depths_are_summed_without_savings():
+    """Модули разной глубины суммируются без «экономии» на боковинах.
 
     Площади: 600×560: 1.95144 м²; 600×500: sides 2×0.504×0.824 + дно/крыша
     2×0.604×0.504 + полка 0.604×0.504 = 1.74384 м²."""

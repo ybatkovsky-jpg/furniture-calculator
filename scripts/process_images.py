@@ -45,6 +45,9 @@ from app.services.full_pipeline import (
     is_no_door_zone_page,
 )
 from app.services.template_filler import fill_template_from_pipeline
+from app.db.session import AsyncSessionLocal
+from app.services.price_book import load_price_book
+from app.services.price_catalog import load_price_catalog
 
 TEMPLATE = ROOT / "templates" / "Таблица для расчетов пустая.xlsx"
 OUTPUT_DIR = ROOT / "output"
@@ -373,12 +376,16 @@ async def process_images(image_paths: list[str], output_name: str = "Расче�
         output_path = OUTPUT_DIR / f"{output_name}.xlsx"
         print(f"\n📄 Заполнение шаблона → {output_path}...")
         
+        async with AsyncSessionLocal() as session:
+            price_catalog = await load_price_catalog(session)
+            price_book = await load_price_book(session)
         fill_template_from_pipeline(
             pipeline_result=result,
             template_path=str(TEMPLATE),
             output_path=str(output_path),
+            price_catalog=price_catalog,
+            price_book=price_book,
         )
-        
         size_kb = output_path.stat().st_size // 1024
         print(f"\n{'=' * 60}")
         print(f"✅ Excel сохранён: {output_path}")

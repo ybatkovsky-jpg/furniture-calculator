@@ -122,6 +122,35 @@ def test_excel_totals_match_quote(tmp_path):
     assert abs(row_sum - totals["cost_price"]) <= 0.05
 
 
+def test_intermediate_total_equals_block_sum_with_delivery(tmp_path):
+    """P2-02: промежуточное ИТОГО — сумма блока (доставка входит), не голый subtotal."""
+    quote, wb = _render(tmp_path)
+    ws = wb["Гостиная"]
+    totals = quote["totals"]
+
+    cost_row = _find_row_by_label(ws, "СЕБЕСТОИМОСТЬ")
+    subtotal_row = _find_row_by_label(ws, "ИТОГО:", start=cost_row)
+    assert cost_row and subtotal_row
+
+    block_sum = sum(
+        float(ws.cell(row, 5).value or 0)
+        for row in range(cost_row, subtotal_row)
+        if isinstance(ws.cell(row, 5).value, (int, float))
+    )
+    assert abs(float(ws.cell(subtotal_row, 5).value) - block_sum) <= 1.0
+    assert abs(
+        float(ws.cell(subtotal_row, 5).value)
+        - (totals["subtotal"] + totals["delivery_client"])
+    ) <= 1.0
+
+    profit_row = _find_row_by_label(ws, "ПЛАНИРУЕМАЯ ПРИБЫЛЬ")
+    total_row = _find_row_by_label(ws, "ИТОГО:", start=profit_row + 1)
+    assert abs(
+        float(ws.cell(total_row, 5).value)
+        - (float(ws.cell(subtotal_row, 5).value) + totals["profit"])
+    ) <= 1.0
+
+
 def test_no_silent_zero_rows(tmp_path):
     quote, wb = _render(tmp_path)
     ws = wb["Гостиная"]

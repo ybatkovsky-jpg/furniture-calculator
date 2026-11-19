@@ -10,6 +10,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-7s %(me
 from app.services.full_pipeline import FullPipeline, print_result
 from app.services.template_filler import fill_template_from_pipeline
 from app.services.image_analyzer import GeminiImageAnalyzer
+from app.db.session import AsyncSessionLocal
+from app.services.price_book import load_price_book
+from app.services.price_catalog import load_price_catalog
 
 PDF = r"D:\БИЗНЕС\ПРО МЕБЕЛЬ\ПРОЕКТЫ\АНДЕЛИС\Альбом чертежей Рокоссовского-59-79_compressed.pdf"
 TEMPLATE = r"D:\БИЗНЕС\ПРО МЕБЕЛЬ\furniture-calculator\templates\Таблица для расчетов пустая.xlsx"
@@ -29,7 +32,16 @@ async def main():
             return
 
         print("\n📊 Генерация Excel...")
-        output_path = fill_template_from_pipeline(result, TEMPLATE, OUTPUT)
+        async with AsyncSessionLocal() as session:
+            price_catalog = await load_price_catalog(session)
+            price_book = await load_price_book(session)
+        output_path = fill_template_from_pipeline(
+            result,
+            TEMPLATE,
+            OUTPUT,
+            price_catalog=price_catalog,
+            price_book=price_book,
+        )
         size_kb = Path(output_path).stat().st_size // 1024
         print(f"\n✅ Excel сохранён: {output_path} ({size_kb} KB)")
 

@@ -2,6 +2,8 @@
 Обработчики для выбора материалов из прайса.
 """
 
+import logging
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -12,6 +14,8 @@ from app.db.session import get_session
 from app.models.price import PriceItem
 from app.services.access import get_owned_calculation
 from app.services.quantity_calc import module_has_drawers
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -455,6 +459,7 @@ async def select_edge_automatically(message: Message, state: FSMContext):
 
     # Ищем кромку по бренду ЛДСП: сначала с ценой и толщиной 0.8 мм,
     # затем любую с ценой, затем любую по бренду (может потребовать цену).
+    brand_match = False
     async for session in get_session():
         base = select(PriceItem).where(
             PriceItem.category == "Кромка",
@@ -468,6 +473,7 @@ async def select_edge_automatically(message: Message, state: FSMContext):
             ).order_by(PriceItem.name)
         )
         edge_items = result.scalars().all()
+        brand_match = bool(edge_items)
         if not edge_items:
             result = await session.execute(
                 base.where(
@@ -476,6 +482,7 @@ async def select_edge_automatically(message: Message, state: FSMContext):
                 ).order_by(PriceItem.name)
             )
             edge_items = result.scalars().all()
+            brand_match = bool(edge_items)
         if not edge_items:
             result = await session.execute(
                 base.where(PriceItem.unit_price.is_not(None)).order_by(PriceItem.name)
@@ -486,6 +493,7 @@ async def select_edge_automatically(message: Message, state: FSMContext):
                 base.where(PriceItem.brand == ldsp_brand).order_by(PriceItem.name)
             )
             edge_items = result.scalars().all()
+            brand_match = bool(edge_items)
         break
 
     if not edge_items:
@@ -515,11 +523,26 @@ async def select_edge_automatically(message: Message, state: FSMContext):
         'brand': edge_item.brand
     }
     await state.update_data(selected_materials=selected_materials)
-    
+
+    # P2-07: подмена бренда не должна быть молчаливой.
+    substitution = ""
+    if not brand_match and edge_item.brand and ldsp_brand and (
+        str(edge_item.brand).strip().upper() != str(ldsp_brand).strip().upper()
+    ):
+        substitution = (
+            f"\n⚠️ Кромки «{ldsp_brand}» с ценой в прайсе нет — подставлена "
+            f"«{edge_item.name}» ({edge_item.brand}).\n"
+            "Проверьте бренд/цену, иначе себестоимость кромки будет чужой."
+        )
+        logger.warning(
+            "Кромка подменена: ЛДСП %s -> кромка %s (%s)",
+            ldsp_brand, edge_item.name, edge_item.brand,
+        )
+
     await message.answer(
         f"✅ Автоматически подобрана кромка: {edge_item.name}\n"
         f"Цена: {edge_item.unit_price}₽/{edge_item.price_unit}\n"
-        f"(по производителю ЛДСП: {ldsp_brand})"
+        f"(по производителю ЛДСП: {ldsp_brand}){substitution}"
     )
     
     # Переходим к выбору петель

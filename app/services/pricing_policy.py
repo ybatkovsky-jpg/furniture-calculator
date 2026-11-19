@@ -25,19 +25,25 @@ class PricingPolicy:
     """Коэффициенты и фиксированные сборы расчёта."""
 
     manufacturing_rate: float = 0.80
-    installation_rate: float = 0.55
+    installation_rate: float = 0.15
     design_rate: float = 0.10
     overhead_rate: float = 0.05
-    profit_rate: float = 0.30
+    profit_rate: float = 0.35
     tech_director_rate: float = 0.015
     manager_rate: float = 0.0
     designer_rate: float = 0.0
     measurement_fee: float = 2500.0
     delivery_fee: float = 6500.0
     delivery_fee_client: float = 10000.0
-    noncash_markup: float = 1.13
-    # P1-02: минимальная маржа над полными затратами (0 = не ниже затрат).
-    min_margin_rate: float = 0.0
+    noncash_markup: float = 1.10
+    # P1-16: подтверждено собственником 2026-11-17 — маржа не ниже 15 %
+    # над полными затратами, скидка без согласования — до 10 %.
+    min_margin_rate: float = 0.15
+    max_discount_percent: float = 10.0
+    # P2-2: запас к занятой доле листа (брак/подрезка) — 30 %.
+    sheet_reserve_rate: float = 0.30
+    # Запас на возможные ошибки (распознавание/состав). 0 — выключен.
+    risk_reserve_rate: float = 0.0
     # P1-10: версия политики — попадает в снимок и версию расчёта.
     version: str = "1.0"
     designer_bonus_rate: float = 0.10
@@ -59,7 +65,10 @@ class PricingPolicy:
             delivery_fee=settings.delivery_fee,
             delivery_fee_client=settings.delivery_fee_client,
             noncash_markup=settings.noncash_markup,
-            min_margin_rate=getattr(settings, "min_margin_rate", 0.0),
+            min_margin_rate=getattr(settings, "min_margin_rate", 0.15),
+            max_discount_percent=getattr(settings, "max_discount_percent", 10.0),
+            sheet_reserve_rate=getattr(settings, "sheet_reserve_rate", 0.30),
+            risk_reserve_rate=getattr(settings, "risk_reserve_rate", 0.0),
             version="1.0",
             designer_bonus_rate=settings.designer_bonus_rate,
             sheet_utilization=settings.sheet_utilization,
@@ -113,6 +122,8 @@ class PricingPolicy:
             "designer_rate": self.designer_rate,
             "noncash_markup": self.noncash_markup,
             "min_margin_rate": self.min_margin_rate,
+            "max_discount_percent": self.max_discount_percent,
+            "sheet_reserve_rate": self.sheet_reserve_rate,
             "version": self.version,
             "sheet_utilization": self.sheet_utilization,
         }

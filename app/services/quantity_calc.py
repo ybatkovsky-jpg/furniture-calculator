@@ -26,6 +26,7 @@
 
 import logging
 import math
+import os
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,29 @@ EDGE_INVISIBLE_MM = 0.4   # невидимые торцы ЛДСП
 EDGE_VISIBLE_MM   = 0.8   # видимые торцы ЛДСП
 EDGE_PREMIUM_MM   = 2.0   # премиум (влагостойкие зоны, высокие фасады)
 EDGE_MDF_MM       = 1.0   # кромка для плитного МДФ (EVOGLOSS, EMDIWAY, AGT и т.д.)
+
+# Нормы кромки на ОДИН корпус, метры: (0.8 видимая, 0.4 скрытая).
+# Выведены из расчётов Olga_project/Волонтерский центр, где известно
+# количество штук в позиции: шкаф для бумаг 350/200 на 5 корпусов,
+# столы 350/250 на 8, трибуна 50/20, ресепшн 150/80, шкаф под одежду 80/80.
+# Гибрид: считаем геометрию, но не ниже нормы на тип.
+# Включается переменной окружения EDGE_NORMS=1 (гибрид кромки).
+EDGE_NORMS_ENABLED = os.getenv("EDGE_NORMS", "0") == "1"
+
+EDGE_NORMS_M: dict[str, tuple[float, float]] = {
+    "penal": (70.0, 40.0),
+    "wardrobe": (80.0, 80.0),
+    "tall_cabinet": (60.0, 40.0),
+    "table": (44.0, 31.0),
+    "desk": (44.0, 31.0),
+    "open_unit": (50.0, 20.0),
+    "shelf_unit": (60.0, 50.0),
+    "reception": (150.0, 80.0),
+    "counter": (150.0, 80.0),
+    "lower_base": (50.0, 35.0),
+    "upper_base": (40.0, 28.0),
+    "vanity": (45.0, 30.0),
+}
 
 # Запас кромки на обработку (30% по промпту v4.0)
 EDGE_OVERLAP = 1.30
@@ -236,10 +260,15 @@ def detect_material_properties(materials: list[str]) -> dict:
     # ── Тип фасада ──
     # Плитные МДФ-бренды различаются для выбора ОДНОЙ строки кромки в Excel
     # (P0-06): EVO/AGT/ETERNO/SM`ART — разные поставщики.
-    if "EMDIWAY" in materials_upper:
+    # EMDIWAY в прайсе поставщика пишется и как EMDIWEY/EMDIVEY — это тот же
+    # плитный МДФ, иначе фасады получают facade_type=unknown.
+    if any(alias in materials_upper for alias in ("EMDIWAY", "EMDIWEY", "EMDIVEY")):
         result["facade_type"] = "emdiway_titan" if "TITAN" in materials_upper else "emdiway"
     elif "EVOGLOSS" in materials_upper or "EVO " in materials_upper:
         result["facade_type"] = "evo"
+    elif "EVOSOFT" in materials_upper or "EVO SOFT" in materials_upper:
+        # EVOSOFT — МДФ в ПВХ-плёнке: торец закрыт, кромка 1 мм не нужна.
+        result["facade_type"] = "pvh"
     elif "AGT" in materials_upper:
         result["facade_type"] = "agt"
     elif "ETERNO" in materials_upper:
@@ -250,7 +279,7 @@ def detect_material_properties(materials: list[str]) -> dict:
         result["facade_type"] = "paint_matte"
     elif "ГЛЯНЕЦ" in materials_upper or "ГЛЯНЦ" in materials_upper:
         result["facade_type"] = "paint_gloss"
-    elif "ПВХ" in materials_upper:
+    elif any(kw in materials_upper for kw in ["ПВХ", "ПЛЁНКА", "ПЛЕНКА"]):
         result["facade_type"] = "pvh"
 
     # ── Стекло ──
@@ -264,7 +293,7 @@ def detect_material_properties(materials: list[str]) -> dict:
     # ЛДСП-фасады → кромка 0.8мм (уже считается отдельно), 1мм МДФ-кромка НЕ нужна
     result["mdf_needs_edge"] = False  # по умолчанию НЕ нужна
 
-    PLATED_MDF_BRANDS = ["EVOGLOSS", "EMDIWAY", "AGT", "ETERNO", "SM`ART", "EGGER PERFECT SENSE", "PERFECT SENSE"]
+    PLATED_MDF_BRANDS = ["EVOGLOSS", "EMDIWAY", "EMDIWEY", "EMDIVEY", "AGT", "ETERNO", "SM`ART", "EGGER PERFECT SENSE", "PERFECT SENSE"]
     for brand in PLATED_MDF_BRANDS:
         if brand in materials_upper:
             result["mdf_needs_edge"] = True
@@ -453,17 +482,34 @@ def calculate_quantities(
         h_m = h_mm / 1000
         qty = max(module.quantity, 1)
 
+        # Стол — не корпус: столешница + боковины, без дна/крыши, полок и
+        # задней стенки ХДФ. Иначе стол считался как шкаф (+33 % к себестоимости).
+        is_table = module.type in ("table", "desk")
+        # Стойка/ресепшн — двусторонняя: передняя и задняя панели.
+        is_counter = module.type in ("reception", "counter")
+
         # ── Детали корпуса (на 1 модуль) ──
         sides_area      = 2 * (d_m * h_m)        # 2 боковины
-        bottom_top_area = 2 * (w_m * d_m)         # дно + крыша
-        back_area       = (module.width / 1000) * (module.height / 1000)  # ХДФ без пропила
-        shelf_count     = max(
+        bottom_top_area = w_m * d_m if is_table else 2 * (w_m * d_m)
+        back_area       = (
+            0.0 if (is_table or is_counter)
+            else (module.width / 1000) * (module.height / 1000)  # ХДФ без пропила
+        )
+        # P2-10: модуль «только ящики» (без дверей) не получает полку по
+        # умолчанию — иначе ящичный корпус оплачивал лишнюю полку ЛДСП.
+        facades_n = int(module.facades.get("count") or 0) if module.facades else 0
+        drawers_n = int(module.drawers.get("count") or 0) if module.drawers else 0
+        drawers_only = drawers_n > 0 and facades_n == 0
+        shelf_count     = 1 if is_counter else 0 if is_table else max(
             module.shelves,
-            rules.shelf_default if module.type in ("lower_base", "upper_base") else 0,
+            rules.shelf_default
+            if module.type in ("lower_base", "upper_base") and not drawers_only
+            else 0,
         )
         shelf_area      = w_m * d_m * shelf_count
 
-        ldsp_per_module = sides_area + bottom_top_area + shelf_area
+        front_back_area = 2 * (w_m * h_m) if is_counter else 0.0
+        ldsp_per_module = sides_area + bottom_top_area + shelf_area + front_back_area
         q.ldsp_area_m2 += ldsp_per_module * qty
 
         total_shelves_count += shelf_count * qty
@@ -474,7 +520,7 @@ def calculate_quantities(
         # ── КРОМКА ЛДСП: ВСЕ торцы ВСЕХ деталей (кромим вкруг) ──
         # Периметры в метрах
         sides_perimeter      = 2 * (2 * (d_m + h_m))   # 2 боковины
-        bottom_top_perimeter = 2 * (2 * (w_m + d_m))   # дно + крыша
+        bottom_top_perimeter = (1 if is_table else 2) * (2 * (w_m + d_m))
         shelf_perimeter      = shelf_count * (2 * (w_m + d_m))
         back_perimeter = (
             2 * ((module.width / 1000) + (module.height / 1000))
@@ -482,9 +528,17 @@ def calculate_quantities(
         )
 
         total_perimeter = (sides_perimeter + bottom_top_perimeter + shelf_perimeter + back_perimeter) * qty
+        if is_counter:
+            # передняя и задняя панели стойки — тоже кромятся вкруг
+            total_perimeter += 2 * (2 * (w_m + h_m)) * qty
 
         # Видимые (передние) торцы корпуса
-        visible_per_module = (2 * h_m + 2 * w_m)  # передние кромки боковин + дна/крыши
+        visible_per_module = (
+            (w_m + 2 * h_m) if is_table
+            else (2 * h_m + 2 * w_m)  # передние кромки боковин + дна/крыши
+        )
+        if is_counter:
+            visible_per_module += 2 * (w_m + h_m)  # передняя панель стойки
         visible_per_module += shelf_count * w_m   # передняя кромка каждой полки
 
         # P0-03: стеклянная дверь оплачивается как стекло, а не как фасад
@@ -516,10 +570,27 @@ def calculate_quantities(
             fh = (module.height - 4) / 1000
             fw = (module.width / fc - 3) / 1000
             if not facade_uses_mdf_edge:
-                visible_per_module += (2 * fh + 2 * fw) * fc  # периметр всех фасадов
+                facade_perimeter = (2 * fh + 2 * fw) * fc
+                visible_per_module += facade_perimeter  # периметр всех фасадов
+                # P2-12: фасадные торцы — тоже часть «вкруг». Без этого
+                # edge_04 = total − visible уменьшался при добавлении дверей
+                # (16 → 12 → 10 м на одном корпусе), хотя скрытые торцы
+                # корпуса не меняются.
+                total_perimeter += facade_perimeter * qty
 
         visible_total = visible_per_module * qty
         premium_total = 0  # 2мм не используется по умолчанию
+
+        # Гибрид: геометрия не ниже нормы на тип (см. EDGE_NORMS_M).
+        norm = EDGE_NORMS_M.get(module.type) if EDGE_NORMS_ENABLED else None
+        if norm:
+            # Нормы выведены уже с запасом, поэтому перед умножением
+            # на EDGE_OVERLAP делим, иначе запас начислится дважды.
+            norm_visible = norm[0] * qty / EDGE_OVERLAP
+            norm_total = (norm[0] + norm[1]) * qty / EDGE_OVERLAP
+            visible_total = max(visible_total, norm_visible)
+            total_perimeter = max(total_perimeter, norm_total)
+            visible_per_module = visible_total / qty
 
         q.edge_total_m    += total_perimeter * EDGE_OVERLAP
         q.edge_visible_m  += visible_total * EDGE_OVERLAP
@@ -706,32 +777,12 @@ def calculate_quantities(
         if module.type in ("lower_base", "upper_base", "penal"):
             visible_module_count += qty
 
-    # ── УЧЁТ СМЕЖНЫХ СТЕНОК ──
-    # Соседние модули одного типа и глубины делят боковину
-    adjacency_groups: dict[str, list[RecognizedModule]] = {}
-    for m in modules:
-        key = f"{m.type}_{m.depth}"
-        adjacency_groups.setdefault(key, []).append(m)
-
-    shared_sides_saved = 0
-    shared_area_saved_m2 = 0.0
-    for key, mods in adjacency_groups.items():
-        n = sum(max(m.quantity, 1) for m in mods)
-        if n >= 2:
-            avg_h = sum(m.height * max(m.quantity, 1) for m in mods) / max(n, 1)
-            avg_d = (mods[0].depth + SAW_KERF_MM) / 1000  # глубина в метрах с пропилом
-            potential_joints = n - 1
-            actual_joints = int(potential_joints * 0.7)  # 70% потенциальных стыков
-            area_per_joint = avg_d * ((avg_h + SAW_KERF_MM) / 1000)  # м²
-            shared_sides_saved += actual_joints
-            shared_area_saved_m2 += actual_joints * area_per_joint
-
-    if shared_area_saved_m2 > 0:
-        q.ldsp_area_m2 -= shared_area_saved_m2
-        logger.info(
-            f"Учтено смежных стенок: {shared_sides_saved} стыков, "
-            f"экономия {shared_area_saved_m2:.2f} м² ЛДСП"
-        )
+    # ── СМЕЖНЫЕ СТЕНКИ ──
+    # Подтверждено собственником 2026-11-17: каждый корпус собирается со
+    # СВОИМИ боковинами, общих боковин нет. Раньше здесь вычиталось 70 %
+    # площади стыков для модулей одного типа/глубины — ЛДСП в группах был
+    # занижен на 5,7–10,7 %. Эвристика удалена; BOM (bom.py) всегда считал
+    # каждый корпус отдельно, теперь quantity_calc с ним совпадает.
 
     # ── ИТОГОВЫЕ РАСЧЁТЫ ──
 

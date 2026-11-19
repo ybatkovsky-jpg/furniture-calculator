@@ -74,7 +74,24 @@ def build_module_bom(module: dict) -> ModuleBOM:
     ])
 
     shelves = max(0, _int(module.get("shelves") or 0))
-    if shelves == 0 and module_type in ("lower_base", "upper_base"):
+    drawers_raw = module.get("drawers")
+    drawer_count_raw = (
+        max(0, _int(drawers_raw.get("count")))
+        if isinstance(drawers_raw, dict)
+        else len(drawers_raw) if isinstance(drawers_raw, list) else 0
+    )
+    facades_raw = module.get("facades")
+    facade_count_raw = (
+        max(0, _int(facades_raw.get("count")))
+        if isinstance(facades_raw, dict)
+        else len(facades_raw) if isinstance(facades_raw, list) else 0
+    )
+    # P2-10: «только ящики» — без полки по умолчанию (как в quantity_calc).
+    if (
+        shelves == 0
+        and module_type in ("lower_base", "upper_base")
+        and not (drawer_count_raw > 0 and facade_count_raw == 0)
+    ):
         shelves = 1
     if shelves:
         result.lines.append(BOMLine("Полка", "ЛДСП", w, d, shelves, source="shelves"))
@@ -87,15 +104,12 @@ def build_module_bom(module: dict) -> ModuleBOM:
         )
     )
 
-    facades = module.get("facades")
-    facade_count = 0
     facade_type = "МДФ"
-    if isinstance(facades, dict):
-        facade_count = max(0, _int(facades.get("count")))
-        if str(facades.get("type") or "").lower() == "glass":
-            facade_type = "Стекло"
-    elif isinstance(facades, list):
-        facade_count = len(facades)
+    if isinstance(facades_raw, dict) and str(
+        facades_raw.get("type") or ""
+    ).lower() == "glass":
+        facade_type = "Стекло"
+    facade_count = facade_count_raw
     if facade_count:
         door_w = max(1, (width - 3 * facade_count) // facade_count)
         door_h = max(1, height - 4)
@@ -108,16 +122,17 @@ def build_module_bom(module: dict) -> ModuleBOM:
                 )
             )
 
-    drawers = module.get("drawers")
-    drawer_count = 0
-    if isinstance(drawers, dict):
-        drawer_count = max(0, _int(drawers.get("count")))
-    elif isinstance(drawers, list):
-        drawer_count = len(drawers)
+    drawer_count = drawer_count_raw
+    # P2-11: фасады ящиков делят высоту модуля, а не повторяют её. Раньше
+    # каждый из трёх ящиков получал фасад во всю высоту модуля — BOM/раскрой
+    # завышали МДФ втрое.
+    drawer_facade_h = (
+        max(1, (height - 3 * drawer_count) // drawer_count) if drawer_count else 0
+    )
     for index in range(drawer_count):
         result.lines.append(
             BOMLine(
-                f"Фасад ящика {index + 1}", facade_type, width - 3, height - 4, 1,
+                f"Фасад ящика {index + 1}", facade_type, width - 3, drawer_facade_h, 1,
                 thickness_mm=MDF_THICKNESS_MM, source="drawer",
             )
         )

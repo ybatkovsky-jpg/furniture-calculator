@@ -183,6 +183,7 @@ class ImportStats:
     skipped: int = 0
     rejected: int = 0
     deactivated: int = 0
+    unknown: int = 0
 
     def as_dict(self) -> dict[str, int]:
         return {
@@ -419,22 +420,38 @@ async def import_price_from_xlsx(
     path: str,
     session: AsyncSession,
     changed_by: str | None = None,
+    sheet_names: list[str] | None = None,
+    update_only: bool = False,
 ) -> dict[str, int]:
     """Импорт прайса из XLSX в базу данных.
+
+    `sheet_names` — импортировать только указанные листы. В книгах с расчётом
+    по комнатам один и тот же товар встречается на нескольких листах с разными
+    ценами («общий раскрой» — мастер, комнатные листы — рабочие копии), поэтому
+    без фильтра последний лист перетирает предыдущие.
 
     Возвращает {"created", "updated", "skipped", "rejected", "deactivated"}.
     Позиции, которых нет в файле, деактивируются (is_active=0), а не удаляются.
     """
     # read_only — защита от больших/zip-bomb файлов (P2-10).
     workbook = load_workbook(Path(path), data_only=True, read_only=True)
-    created = updated = skipped = rejected = deactivated = 0
+    created = updated = skipped = rejected = deactivated = unknown = 0
     seen_keys: set = set()
     # Категории, реально присутствующие в файле: деактивируем пропавшие
     # позиции только внутри них. Иначе загрузка одного раздела прайса
     # выключила бы все остальные категории.
     imported_categories: set[str] = set()
 
-    for sheet in workbook.worksheets:
+    sheets = [
+        ws for ws in workbook.worksheets
+        if not sheet_names or ws.title in sheet_names
+    ]
+    if not sheets:
+        raise ValueError(
+            f"В файле нет листов {sheet_names}; есть: {workbook.sheetnames}"
+        )
+
+    for sheet in sheets:
         current_category = detect_category_from_text(sheet.title) or None
         current_brand = None  # бренд из заголовка секции («ЯЩИКИ HETTICH»)
         header_row_index, header_mapping = guess_header_row(sheet)
@@ -579,6 +596,12 @@ async def import_price_from_xlsx(
             price_item = result.scalars().first()
 
             if price_item is None:
+                if update_only:
+                    # Безопасный режим: файл может быть рабочим расчётом,
+                    # а не полным прайсом. Новые строки не создаём, чтобы не
+                    # плодить дубли («СТАРТ PUSH» против «СТАРТ с доводчиком»).
+                    unknown += 1
+                    continue
                 price_item = PriceItem(
                     name=name,
                     category=category,
@@ -598,6 +621,12 @@ async def import_price_from_xlsx(
             old_price = price_item.unit_price
             old_price_value = float(old_price or 0)
             new_price_value = float(unit_price) if unit_price is not None else 0.0
+
+            # В режиме «только обновление» пустая ячейка цены не стирает
+            # известную цену: в рабочих файлах цена часто не заполнена.
+            if update_only and unit_price is None:
+                skipped += 1
+                continue
 
             has_changed = False
             if price_item.unit_price != unit_price:
@@ -642,13 +671,15 @@ async def import_price_from_xlsx(
                 skipped += 1
 
     # Деактивация позиций, которых нет в новом файле (не удаление!).
-    result = await session.execute(select(PriceItem).where(PriceItem.is_active == 1))
-    for item in result.scalars().all():
-        if item.category not in imported_categories:
-            continue
-        if _item_key(item.name, item.category, item.brand) not in seen_keys:
-            item.is_active = 0
-            deactivated += 1
+    # В режиме update_only не деактивируем: файл может быть частичным.
+    if not update_only:
+        result = await session.execute(select(PriceItem).where(PriceItem.is_active == 1))
+        for item in result.scalars().all():
+            if item.category not in imported_categories:
+                continue
+            if _item_key(item.name, item.category, item.brand) not in seen_keys:
+                item.is_active = 0
+                deactivated += 1
 
     workbook.close()
     await session.commit()
@@ -658,4 +689,5 @@ async def import_price_from_xlsx(
         skipped=skipped,
         rejected=rejected,
         deactivated=deactivated,
+        unknown=unknown,
     ).as_dict()

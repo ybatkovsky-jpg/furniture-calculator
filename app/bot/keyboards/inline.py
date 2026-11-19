@@ -151,3 +151,15 @@ def recognition_result_keyboard() -> InlineKeyboardMarkup:
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def album_preview_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура предпросмотра PDF-альбома: комнаты/модули до сохранения."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_album"),
+                InlineKeyboardButton(text="✏️ Исправить", callback_data="correct_album"),
+            ]
+        ]
+    )

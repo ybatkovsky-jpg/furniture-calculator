@@ -19,8 +19,15 @@ jobs:
           pip install -r requirements-dev.txt
       - name: Линтер (фатальные ошибки)
         run: ruff check app --select F,E9
-      - name: Тесты
-        run: python -m pytest -q
+      - name: Тесты + покрытие (P2-17)
+        # Порог 59 — фактический baseline на 2026-11-17 (59,1 %); цель 60 %
+        # после G4, когда появятся тесты на image_analyzer/pdf_parser.
+        # Ratchet не даёт покрытию упасть ниже.
+        run: >
+          python -m pytest -q
+          --cov=app
+          --cov-report=term-missing:skip-covered
+          --cov-fail-under=59
 
   secrets:
     runs-on: ubuntu-latest

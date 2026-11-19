@@ -131,7 +131,7 @@ class Calculation(Base):
     price_after_discount = Column(Float, nullable=True)  # Цена после скидки/наценки
     designer_bonus_amount = Column(Float, nullable=True)  # Сумма бонуса дизайнера
     final_price_cash = Column(Float, nullable=True)  # Финальная цена наличка
-    final_price_noncash = Column(Float, nullable=True)  # Финальная цена безнал (×1.13)
+    final_price_noncash = Column(Float, nullable=True)  # Финальная цена безнал (×1.10)
     
     # ===== УПРАВЛЕНИЕ =====
     

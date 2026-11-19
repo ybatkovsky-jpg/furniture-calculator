@@ -1,7 +1,7 @@
 import logging
 import tempfile
 from pathlib import Path
-from urllib.parse import quote_plus, unquote_plus
+from urllib.parse import unquote_plus
 
 from aiogram import F, Router
 from aiogram.enums import ContentType
@@ -34,6 +34,30 @@ def _admin_denied(message_or_callback) -> bool:
     """
     user = getattr(message_or_callback, "from_user", None)
     return user is None or not settings.is_admin(user.id)
+
+
+def build_price_category_keyboard(categories: list[str]) -> InlineKeyboardMarkup:
+    """Клавиатура категорий прайса по 2 в ряд (aiogram 3.31).
+
+    Callback-данные — индекс категории, а не её текст: кириллица в
+    percent-кодировке легко превышает лимит Telegram в 64 байта
+    («Алюминиевый фасад» — 123 байта), и кнопка перестаёт нажиматься.
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for index, category in enumerate(categories):
+        row.append(
+            InlineKeyboardButton(
+                text=category,
+                callback_data=f"price_category:{index}",
+            )
+        )
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def parse_price_value(value: str) -> float | None:
@@ -98,21 +122,42 @@ async def receive_price_document(message: Message, state: FSMContext):
 
     with tempfile.TemporaryDirectory() as tmpdir:
         target_path = Path(tmpdir) / file_name
-        await document.download(destination_file=str(target_path))
-        async with AsyncSessionLocal() as session:
-            result = await import_price_from_xlsx(str(target_path), session, changed_by=str(message.from_user.id))
+        try:
+            # aiogram 3.31: у Document нет метода download — файл скачивает бот.
+            await message.bot.download(document, destination=target_path)
+            async with AsyncSessionLocal() as session:
+                result = await import_price_from_xlsx(
+                    str(target_path), session, changed_by=str(message.from_user.id)
+                )
+        except Exception:
+            logger.exception(
+                "Не удалось импортировать прайс: user_id=%s file=%s",
+                message.from_user.id,
+                file_name,
+            )
+            await state.clear()
+            await message.answer(
+                "❌ Не удалось загрузить или импортировать прайс. "
+                "Файл не изменён, попробуйте ещё раз."
+            )
+            return
 
     logger.info(
-        "Импорт прайса: user_id=%s file=%s created=%s updated=%s skipped=%s",
+        "Импорт прайса: user_id=%s file=%s created=%s updated=%s skipped=%s rejected=%s deactivated=%s",
         message.from_user.id,
         file_name,
         result["created"],
         result["updated"],
         result["skipped"],
+        result["rejected"],
+        result["deactivated"],
     )
     await state.clear()
     await message.answer(
-        f"✅ Импорт завершен. Создано: {result['created']}, обновлено: {result['updated']}, пропущено: {result['skipped']}"
+        "✅ Импорт завершен. "
+        f"Создано: {result['created']}, обновлено: {result['updated']}, "
+        f"пропущено: {result['skipped']}, отклонено: {result['rejected']}, "
+        f"деактивировано: {result['deactivated']}"
     )
 
 
@@ -235,7 +280,12 @@ async def cmd_price_list(message: Message):
         return
 
     async with AsyncSessionLocal() as session:
-        stmt = select(PriceItem.category).distinct().where(PriceItem.is_active == 1)
+        stmt = (
+            select(PriceItem.category)
+            .distinct()
+            .where(PriceItem.is_active == 1)
+            .order_by(PriceItem.category)
+        )
         result = await session.execute(stmt)
         categories = [row[0] for row in result.fetchall() if row[0]]
 
@@ -243,16 +293,9 @@ async def cmd_price_list(message: Message):
         await message.answer("Список цен пуст.")
         return
 
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    for category in categories:
-        keyboard.add(
-            InlineKeyboardButton(
-                text=category,
-                callback_data=f"price_category:{quote_plus(category)}",
-            )
-        )
-
-    await message.answer("Выберите категорию:", reply_markup=keyboard)
+    await message.answer(
+        "Выберите категорию:", reply_markup=build_price_category_keyboard(categories)
+    )
 
 
 @router.callback_query(F.data.startswith("price_category:"))
@@ -265,7 +308,27 @@ async def callback_price_category(callback: CallbackQuery):
         await callback.answer("⛔ Недостаточно прав", show_alert=True)
         return
 
-    category = unquote_plus(callback.data.split(":", 1)[1])
+    payload = callback.data.split(":", 1)[1]
+    if payload.isdigit():
+        # Новый формат: индекс в отсортированном списке активных категорий.
+        async with AsyncSessionLocal() as session:
+            stmt = (
+                select(PriceItem.category)
+                .distinct()
+                .where(PriceItem.is_active == 1)
+                .order_by(PriceItem.category)
+            )
+            result = await session.execute(stmt)
+            categories = [row[0] for row in result.fetchall() if row[0]]
+        index = int(payload)
+        if index >= len(categories):
+            await callback.answer("Категория не найдена, откройте /price_list заново", show_alert=True)
+            return
+        category = categories[index]
+    else:
+        # Старый формат с percent-кодированным названием (кнопки до правки).
+        category = unquote_plus(payload)
+
     async with AsyncSessionLocal() as session:
         stmt = select(PriceItem).where(
             PriceItem.category == category,

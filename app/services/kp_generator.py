@@ -482,7 +482,7 @@ class KPGenerator:
         story.append(Spacer(1, 20))
 
         final_cash = calculation.final_price_cash or calculation.total_base_cash
-        final_noncash = calculation.final_price_noncash or (final_cash * 1.13)
+        final_noncash = calculation.final_price_noncash or (final_cash * 1.10)
 
         total_cash_text = f"Итого наличными: {self._format_currency(final_cash)}"
         total_noncash_text = f"Итого безналичными: {self._format_currency(final_noncash)}"
@@ -514,7 +514,7 @@ class KPGenerator:
         """
         # Определить итоговые цены
         total_cash = calculation.final_price_cash or calculation.total_base_cash
-        total_noncash = calculation.final_price_noncash or (total_cash * 1.13)
+        total_noncash = calculation.final_price_noncash or (total_cash * 1.10)
 
         # Создать запись КП
         kp_record = CommercialOffer(

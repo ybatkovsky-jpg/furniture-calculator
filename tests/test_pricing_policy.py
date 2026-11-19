@@ -118,15 +118,18 @@ def test_excel_financial_section_uses_same_policy():
     assert _apply_pricing_policy(ws, policy) is True
 
     # P2-16: в Excel пишутся значения, а не формулы.
+    # День 4: доставка клиенту 10 000 ₽ — отдельная строка, в базу B и
+    # наценку 30% не входит.
     assert ws["E347"].value == 100_000
     assert ws["E348"].value == 80_000      # изготовление 0.80
     assert ws["E349"].value == 55_000      # монтаж 0.55
+    assert ws["E351"].value == 10_000      # доставка клиенту
     assert ws["E352"].value == 8_000       # проектировка 0.10 от изготовления
     assert ws["E353"].value == 5_000       # прочие 0.05
-    assert ws["E354"].value == 257_000     # промежуточный итог
-    assert ws["E355"].value == 77_100      # прибыль 0.30
-    assert ws["E359"].value == 339_112     # наличка (как в baseline плана)
-    assert ws["E360"].value == round(339_112 * 1.13, 2)
+    assert ws["E354"].value == 250_500     # промежуточный итог без доставки
+    assert ws["E355"].value == 75_150      # прибыль 0.30
+    assert ws["E359"].value == 340_535     # наличка: мебель + доставка
+    assert ws["E360"].value == 383_504.55  # безнал: мебель×1.13 + доставка
 
 
 def test_excel_values_are_readable_without_recalc(tmp_path):
@@ -140,7 +143,8 @@ def test_excel_values_are_readable_without_recalc(tmp_path):
 
     reread = load_workbook(path, data_only=True)["Рассчет"]
     assert reread["E359"].value and reread["E359"].value > 0
-    assert reread["E360"].value == round(reread["E359"].value * 1.13, 2)
+    furniture_cash = reread["E359"].value - 10_000
+    assert reread["E360"].value == round(furniture_cash * 1.13 + 10_000, 2)
 
 
 def test_golden_cost_matches_excel_formula_chain():
@@ -151,19 +155,29 @@ def test_golden_cost_matches_excel_formula_chain():
         material_cost=cost,
         **policy.as_cost_kwargs(),
     )
-    # Повторяем формулы Excel на Python.
+    # Повторяем формулы Excel на Python. Доставка клиенту — отдельно и без
+    # наценки 30%; безналичная наценка 13% — на мебель, не на доставку.
     manufacturing = round(cost * policy.manufacturing_rate)
-    installation = round(cost * policy.installation_rate)
     measurement = policy.measurement_fee
-    delivery = policy.delivery_fee
+    delivery = policy.delivery_fee_client
     design = round(manufacturing * policy.design_rate)
     overhead = round(cost * policy.overhead_rate)
-    subtotal = round(sum([cost, manufacturing, installation, measurement, delivery, design, overhead]))
+    # Монтаж с 19.11 — 15 % от конечной цены клиента: он входит в базу и на него
+    # начисляются прибыль и зарплаты, поэтому считаем из уравнения.
+    base_without_install = round(sum([cost, manufacturing, measurement, design, overhead]))
+    markup = (
+        (1 + policy.profit_rate)
+        * (1 + policy.tech_director_rate + policy.manager_rate + policy.designer_rate)
+    )
+    share = policy.installation_rate * markup
+    installation = round(base_without_install * share / (1 - share))
+    subtotal = round(base_without_install + installation)
     profit = round(subtotal * policy.profit_rate)
     total_with_profit = round(profit + subtotal)
     tech = round(total_with_profit * policy.tech_director_rate)
-    cash = round(total_with_profit + tech)
-    noncash = round(cash * policy.noncash_markup, 2)
+    furniture_cash = round(total_with_profit + tech)
+    cash = round(furniture_cash + delivery)
+    noncash = round(furniture_cash * policy.noncash_markup + delivery, 2)
 
     assert result.manufacturing == manufacturing
     assert result.installation == installation
@@ -171,5 +185,6 @@ def test_golden_cost_matches_excel_formula_chain():
     assert result.overhead == overhead
     assert result.profit == profit
     assert result.tech_director == tech
-    assert result.total_base_cash == cash
+    assert result.total_base_cash == furniture_cash
+    assert result.final_cash == cash
     assert result.final_noncash == noncash

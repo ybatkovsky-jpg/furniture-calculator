@@ -103,11 +103,20 @@ def _try_place(sheet: SheetLayout, part: PlacedPart) -> bool:
     return False
 
 
-def nest_bom(bom: list, sheet_sizes: dict[str, tuple[int, int]] | None = None) -> NestingResult:
+def nest_bom(
+    bom: list,
+    sheet_sizes: dict[str, tuple[int, int]] | None = None,
+    *,
+    grain_locked: bool = False,
+) -> NestingResult:
     """Разложить детали BOM по листам.
 
     `bom` — список ModuleBOM (из app.domain.bom). Детали с материалом, для
     которого нет размера листа, попадают в `unplaced`.
+
+    `grain_locked=True` — направление рисунка задано (текстурный декор):
+    поворот детали на 90° запрещён, деталь кладётся только так, как задана в
+    BOM. Иначе поворот рвал бы рисунок на боковинах и фасадах.
     """
     sizes = dict(SHEET_SIZES)
     if sheet_sizes:
@@ -115,12 +124,16 @@ def nest_bom(bom: list, sheet_sizes: dict[str, tuple[int, int]] | None = None) -
 
     parts_by_material: dict[str, list[tuple[str, int, int, int]]] = {}
     for module_bom in bom:
+        # P2-11: `ModuleBOM.quantity` — число одинаковых корпусов. Без этого
+        # множителя 5 одинаковых модулей, свёрнутых в одну запись, давали
+        # детали одного корпуса и занижали листы/отход.
+        module_qty = max(int(getattr(module_bom, "quantity", 1) or 1), 1)
         for line in module_bom.lines:
             material = line.material
             if material not in sizes:
                 continue
             parts_by_material.setdefault(material, []).append(
-                (line.part, line.width_mm, line.height_mm, line.quantity)
+                (line.part, line.width_mm, line.height_mm, line.quantity * module_qty)
             )
 
     result = NestingResult()
@@ -134,9 +147,11 @@ def nest_bom(bom: list, sheet_sizes: dict[str, tuple[int, int]] | None = None) -
         sheets: list[SheetLayout] = []
         for name, width, height in expanded:
             placed = False
-            # Поворот на 90°, если так деталь влезает
+            # Поворот на 90°, если так деталь влезает. Для направленного
+            # рисунка (текстурный ЛДСП) поворот запрещён — иначе рисунок
+            # встанет поперёк на части деталей.
             variants = [(width, height, False)]
-            if width != height:
+            if width != height and not grain_locked:
                 variants.append((height, width, True))
             for variant_w, variant_h, rotated in variants:
                 part = PlacedPart(name, variant_w, variant_h, 0, 0, rotated)

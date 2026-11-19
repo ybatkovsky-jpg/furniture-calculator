@@ -1,0 +1,245 @@
+{
+  "source": "KP/Коммерческое предложение волонтерский центр.pdf",
+  "annotation": "состав по рендеру, подтверждается техдиром",
+  "items": [
+    {
+      "title": "Кухонный гарнитур 3000×1700 H2550",
+      "width": 3000,
+      "depth": 1700,
+      "height": 2550,
+      "qty": 1,
+      "kp_unit": 375000,
+      "zone": "Кухня",
+      "modules": [
+        {
+          "type": "lower_base",
+          "width": 600,
+          "depth": 560,
+          "height": 820,
+          "quantity": 5,
+          "facades": {
+            "count": 1
+          },
+          "shelves": 1
+        },
+        {
+          "type": "upper_base",
+          "width": 600,
+          "depth": 300,
+          "height": 720,
+          "quantity": 5,
+          "facades": {
+            "count": 1
+          },
+          "shelves": 1
+        },
+        {
+          "type": "penal",
+          "width": 600,
+          "depth": 560,
+          "height": 2100,
+          "quantity": 2,
+          "facades": {
+            "count": 2
+          },
+          "shelves": 2
+        }
+      ],
+      "our_unit": 215074,
+      "our_total": 219738,
+      "kp_total": 375000
+    },
+    {
+      "title": "Шкаф большой под одежду 2000×550 H2550",
+      "width": 2000,
+      "depth": 550,
+      "height": 2550,
+      "qty": 1,
+      "kp_unit": 159000,
+      "zone": "Гардеробная",
+      "modules": [
+        {
+          "type": "penal",
+          "width": 2000,
+          "depth": 550,
+          "height": 2550,
+          "quantity": 1,
+          "facades": {
+            "count": 4
+          },
+          "shelves": 4
+        }
+      ],
+      "our_unit": 68718,
+      "our_total": 70858,
+      "kp_total": 159000
+    },
+    {
+      "title": "Ресепшн 1800×700 H1100",
+      "width": 1800,
+      "depth": 700,
+      "height": 1100,
+      "qty": 1,
+      "kp_unit": 149000,
+      "zone": "Офис",
+      "modules": [
+        {
+          "type": "lower_base",
+          "width": 1800,
+          "depth": 700,
+          "height": 1100,
+          "quantity": 1,
+          "facades": {
+            "count": 3
+          },
+          "drawers": {
+            "count": 3
+          },
+          "shelves": 1
+        }
+      ],
+      "our_unit": 94701,
+      "our_total": 97291,
+      "kp_total": 149000
+    },
+    {
+      "title": "Стол рабочий 1800×700 H1100",
+      "width": 1800,
+      "depth": 700,
+      "height": 1100,
+      "qty": 8,
+      "kp_unit": 45700,
+      "zone": "Офис",
+      "modules": [
+        {
+          "type": "open_unit",
+          "width": 1800,
+          "depth": 700,
+          "height": 750,
+          "quantity": 1,
+          "shelves": 1
+        },
+        {
+          "type": "drawer_unit",
+          "width": 400,
+          "depth": 700,
+          "height": 750,
+          "quantity": 1,
+          "drawers": {
+            "count": 3
+          }
+        }
+      ],
+      "our_unit": 73435,
+      "our_total": 605264,
+      "kp_total": 365600
+    },
+    {
+      "title": "Шкаф для бумаг 1000×450 H2550",
+      "width": 1000,
+      "depth": 450,
+      "height": 2550,
+      "qty": 5,
+      "kp_unit": 54000,
+      "zone": "Офис",
+      "modules": [
+        {
+          "type": "penal",
+          "width": 1000,
+          "depth": 450,
+          "height": 2550,
+          "quantity": 1,
+          "facades": {
+            "count": 2
+          },
+          "shelves": 5
+        }
+      ],
+      "our_unit": 55419,
+      "our_total": 286655,
+      "kp_total": 270000
+    },
+    {
+      "title": "Стеллаж-витрина 1000×450 H2550",
+      "width": 1000,
+      "depth": 450,
+      "height": 2550,
+      "qty": 2,
+      "kp_unit": 109000,
+      "zone": "Офис",
+      "modules": [
+        {
+          "type": "lower_base",
+          "width": 1000,
+          "depth": 450,
+          "height": 820,
+          "quantity": 1,
+          "facades": {
+            "count": 2
+          },
+          "shelves": 1
+        },
+        {
+          "type": "upper_base",
+          "width": 1000,
+          "depth": 450,
+          "height": 1700,
+          "quantity": 1,
+          "facades": {
+            "count": 2,
+            "type": "glass"
+          },
+          "shelves": 3,
+          "has_glass": true
+        }
+      ],
+      "our_unit": 75730,
+      "our_total": 155984,
+      "kp_total": 218000
+    },
+    {
+      "title": "Трибуна 600×550 H1200",
+      "width": 600,
+      "depth": 550,
+      "height": 1200,
+      "qty": 1,
+      "kp_unit": 46200,
+      "zone": "Офис",
+      "modules": [
+        {
+          "type": "open_unit",
+          "width": 600,
+          "depth": 550,
+          "height": 1200,
+          "quantity": 1,
+          "shelves": 2
+        }
+      ],
+      "our_unit": 22119,
+      "our_total": 23456,
+      "kp_total": 46200
+    },
+    {
+      "title": "Стол мобильный 1000×600 H750",
+      "width": 1000,
+      "depth": 600,
+      "height": 750,
+      "qty": 6,
+      "kp_unit": 20300,
+      "zone": "Офис",
+      "modules": [
+        {
+          "type": "open_unit",
+          "width": 1000,
+          "depth": 600,
+          "height": 750,
+          "quantity": 1,
+          "shelves": 1
+        }
+      ],
+      "our_unit": 21885,
+      "our_total": 139314,
+      "kp_total": 121800
+    }
+  ]
+}

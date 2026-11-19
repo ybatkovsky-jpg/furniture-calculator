@@ -50,3 +50,24 @@ def test_bom_is_saved_in_quote():
     )
     assert result.bom
     assert result.bom[0].lines
+
+
+def test_bom_drawer_only_has_no_default_shelf():
+    """P2-10: корпус «только ящики» не получает полку по умолчанию."""
+    bom = build_module_bom({
+        "type": "lower_base", "width": 600, "depth": 560, "height": 820,
+        "drawers": {"count": 3},
+    })
+    assert not [line for line in bom.lines if line.part == "Полка"]
+
+
+def test_bom_drawer_facades_divide_module_height():
+    """P2-11: фасады ящиков делят высоту модуля, а не повторяют её."""
+    bom = build_module_bom({
+        "type": "lower_base", "width": 600, "depth": 560, "height": 820,
+        "drawers": {"count": 3},
+    })
+    fronts = [line for line in bom.lines if line.part.startswith("Фасад ящика")]
+    assert len(fronts) == 3
+    assert all(line.height_mm < 820 for line in fronts)
+    assert sum(line.height_mm for line in fronts) <= 820

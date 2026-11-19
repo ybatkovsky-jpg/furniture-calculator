@@ -27,7 +27,7 @@ class CalcSettings(Base):
     - Прибыль: ×0.30
     - Тех. директор: ×0.015
     - Бонус дизайнера: по умолчанию 10%
-    - Коэфф. безнала: ×1.13
+    - Коэфф. безнала: ×1.10
     - Коэфф. использования листа: 0.85
     """
     __tablename__ = "calc_settings"
@@ -58,7 +58,7 @@ class CalcSettings(Base):
     delivery_fee_client = Column(Float, default=10000)  # Доставка клиенту
     
     # Прочие коэффициенты
-    noncash_markup = Column(Float, default=1.13)  # Наценка за безнал
+    noncash_markup = Column(Float, default=1.10)  # Наценка за безнал
     sheet_utilization = Column(Float, default=0.85)  # Коэфф. использования листа ЛДСП/МДФ
     
     # Бонус дизайнера

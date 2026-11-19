@@ -179,18 +179,28 @@ class Settings(BaseSettings):
 
     # Коэффициенты расчёта
     manufacturing_rate: float = 0.80
-    installation_rate: float = 0.55
+    installation_rate: float = 0.15
     design_rate: float = 0.10
     overhead_rate: float = 0.05
-    profit_rate: float = 0.30
+    profit_rate: float = 0.35
     tech_director_rate: float = 0.015
     manager_rate: float = 0.0
     designer_rate: float = 0.0
     measurement_fee: float = 2500
     delivery_fee: float = 6500
     delivery_fee_client: float = 10000
-    noncash_markup: float = 1.13
+    noncash_markup: float = 1.10
     sheet_utilization: float = 0.85
+    # P1-16: подтверждено собственником 2026-11-17 — маржа над полной
+    # себестоимостью не ниже 15 %, скидка без согласования директора — до 10 %.
+    # При базовой цене 131,9 % себестоимости скидка 10 % оставляет 18,75 % маржи.
+    min_margin_rate: float = 0.15
+    max_discount_percent: float = 10.0
+    # P2-2: подтверждено собственником 17.11 — 30 % запаса к занятой доле
+    # листа (брак, подрезка, ошибка резчика).
+    sheet_reserve_rate: float = 0.30
+    # Запас на возможные ошибки распознавания/состава (0 = выключен).
+    risk_reserve_rate: float = 0.0
 
     # Налоговый режим (подтверждён: УСН «доходы минус расходы», 15%,
     # Хабаровский край; НДС не применяется). Налог считается от прибыли и

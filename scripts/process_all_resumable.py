@@ -21,6 +21,9 @@ from app.services.image_analyzer import GeminiImageAnalyzer, RecognizedModule
 from app.services.full_pipeline import PipelineResult, RoomSpec, _calculate_quality
 from app.services.template_filler import fill_template_from_pipeline
 from app.services.project_spec import load_project_spec
+from app.db.session import AsyncSessionLocal
+from app.services.price_book import load_price_book
+from app.services.price_catalog import load_price_catalog
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_IMAGES_DIR = ROOT / "input_images"
@@ -160,7 +163,17 @@ async def main():
             result = PipelineResult(success=True, project_name=project_name, rooms=rooms)
             spec = load_project_spec(str(spec_path)) if spec_path and spec_path.exists() else None
             output_path.parent.mkdir(exist_ok=True)
-            fill_template_from_pipeline(result, str(template_path), str(output_path), project_spec=spec)
+            async with AsyncSessionLocal() as session:
+                price_catalog = await load_price_catalog(session)
+                price_book = await load_price_book(session)
+            fill_template_from_pipeline(
+                result,
+                str(template_path),
+                str(output_path),
+                project_spec=spec,
+                price_catalog=price_catalog,
+                price_book=price_book,
+            )
             
             total_mods = sum(sum(m.quantity for m in r.modules) for r in rooms)
             total_drw = sum(sum(1 for m in r.modules if m.drawers) for r in rooms)

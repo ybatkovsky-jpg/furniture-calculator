@@ -101,10 +101,9 @@ async def evaluate(page: dict, analyzer: GeminiImageAnalyzer) -> dict:
     coverage = round(width_sum / total_width, 3) if total_width else None
 
     flags = []
-    if coverage is not None and coverage < COVERAGE_MIN:
-        flags.append(f"покрытие {coverage:.0%} < 95% — состав неполный")
-    if coverage is not None and coverage > COVERAGE_MAX:
-        flags.append(f"покрытие {coverage:.0%} > 110% — состав не сходится с габаритом")
+    # Решение о полноте принимает модуль качества (один источник правил),
+    # стенд добавляет только сверку с эталоном.
+    flags.extend(meta.get("quality_flags") or [])
     expected_width = page.get("width_mm")
     width_delta = None
     if expected_width and total_width:

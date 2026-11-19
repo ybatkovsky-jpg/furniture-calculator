@@ -40,7 +40,9 @@ def test_corner_kitchen_over_coverage_is_flagged() -> None:
     quality = assess(modules, total, "Кухня")
     assert quality.coverage is not None
     if quality.coverage > 1.10:
-        assert any("не сходится" in flag for flag in quality.flags)
+        assert any(
+            "проекций" in flag or "не сходится" in flag for flag in quality.flags
+        )
         assert quality.score < 0.8
 
 

@@ -34,19 +34,19 @@
     "total_width_mm": 4860,
     "expected_width_mm": 4860,
     "width_delta_pct": 0.0,
-    "modules_width_sum_mm": 5611,
-    "lower_width_mm": 5611,
-    "upper_width_mm": 4439,
-    "coverage": 1.155,
-    "doors": 17,
+    "modules_width_sum_mm": 5600,
+    "lower_width_mm": 5600,
+    "upper_width_mm": 4862,
+    "coverage": 1.152,
+    "doors": 15,
     "expected_doors": 15,
     "drawers": 0,
-    "modules": 14,
+    "modules": 7,
     "confidence": "medium",
     "scale_ok": true,
     "quality_score": 0.65,
     "quality_flags": [
-      "покрытие 116% > 110% — не сходится с габаритом"
+      "покрытие 115% > 110% — модули из разных проекций"
     ],
     "model_confidence": "medium",
     "projection": {
@@ -58,8 +58,7 @@
     "image_flags": [],
     "image_skew_deg": 0.0,
     "flags": [
-      "покрытие 116% > 110% — состав не сходится с габаритом",
-      "дверей 17, ожидалось 15"
+      "покрытие 115% > 110% — модули из разных проекций"
     ]
   },
   {
@@ -238,7 +237,8 @@
     "image_flags": [],
     "image_skew_deg": 0.0,
     "flags": [
-      "покрытие 0% < 95% — состав неполный"
+      "покрытие 0% < 95% — состав неполный",
+      "модули не найдены"
     ]
   },
   {
@@ -286,10 +286,8 @@
     "modules": 3,
     "confidence": "high",
     "scale_ok": true,
-    "quality_score": 0.65,
-    "quality_flags": [
-      "покрытие 54% < 95% — состав неполный"
-    ],
+    "quality_score": 1.0,
+    "quality_flags": [],
     "model_confidence": "high",
     "projection": {
       "clusters": 1,
@@ -299,9 +297,7 @@
     },
     "image_flags": [],
     "image_skew_deg": 0.0,
-    "flags": [
-      "покрытие 54% < 95% — состав неполный"
-    ]
+    "flags": []
   },
   {
     "page": "0011",

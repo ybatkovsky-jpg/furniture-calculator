@@ -32,6 +32,7 @@ class CompositionQuality:
 
     score: float
     coverage: float | None
+    coverage_sum: float | None
     lower_width_mm: int
     upper_width_mm: int
     doors: int
@@ -80,18 +81,25 @@ def assess(
 
     total = float(total_width_mm or 0)
     coverage = None
+    coverage_sum = None
     if total > 0:
         coverage = round(max(lower, upper) / total, 3)
+        # Сумма всех модулей: на листах, где пеналы стоят рядом с нижним рядом,
+        # «по ярусам» даёт ложный недобор, а сумма сходится с габаритом.
+        coverage_sum = round((lower + upper) / total, 3)
 
     if total <= 0:
         score -= 0.5
         flags.append("габарит не прочитан — проверить размерную линию")
-    elif coverage is not None and coverage < COVERAGE_MIN:
-        score -= 0.35
-        flags.append(f"покрытие {coverage:.0%} < 95% — состав неполный")
     elif coverage is not None and coverage > COVERAGE_MAX:
         score -= 0.35
-        flags.append(f"покрытие {coverage:.0%} > 110% — не сходится с габаритом")
+        flags.append(f"покрытие {coverage:.0%} > 110% — модули из разных проекций")
+    elif (
+        coverage is not None and coverage < COVERAGE_MIN
+        and (coverage_sum is None or coverage_sum < COVERAGE_MIN)
+    ):
+        score -= 0.35
+        flags.append(f"покрытие {coverage:.0%} < 95% — состав неполный")
 
     doors_per_m = round(doors / (total / 1000), 2) if total > 0 else None
     if doors_per_m is not None and doors_per_m > DOORS_PER_M_MAX:
@@ -112,6 +120,7 @@ def assess(
     return CompositionQuality(
         score=round(max(0.0, min(1.0, score)), 2),
         coverage=coverage,
+        coverage_sum=coverage_sum,
         lower_width_mm=int(lower),
         upper_width_mm=int(upper),
         doors=doors,

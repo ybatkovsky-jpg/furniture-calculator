@@ -38,7 +38,7 @@ def test_over_coverage_is_flagged() -> None:
     modules = [module(900, 6)]
     quality = assess(modules, 3000, "Кухня")
     assert quality.coverage == 1.8
-    assert any("не сходится" in flag for flag in quality.flags)
+    assert any("проекций" in flag for flag in quality.flags)
 
 
 def test_missing_total_width_is_flagged() -> None:

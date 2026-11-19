@@ -100,6 +100,14 @@ class FacadeResult:
 # УНИФИЦИРОВАННЫЙ ПРОМПТ — один для всех моделей
 # С `response_format: json_object` модель ГАРАНТИРОВАННО вернёт JSON.
 # Промпт фокусируется на ТОЧНОСТИ, а не на формате.
+# Многоракурсный лист: просим только вид спереди — проверено на 0002 (17 дверей
+# из смешанных проекций → 15, истина 15).
+FRONT_VIEW_HINT = (
+    "На листе несколько видов одной и той же кухни. Описывай ТОЛЬКО вид спереди "
+    "(главный фасад): перечисли его корпуса и двери по порядку слева направо. "
+    "Не добавляй двери из вида сбоку, сверху и из разрезов."
+)
+
 UNIFIED_PROMPT = """Ты — конструктор-технолог мебельной фабрики. Проанализируй чертёж и извлеки ВСЕ мебельные модули в JSON.
 
 ТИПЫ МОДУЛЕЙ (строго):
@@ -998,6 +1006,21 @@ class GeminiImageAnalyzer:
             modules = recognition_cache.dicts_to_modules(payload.get("modules") or [])
             modules = self._reclassify_tall_modules(modules)
             zone_cached = payload.get("zone_type")
+
+            # Кэш тоже может содержать многоракурсный ответ — проверяем и
+            # переспрашиваем (результат переспроса кэшируется отдельно).
+            quality_cached = assess_composition(
+                modules, payload.get("total_width_mm") or 0, zone_cached
+            )
+            if (
+                hint is None
+                and quality_cached.coverage is not None
+                and quality_cached.coverage > 1.10
+            ):
+                logger.info("Кэш с переполненным покрытием — переспрос по виду спереди")
+                return await self.analyze_page(
+                    image_path, return_meta=return_meta, hint=FRONT_VIEW_HINT
+                )
             if return_meta:
                 meta = self._build_meta(
                     modules,
@@ -1209,6 +1232,20 @@ class GeminiImageAnalyzer:
                 logger.warning("Не удалось сохранить кэш распознавания: %s", exc)
 
             modules = self._reclassify_tall_modules(modules)
+
+            # Если ширины модулей не сходятся с габаритом (перебор >110 %) —
+            # это многоракурсный лист: переспрашиваем, ограничив вид спереди.
+            quality_now = assess_composition(modules, total_width_mm, zone_type)
+            if (
+                hint is None
+                and quality_now.coverage is not None
+                and quality_now.coverage > 1.10
+            ):
+                logger.info("Многоракурсный лист — переспрос только по виду спереди")
+                return await self.analyze_page(
+                    image_path, return_meta=return_meta, hint=FRONT_VIEW_HINT
+                )
+
             if return_meta:
                 return modules, zone_type, materials, confidence, self._build_meta(
                     modules, total_width_mm, heights_mm, zone_type

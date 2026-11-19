@@ -35,7 +35,7 @@ COVERAGE_MAX = 1.10
 WIDTH_TOLERANCE = 0.10
 
 
-UPPER_TYPES = {"upper_base", "penal", "shelf_unit"}
+UPPER_TYPES = {"upper_base", "shelf_unit"}
 
 
 def module_stats(modules) -> tuple[float, float, int, int]:
@@ -230,6 +230,11 @@ async def main() -> int:
     existing = {}
     if OUT_JSON.exists():
         existing = {r["page"]: r for r in json.loads(OUT_JSON.read_text(encoding="utf-8"))}
+    # Не теряем результаты переспроса при обычном прогоне без --reask.
+    for row in rows:
+        previous = existing.get(row["page"]) or {}
+        if "reask" not in row and "reask" in previous:
+            row["reask"] = previous["reask"]
     existing.update({r["page"]: r for r in rows})
     ordered = [existing[key] for key in sorted(existing)]
     OUT_JSON.write_text(json.dumps(ordered, ensure_ascii=False, indent=2), encoding="utf-8")

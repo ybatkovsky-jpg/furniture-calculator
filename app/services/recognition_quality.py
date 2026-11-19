@@ -16,7 +16,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-UPPER_TYPES = {"upper_base", "penal", "shelf_unit"}
+# Пенал стоит на полу и занимает ту же линию плана, что нижние модули,
+# поэтому в покрытии он относится к нижнему ярусу.
+UPPER_TYPES = {"upper_base", "shelf_unit"}
 KITCHEN_ZONES = {"кухня", "kitchen"}
 DOORS_PER_M_MIN = 1.5
 DOORS_PER_M_MAX = 3.5

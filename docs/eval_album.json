@@ -6,8 +6,8 @@
     "expected_width_mm": 1650,
     "width_delta_pct": 0.0,
     "modules_width_sum_mm": 1648,
-    "lower_width_mm": 0,
-    "upper_width_mm": 1648,
+    "lower_width_mm": 1648,
+    "upper_width_mm": 0,
     "coverage": 0.999,
     "doors": 4,
     "expected_doors": 2,
@@ -22,16 +22,7 @@
     "image_skew_deg": 0.0,
     "flags": [
       "дверей 4, ожидалось 2"
-    ],
-    "reask": {
-      "doors": 2,
-      "drawers": 0,
-      "modules": 2,
-      "quality_score": 1.0,
-      "expected": 2,
-      "accepted": true,
-      "reason": "переспрос 2 в допуске ±2 от 4"
-    }
+    ]
   },
   {
     "page": "0002",
@@ -39,10 +30,10 @@
     "total_width_mm": 4860,
     "expected_width_mm": 4860,
     "width_delta_pct": 0.0,
-    "modules_width_sum_mm": 5540,
-    "lower_width_mm": 4914,
-    "upper_width_mm": 5540,
-    "coverage": 1.14,
+    "modules_width_sum_mm": 5611,
+    "lower_width_mm": 5611,
+    "upper_width_mm": 4843,
+    "coverage": 1.155,
     "doors": 16,
     "expected_doors": 15,
     "drawers": 1,
@@ -51,23 +42,14 @@
     "scale_ok": true,
     "quality_score": 0.65,
     "quality_flags": [
-      "покрытие 114% > 110% — не сходится с габаритом"
+      "покрытие 116% > 110% — не сходится с габаритом"
     ],
     "model_confidence": "medium",
     "image_flags": [],
     "image_skew_deg": 0.0,
     "flags": [
-      "покрытие 114% > 110% — состав не сходится с габаритом"
-    ],
-    "reask": {
-      "doors": 27,
-      "drawers": 0,
-      "modules": 11,
-      "quality_score": 0.45,
-      "expected": 15,
-      "accepted": false,
-      "reason": "переспрос 27 расходится с согласием 16 больше ±2 — оставлен флаг"
-    }
+      "покрытие 116% > 110% — состав не сходится с габаритом"
+    ]
   },
   {
     "page": "0003",
@@ -122,8 +104,8 @@
     "expected_width_mm": 3030,
     "width_delta_pct": 1.7,
     "modules_width_sum_mm": 3081,
-    "lower_width_mm": 0,
-    "upper_width_mm": 3081,
+    "lower_width_mm": 3081,
+    "upper_width_mm": 0,
     "coverage": 1.0,
     "doors": 3,
     "expected_doors": null,
@@ -168,8 +150,8 @@
     "expected_width_mm": 1600,
     "width_delta_pct": 0.0,
     "modules_width_sum_mm": 1600,
-    "lower_width_mm": 0,
-    "upper_width_mm": 1600,
+    "lower_width_mm": 1600,
+    "upper_width_mm": 0,
     "coverage": 1.0,
     "doors": 2,
     "expected_doors": null,
@@ -210,16 +192,7 @@
     "image_skew_deg": 0.0,
     "flags": [
       "покрытие 0% < 95% — состав неполный"
-    ],
-    "reask": {
-      "doors": 0,
-      "drawers": 0,
-      "modules": 0,
-      "quality_score": 0.15,
-      "expected": 0,
-      "accepted": true,
-      "reason": "переспрос 0 в допуске ±2 от 0"
-    }
+    ]
   },
   {
     "page": "0009",
@@ -228,8 +201,8 @@
     "expected_width_mm": null,
     "width_delta_pct": null,
     "modules_width_sum_mm": 2000,
-    "lower_width_mm": 0,
-    "upper_width_mm": 2000,
+    "lower_width_mm": 2000,
+    "upper_width_mm": 0,
     "coverage": 1.0,
     "doors": 3,
     "expected_doors": null,
@@ -274,8 +247,8 @@
     "expected_width_mm": 1581,
     "width_delta_pct": 0.0,
     "modules_width_sum_mm": 1581,
-    "lower_width_mm": 0,
-    "upper_width_mm": 1581,
+    "lower_width_mm": 1581,
+    "upper_width_mm": 0,
     "coverage": 1.0,
     "doors": 5,
     "expected_doors": 3,
@@ -290,16 +263,7 @@
     "image_skew_deg": 0.0,
     "flags": [
       "дверей 5, ожидалось 3"
-    ],
-    "reask": {
-      "doors": 4,
-      "drawers": 0,
-      "modules": 3,
-      "quality_score": 1.0,
-      "expected": 3,
-      "accepted": true,
-      "reason": "переспрос 4 в допуске ±2 от 5"
-    }
+    ]
   },
   {
     "page": "0012",
@@ -308,8 +272,8 @@
     "expected_width_mm": 800,
     "width_delta_pct": 0.0,
     "modules_width_sum_mm": 800,
-    "lower_width_mm": 0,
-    "upper_width_mm": 800,
+    "lower_width_mm": 800,
+    "upper_width_mm": 0,
     "coverage": 1.0,
     "doors": 2,
     "expected_doors": null,

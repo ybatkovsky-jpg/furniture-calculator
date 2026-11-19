@@ -994,6 +994,7 @@ class GeminiImageAnalyzer:
         if cached and cached.get("data"):
             payload = cached["data"]
             modules = recognition_cache.dicts_to_modules(payload.get("modules") or [])
+            modules = self._reclassify_tall_modules(modules)
             zone_cached = payload.get("zone_type")
             if return_meta:
                 meta = self._build_meta(
@@ -1190,6 +1191,7 @@ class GeminiImageAnalyzer:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Не удалось сохранить кэш распознавания: %s", exc)
 
+            modules = self._reclassify_tall_modules(modules)
             if return_meta:
                 return modules, zone_type, materials, confidence, self._build_meta(
                     modules, total_width_mm, heights_mm, zone_type
@@ -1201,6 +1203,22 @@ class GeminiImageAnalyzer:
             if return_meta:
                 return [], None, [], "low", self._build_meta([], 0, {}, None)
             return [], None, [], "low"
+
+    @staticmethod
+    def _reclassify_tall_modules(modules: list["RecognizedModule"]) -> list["RecognizedModule"]:
+        """Высокий модуль (≥1800 мм) — это пенал, а не нижняя база.
+
+        Модель часто ставит высокие шкафы в `lower_base`: на `0002` выходило
+        8 нижних дверей и 1 пенал вместо 5 и 3. Для расчёта это важно — у пенала
+        другая глубина, полки и нормы.
+        """
+        for module in modules:
+            if (
+                getattr(module, "type", "") == "lower_base"
+                and (getattr(module, "height", 0) or 0) >= 1800
+            ):
+                module.type = "penal"
+        return modules
 
     def _build_meta(
         self,

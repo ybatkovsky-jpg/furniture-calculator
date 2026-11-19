@@ -53,7 +53,7 @@ class CostBreakdown:
     fastener_cost: float = 0        # конфирмат, опоры, подвесы, цоколь (P0-02)
 
     # === Рассчитываемые поля ===
-    cost_price: float = 0           # себестоимость (сумма всего)
+    cost_price: float = 0           # закупка материалов и фурнитуры (НЕ полная себестоимость)
     manufacturing: float = 0        # изготовление = себестоимость × 0.80
     installation: float = 0         # монтаж = 15 % от конечной цены клиента
     measurement: float = 0          # замер (фикс.)
@@ -62,7 +62,7 @@ class CostBreakdown:
     design: float = 0               # проектировка = изготовление × 0.10
     overhead: float = 0             # прочие = себестоимость × 0.05
     risk_reserve: float = 0         # запас на возможные ошибки
-    subtotal: float = 0             # промежуточный итог
+    subtotal: float = 0             # полная себестоимость (закупка + работы + накладные)
     profit: float = 0               # прибыль = итого × 0.35
     total_with_profit: float = 0    # итого с прибылью
     tech_director: float = 0        # тех. директор = (итого + прибыль) × 0.015
@@ -88,6 +88,14 @@ class CostBreakdown:
     tax_accrual: float = 0
     vat: float = 0
     net_profit: float = 0
+
+    @property
+    def full_cost(self) -> float:
+        """Полная себестоимость: закупка + работы + накладные (без прибыли).
+
+        `cost_price` — это только закупка материалов и фурнитуры; путать нельзя.
+        """
+        return self.subtotal
 
     # === Предупреждения валидатора ===
     warnings: list[str] = field(default_factory=list)

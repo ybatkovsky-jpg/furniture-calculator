@@ -1184,8 +1184,11 @@ class GeminiImageAnalyzer:
                 drawer_counts,
             )
 
-            # Кладём в кэш: следующий прогон того же листа будет идентичным.
+            # Кладём в кэш только непустой результат: иначе один неудачный
+            # ответ модели («0 модулей») навсегда останется в кэше листа.
             try:
+                if not modules:
+                    raise ValueError("пустой результат не кэшируем")
                 recognition_cache.save(
                     image_path,
                     prompt_text,

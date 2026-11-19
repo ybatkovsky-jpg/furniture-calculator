@@ -1,0 +1,30 @@
+[
+  {
+    "prompt_version": "4ef7f532",
+    "pages": 9,
+    "doors_compared": 4,
+    "doors_matched": 3,
+    "median_width_delta_pct": 0.0
+  },
+  {
+    "prompt_version": "7ef92953",
+    "pages": 7,
+    "doors_compared": 3,
+    "doors_matched": 3,
+    "median_width_delta_pct": 0.0
+  },
+  {
+    "prompt_version": "43f7bae1",
+    "pages": 11,
+    "doors_compared": 5,
+    "doors_matched": 2,
+    "median_width_delta_pct": 0.0
+  },
+  {
+    "prompt_version": "3295f9ba",
+    "pages": 2,
+    "doors_compared": 2,
+    "doors_matched": 1,
+    "median_width_delta_pct": 0.0
+  }
+]

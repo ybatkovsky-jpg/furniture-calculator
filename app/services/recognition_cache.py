@@ -46,8 +46,14 @@ def image_key(image_path) -> str:
 
 
 def prompt_version(prompt_text: str) -> str:
-    """Первые 8 hex-цифр sha256 текста промпта."""
-    return hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:8]
+    """Первые 8 hex-цифр sha256 текста промпта.
+
+    Переводы строк нормализуются: файл в git хранится с LF, а на Windows
+    читается с CRLF — без нормализации один и тот же промпт даёт разные ключи
+    и кэш «не находит» свои же записи.
+    """
+    normalized = prompt_text.replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8]
 
 
 def _cache_path(image_path, prompt_text) -> Path:

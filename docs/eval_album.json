@@ -5,24 +5,28 @@
     "total_width_mm": 1650,
     "expected_width_mm": 1650,
     "width_delta_pct": 0.0,
-    "modules_width_sum_mm": 1648,
-    "lower_width_mm": 1648,
+    "modules_width_sum_mm": 1650,
+    "lower_width_mm": 1650,
     "upper_width_mm": 0,
-    "coverage": 0.999,
-    "doors": 4,
+    "coverage": 1.0,
+    "doors": 2,
     "expected_doors": 2,
     "drawers": 0,
-    "modules": 4,
+    "modules": 2,
     "confidence": "medium",
     "scale_ok": true,
     "quality_score": 1.0,
     "quality_flags": [],
     "model_confidence": "medium",
+    "projection": {
+      "clusters": 1,
+      "chosen": 0,
+      "widths_mm": [],
+      "reason": "одна проекция"
+    },
     "image_flags": [],
     "image_skew_deg": 0.0,
-    "flags": [
-      "дверей 4, ожидалось 2"
-    ]
+    "flags": []
   },
   {
     "page": "0002",
@@ -30,19 +34,19 @@
     "total_width_mm": 4860,
     "expected_width_mm": 4860,
     "width_delta_pct": 0.0,
-    "modules_width_sum_mm": 6804,
-    "lower_width_mm": 6804,
-    "upper_width_mm": 3888,
-    "coverage": 1.4,
-    "doors": 11,
+    "modules_width_sum_mm": 5611,
+    "lower_width_mm": 5611,
+    "upper_width_mm": 4439,
+    "coverage": 1.155,
+    "doors": 17,
     "expected_doors": 15,
     "drawers": 0,
-    "modules": 4,
+    "modules": 14,
     "confidence": "medium",
     "scale_ok": true,
     "quality_score": 0.65,
     "quality_flags": [
-      "покрытие 140% > 110% — не сходится с габаритом"
+      "покрытие 116% > 110% — не сходится с габаритом"
     ],
     "model_confidence": "medium",
     "projection": {
@@ -54,8 +58,8 @@
     "image_flags": [],
     "image_skew_deg": 0.0,
     "flags": [
-      "покрытие 140% > 110% — состав не сходится с габаритом",
-      "дверей 11, ожидалось 15"
+      "покрытие 116% > 110% — состав не сходится с габаритом",
+      "дверей 17, ожидалось 15"
     ]
   },
   {
@@ -64,19 +68,25 @@
     "total_width_mm": 1750,
     "expected_width_mm": null,
     "width_delta_pct": null,
-    "modules_width_sum_mm": 1749,
-    "lower_width_mm": 1749,
+    "modules_width_sum_mm": 1748,
+    "lower_width_mm": 1748,
     "upper_width_mm": 0,
     "coverage": 0.999,
-    "doors": 5,
+    "doors": 6,
     "expected_doors": null,
-    "drawers": 4,
+    "drawers": 6,
     "modules": 2,
     "confidence": "medium",
     "scale_ok": true,
     "quality_score": 1.0,
     "quality_flags": [],
     "model_confidence": "medium",
+    "projection": {
+      "clusters": 1,
+      "chosen": 0,
+      "widths_mm": [],
+      "reason": "одна проекция"
+    },
     "image_flags": [],
     "image_skew_deg": 0.0,
     "flags": []
@@ -100,6 +110,12 @@
     "quality_score": 1.0,
     "quality_flags": [],
     "model_confidence": "high",
+    "projection": {
+      "clusters": 1,
+      "chosen": 0,
+      "widths_mm": [],
+      "reason": "одна проекция"
+    },
     "image_flags": [],
     "image_skew_deg": 0.0,
     "flags": []
@@ -110,19 +126,25 @@
     "total_width_mm": 3080,
     "expected_width_mm": 3030,
     "width_delta_pct": 1.7,
-    "modules_width_sum_mm": 3081,
-    "lower_width_mm": 3081,
+    "modules_width_sum_mm": 3080,
+    "lower_width_mm": 3080,
     "upper_width_mm": 0,
     "coverage": 1.0,
-    "doors": 3,
+    "doors": 4,
     "expected_doors": null,
     "drawers": 0,
-    "modules": 3,
+    "modules": 4,
     "confidence": "high",
     "scale_ok": true,
     "quality_score": 1.0,
     "quality_flags": [],
     "model_confidence": "high",
+    "projection": {
+      "clusters": 1,
+      "chosen": 0,
+      "widths_mm": [],
+      "reason": "одна проекция"
+    },
     "image_flags": [],
     "image_skew_deg": 0.0,
     "flags": []
@@ -146,6 +168,12 @@
     "quality_score": 1.0,
     "quality_flags": [],
     "model_confidence": "high",
+    "projection": {
+      "clusters": 1,
+      "chosen": 0,
+      "widths_mm": [],
+      "reason": "одна проекция"
+    },
     "image_flags": [],
     "image_skew_deg": 0.0,
     "flags": []
@@ -160,15 +188,21 @@
     "lower_width_mm": 1600,
     "upper_width_mm": 0,
     "coverage": 1.0,
-    "doors": 2,
+    "doors": 3,
     "expected_doors": null,
     "drawers": 0,
-    "modules": 2,
+    "modules": 3,
     "confidence": "medium",
     "scale_ok": true,
     "quality_score": 1.0,
     "quality_flags": [],
     "model_confidence": "medium",
+    "projection": {
+      "clusters": 1,
+      "chosen": 0,
+      "widths_mm": [],
+      "reason": "одна проекция"
+    },
     "image_flags": [],
     "image_skew_deg": 0.0,
     "flags": []
@@ -195,6 +229,12 @@
       "модули не найдены"
     ],
     "model_confidence": "low",
+    "projection": {
+      "clusters": 1,
+      "chosen": 0,
+      "widths_mm": [],
+      "reason": "одна проекция"
+    },
     "image_flags": [],
     "image_skew_deg": 0.0,
     "flags": [
@@ -211,15 +251,21 @@
     "lower_width_mm": 2000,
     "upper_width_mm": 0,
     "coverage": 1.0,
-    "doors": 3,
+    "doors": 4,
     "expected_doors": null,
     "drawers": 0,
-    "modules": 3,
-    "confidence": "high",
+    "modules": 4,
+    "confidence": "medium",
     "scale_ok": true,
     "quality_score": 1.0,
     "quality_flags": [],
-    "model_confidence": "high",
+    "model_confidence": "medium",
+    "projection": {
+      "clusters": 1,
+      "chosen": 0,
+      "widths_mm": [],
+      "reason": "одна проекция"
+    },
     "image_flags": [],
     "image_skew_deg": 0.0,
     "flags": []
@@ -230,22 +276,32 @@
     "total_width_mm": 1260,
     "expected_width_mm": 1260,
     "width_delta_pct": 0.0,
-    "modules_width_sum_mm": 1260,
-    "lower_width_mm": 0,
-    "upper_width_mm": 1260,
-    "coverage": 1.0,
-    "doors": 2,
+    "modules_width_sum_mm": 678,
+    "lower_width_mm": 582,
+    "upper_width_mm": 678,
+    "coverage": 0.538,
+    "doors": 3,
     "expected_doors": null,
     "drawers": 0,
-    "modules": 2,
-    "confidence": "medium",
+    "modules": 3,
+    "confidence": "high",
     "scale_ok": true,
-    "quality_score": 1.0,
-    "quality_flags": [],
-    "model_confidence": "medium",
+    "quality_score": 0.65,
+    "quality_flags": [
+      "покрытие 54% < 95% — состав неполный"
+    ],
+    "model_confidence": "high",
+    "projection": {
+      "clusters": 1,
+      "chosen": 0,
+      "widths_mm": [],
+      "reason": "одна проекция"
+    },
     "image_flags": [],
     "image_skew_deg": 0.0,
-    "flags": []
+    "flags": [
+      "покрытие 54% < 95% — состав неполный"
+    ]
   },
   {
     "page": "0011",
@@ -257,20 +313,24 @@
     "lower_width_mm": 1581,
     "upper_width_mm": 0,
     "coverage": 1.0,
-    "doors": 5,
+    "doors": 3,
     "expected_doors": 3,
     "drawers": 0,
-    "modules": 5,
-    "confidence": "medium",
+    "modules": 3,
+    "confidence": "high",
     "scale_ok": true,
     "quality_score": 1.0,
     "quality_flags": [],
-    "model_confidence": "medium",
+    "model_confidence": "high",
+    "projection": {
+      "clusters": 1,
+      "chosen": 0,
+      "widths_mm": [],
+      "reason": "одна проекция"
+    },
     "image_flags": [],
     "image_skew_deg": 0.0,
-    "flags": [
-      "дверей 5, ожидалось 3"
-    ]
+    "flags": []
   },
   {
     "page": "0012",
@@ -282,15 +342,21 @@
     "lower_width_mm": 800,
     "upper_width_mm": 0,
     "coverage": 1.0,
-    "doors": 2,
+    "doors": 1,
     "expected_doors": null,
     "drawers": 0,
-    "modules": 2,
+    "modules": 1,
     "confidence": "high",
     "scale_ok": true,
     "quality_score": 1.0,
     "quality_flags": [],
     "model_confidence": "high",
+    "projection": {
+      "clusters": 1,
+      "chosen": 0,
+      "widths_mm": [],
+      "reason": "одна проекция"
+    },
     "image_flags": [],
     "image_skew_deg": 0.0,
     "flags": []

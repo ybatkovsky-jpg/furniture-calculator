@@ -144,7 +144,9 @@ def test_excel_values_are_readable_without_recalc(tmp_path):
     reread = load_workbook(path, data_only=True)["Рассчет"]
     assert reread["E359"].value and reread["E359"].value > 0
     furniture_cash = reread["E359"].value - 10_000
-    assert reread["E360"].value == round(furniture_cash * 1.13 + 10_000, 2)
+    # Наценку берём из политики, а не числом: иначе тест зависит от .env.
+    policy = PricingPolicy.from_config()
+    assert reread["E360"].value == round(furniture_cash * policy.noncash_markup + 10_000, 2)
 
 
 def test_golden_cost_matches_excel_formula_chain():

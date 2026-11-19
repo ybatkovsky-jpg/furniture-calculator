@@ -165,3 +165,26 @@ def dicts_to_modules(items: list[dict]) -> list[Any]:
         except (ValueError, TypeError) as exc:
             logger.warning("Пропущен модуль из кэша: %s", exc)
     return result
+
+
+def clear(image_path: str | Path | None = None, prompt_text: str | None = None) -> int:
+    """Удалить кэш: для одного листа (image_path) или весь. Возвращает число файлов.
+
+    Нужно, когда правила поменялись, а текст промпта — нет: иначе вернётся
+    старое распознавание.
+    """
+    if image_path is not None:
+        key = image_key(image_path)
+        if prompt_text is not None:
+            targets = [_cache_path(image_path, prompt_text)]
+        else:
+            targets = list(CACHE_DIR.glob(f"{key}_*.json"))
+    else:
+        targets = list(CACHE_DIR.glob("*.json"))
+
+    removed = 0
+    for path in targets:
+        if path.exists():
+            path.unlink()
+            removed += 1
+    return removed

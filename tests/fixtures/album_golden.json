@@ -1,0 +1,18 @@
+{
+  "source": "input_images/Альбом чертежей Рокоссовского-59-79_page-*.jpg",
+  "note": "Точки истины заданы собственником 17.11.2026; doors=null — не размечено.",
+  "pages": [
+    {"page": "0001", "width_mm": 1650, "doors": 2, "zone": "прихожая"},
+    {"page": "0002", "width_mm": 4860, "doors": 15, "zone": "угловая кухня"},
+    {"page": "0003", "width_mm": null, "doors": null, "zone": null},
+    {"page": "0004", "width_mm": 1830, "doors": 2, "zone": "гостиная"},
+    {"page": "0005", "width_mm": 3030, "doors": null, "zone": null},
+    {"page": "0006", "width_mm": 3200, "doors": 4, "zone": null},
+    {"page": "0007", "width_mm": 1600, "doors": null, "zone": null},
+    {"page": "0008", "width_mm": 2200, "doors": 0, "zone": "детская"},
+    {"page": "0009", "width_mm": null, "doors": null, "zone": null},
+    {"page": "0010", "width_mm": 1260, "doors": null, "zone": null},
+    {"page": "0011", "width_mm": 1581, "doors": 3, "zone": "ванная"},
+    {"page": "0012", "width_mm": 800, "doors": null, "zone": null}
+  ]
+}

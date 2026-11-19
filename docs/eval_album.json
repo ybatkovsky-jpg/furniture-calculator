@@ -30,25 +30,32 @@
     "total_width_mm": 4860,
     "expected_width_mm": 4860,
     "width_delta_pct": 0.0,
-    "modules_width_sum_mm": 5611,
-    "lower_width_mm": 5611,
-    "upper_width_mm": 4843,
-    "coverage": 1.155,
-    "doors": 16,
+    "modules_width_sum_mm": 6804,
+    "lower_width_mm": 6804,
+    "upper_width_mm": 3888,
+    "coverage": 1.4,
+    "doors": 11,
     "expected_doors": 15,
-    "drawers": 1,
-    "modules": 9,
+    "drawers": 0,
+    "modules": 4,
     "confidence": "medium",
     "scale_ok": true,
     "quality_score": 0.65,
     "quality_flags": [
-      "покрытие 116% > 110% — не сходится с габаритом"
+      "покрытие 140% > 110% — не сходится с габаритом"
     ],
     "model_confidence": "medium",
+    "projection": {
+      "clusters": 1,
+      "chosen": 0,
+      "widths_mm": [],
+      "reason": "одна проекция"
+    },
     "image_flags": [],
     "image_skew_deg": 0.0,
     "flags": [
-      "покрытие 116% > 110% — состав не сходится с габаритом"
+      "покрытие 140% > 110% — состав не сходится с габаритом",
+      "дверей 11, ожидалось 15"
     ]
   },
   {

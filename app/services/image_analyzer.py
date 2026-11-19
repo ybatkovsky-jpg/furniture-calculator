@@ -27,6 +27,7 @@ from PIL import Image
 from app.config import settings
 from app.services import image_prep, recognition_cache
 from app.services.furniture_defaults import get_rules
+from app.services.projections import select_main_projection
 from app.services.recognition_protocol import door_count_of, scale_ok_meta
 from app.services.recognition_quality import assess as assess_composition
 from app.services.scale_calc import ScaledFacade, calculate_scaled_facades
@@ -993,6 +994,7 @@ class GeminiImageAnalyzer:
             logger.warning("Кэш распознавания недоступен: %s", exc)
         if cached and cached.get("data"):
             payload = cached["data"]
+            self._projection = payload.get("projection") or {}
             modules = recognition_cache.dicts_to_modules(payload.get("modules") or [])
             modules = self._reclassify_tall_modules(modules)
             zone_cached = payload.get("zone_type")
@@ -1137,6 +1139,17 @@ class GeminiImageAnalyzer:
                 logger.info(
                     f"📏 Масштаб: {len(scaled_facades)} дверей с вычисленными размерами"
                 )
+                # Многоракурсный лист: оставляем одну проекцию, иначе ширины
+                # складываются из разных видов и покрытие уходит за 110 %.
+                scaled_facades, projection = select_main_projection(
+                    scaled_facades, total_width_mm
+                )
+                self._projection = projection
+                if projection.get("clusters", 1) > 1:
+                    logger.info(
+                        "🗂 Проекций %s: %s",
+                        projection["clusters"], projection.get("reason"),
+                    )
             elif total_width_mm <= 0:
                 logger.warning("Габарит не найден — вернусь к стандартным размерам")
                 if return_meta:
@@ -1184,6 +1197,7 @@ class GeminiImageAnalyzer:
                         "total_width_mm": int(total_width_mm or 0),
                         "heights_mm": dict(heights_mm or {}),
                         "door_count": int(door_count_of(modules)),
+                        "projection": dict(getattr(self, "_projection", {}) or {}),
                     },
                     approved=False,
                     attempts=1,
@@ -1240,6 +1254,7 @@ class GeminiImageAnalyzer:
             "quality_flags": list(quality.flags),
             "coverage": quality.coverage,
             "doors_per_m": quality.doors_per_m,
+            "projection": dict(getattr(self, "_projection", {}) or {}),
             "image_flags": list(getattr(self, "_image_flags", []) or []),
             "image_skew_deg": float(getattr(self, "_image_skew", 0.0) or 0.0),
         }

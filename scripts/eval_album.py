@@ -135,6 +135,7 @@ async def evaluate(page: dict, analyzer: GeminiImageAnalyzer) -> dict:
         "quality_score": meta.get("quality_score"),
         "quality_flags": list(meta.get("quality_flags") or []),
         "model_confidence": confidence,
+        "projection": dict(meta.get("projection") or {}),
         "image_flags": list(meta.get("image_flags") or []),
         "image_skew_deg": meta.get("image_skew_deg"),
         "flags": flags,

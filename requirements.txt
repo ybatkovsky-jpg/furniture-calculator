@@ -15,3 +15,4 @@ Pillow>=13.0.0
 pytesseract==0.3.13
 PyYAML==6.0.2
 PyMuPDF>=1.24,<2
+numpy>=1.26,<3   # image_prep: яркость, резкость, наклон скана

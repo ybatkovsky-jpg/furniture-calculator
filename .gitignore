@@ -49,3 +49,7 @@ docs/xlsx_edge_scan.json
 docs/price_snapshot_2026-11-17.json
 docs/prompt_ab_render_2026-11-17.json
 docs/kp_vs_project_pairs.json
+# Отчёты сверки КП содержат имена клиентов
+docs/kp_reconciliation_2026-11-17.md
+docs/kp_vlm_reconciliation_2026-11-17.md
+docs/excel_price_reconcile.json

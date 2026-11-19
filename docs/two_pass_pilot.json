@@ -1,0 +1,32 @@
+{
+  "page": "0002",
+  "pass1": {
+    "modules": 9,
+    "doors": 16,
+    "confidence": "medium"
+  },
+  "pass2": {
+    "modules": 4,
+    "doors": 18,
+    "confidence": "medium"
+  },
+  "union_by_signature": {
+    "modules": 13,
+    "doors": 34
+  },
+  "reask": {
+    "doors": 18,
+    "modules": 15,
+    "hint": "При первом проходе найдено 16 дверей, при втором 18. Перечисли каждую дверь отдельной записью с координатами (bbox), не объединяй соседние двери в одну и не пропускай пеналы."
+  },
+  "decision": {
+    "doors": 16,
+    "modules": 9,
+    "agreement": 0.941,
+    "reliable": true,
+    "flags": [
+      "разная детализация: модулей 9 и 4"
+    ]
+  },
+  "agreement": 0.94
+}

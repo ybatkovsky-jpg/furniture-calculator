@@ -956,6 +956,7 @@ class GeminiImageAnalyzer:
         self,
         image_path: str | Path,
         return_meta: bool = False,
+        hint: str | None = None,
     ) -> tuple[Any, ...]:
         """
         Единый анализ страницы чертежа.
@@ -977,12 +978,17 @@ class GeminiImageAnalyzer:
         Returns:
             (modules, zone_type, materials, confidence[, meta])
         """
+        # Переспрос с уточнением — отдельная версия промпта (и отдельный кэш).
+        prompt_text = UNIFIED_PROMPT_V2
+        if hint:
+            prompt_text = f"{UNIFIED_PROMPT_V2}\n\nУТОЧНЕНИЕ: {hint}"
+
         # Повторяемость: тот же лист + тот же промпт → тот же результат.
         # Модель при temperature=0 всё равно «плывёт» (16 → 19 → 17 дверей),
         # поэтому кэш обязателен, а не оптимизация.
         cached = None
         try:
-            cached = recognition_cache.load(image_path, UNIFIED_PROMPT_V2)
+            cached = recognition_cache.load(image_path, prompt_text)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Кэш распознавания недоступен: %s", exc)
         if cached and cached.get("data"):
@@ -1045,7 +1051,7 @@ class GeminiImageAnalyzer:
             messages = [{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": UNIFIED_PROMPT_V2},
+                    {"type": "text", "text": prompt_text},
                     {"type": "image_url", "image_url": {
                         "url": f"data:image/jpeg;base64,{image_base64}"
                     }}
@@ -1168,7 +1174,7 @@ class GeminiImageAnalyzer:
             try:
                 recognition_cache.save(
                     image_path,
-                    UNIFIED_PROMPT_V2,
+                    prompt_text,
                     {
                         "modules": recognition_cache.modules_to_dicts(modules),
                         "zone_type": zone_type,

@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.services.image_analyzer import GeminiImageAnalyzer
+from app.services.two_pass import accept_reask
 
 ALBUM = Path("input_images")
 GOLDEN = Path("tests/fixtures/album_golden.json")
@@ -61,6 +62,27 @@ def module_stats(modules) -> tuple[float, float, int, int]:
         if isinstance(box, dict):
             drawers += int(box.get("count") or 0) * quantity
     return lower_width, upper_width, doors, drawers
+
+
+REASK_HINT = (
+    "Перечисли каждую дверь отдельной записью с координатами (bbox), "
+    "не объединяй соседние двери в одну и не пропускай пеналы "
+    "и высокие модули."
+)
+
+
+async def _reask(page: dict, analyzer: GeminiImageAnalyzer, expected: int | None) -> dict:
+    image = next(ALBUM.glob(f"*page-{page['page']}.jpg"))
+    result = await analyzer.analyze_page(image, return_meta=True, hint=REASK_HINT)
+    modules, _zone, _materials, _confidence, meta = result
+    _lower, _upper, doors, drawers = module_stats(modules)
+    return {
+        "doors": doors,
+        "drawers": drawers,
+        "modules": len(modules),
+        "quality_score": meta.get("quality_score"),
+        "expected": expected,
+    }
 
 
 async def evaluate(page: dict, analyzer: GeminiImageAnalyzer) -> dict:
@@ -145,7 +167,7 @@ def render_report(rows: list[dict]) -> str:
         "",
         "## По страницам",
         "",
-        "| Лист | Габарит | Эталон | Δ | Покрытие | Двери | Модули | Оценка | Флаги |",
+        "| Лист | Габарит | Эталон | Δ | Покрытие | Двери | Переспрос | Оценка | Флаги |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in measured:
@@ -154,9 +176,15 @@ def render_report(rows: list[dict]) -> str:
         doors = f"{row['doors']} / {row['expected_doors']}" if row["expected_doors"] is not None else str(row["doors"])
         flags = "; ".join(row["flags"]) or "—"
         score = f"{row['quality_score']:.2f}" if row.get("quality_score") is not None else "—"
+        reask = row.get("reask") or {}
+        if reask.get("doors") is None:
+            reask_cell = "—"
+        else:
+            mark = "✓" if reask.get("accepted") else "✗"
+            reask_cell = f"{reask['doors']} {mark}"
         lines.append(
             f"| {row['page']} | {row['total_width_mm']} | {row['expected_width_mm'] or '—'} | "
-            f"{delta} | {coverage} | {doors} | {row['modules']} | {score} | {flags} |"
+            f"{delta} | {coverage} | {doors} | {reask_cell} | {score} | {flags} |"
         )
     lines.append("")
     return "\n".join(lines)
@@ -165,7 +193,17 @@ def render_report(rows: list[dict]) -> str:
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--page", help="только одна страница, например 0002")
+    parser.add_argument("--reask", action="store_true",
+                        help="переспрашивать страницы с флагами (платные вызовы)")
+    parser.add_argument("--render-only", action="store_true",
+                        help="только пересобрать отчёт из docs/eval_album.json")
     args = parser.parse_args()
+
+    if args.render_only:
+        rows = json.loads(OUT_JSON.read_text(encoding="utf-8"))
+        OUT_MD.write_text(render_report(rows), encoding="utf-8")
+        print(f"отчёт пересобран: {OUT_MD}")
+        return 0
 
     pages = json.loads(GOLDEN.read_text(encoding="utf-8"))["pages"]
     if args.page:
@@ -176,6 +214,13 @@ async def main() -> int:
     try:
         for page in pages:
             row = await evaluate(page, analyzer)
+            if args.reask and row.get("flags"):
+                row["reask"] = await _reask(page, analyzer, page.get("doors"))
+                accepted, reason = accept_reask(row["doors"], row["reask"]["doors"])
+                row["reask"]["accepted"] = accepted
+                row["reask"]["reason"] = reason
+                print(f"{row['page']}: переспрос → {row['reask']['doors']} "
+                      f"({'принят' if accepted else 'отклонён'})", flush=True)
             rows.append(row)
             status = row.get("error") or "; ".join(row["flags"]) or "ок"
             print(f"{row['page']}: {status}", flush=True)

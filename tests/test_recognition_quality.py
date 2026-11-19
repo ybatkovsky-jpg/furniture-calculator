@@ -64,4 +64,17 @@ def test_too_many_doors_per_metre_is_flagged() -> None:
 def test_empty_page_scores_low() -> None:
     quality = assess([], 2400, "Кухня")
     assert quality.score <= 0.5
-    assert any("не найдены" in flag for flag in quality.flags)
+    assert any("не найдено" in flag for flag in quality.flags)
+
+
+def test_bed_page_is_not_incomplete_composition() -> None:
+    quality = assess([], 2200, "Детская", notes="детская, кровать 2200 мм, дверец нет")
+    assert quality.non_furniture is True
+    assert any("корпусной мебели нет" in flag for flag in quality.flags)
+    assert not any("состав неполный" in flag for flag in quality.flags)
+
+
+def test_empty_page_without_notes_asks_to_check_sheet() -> None:
+    quality = assess([], 2400, "Кухня", notes="")
+    assert quality.non_furniture is False
+    assert any("проверьте" in flag for flag in quality.flags)

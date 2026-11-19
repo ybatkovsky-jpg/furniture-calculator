@@ -20,6 +20,7 @@ from typing import Any
 # поэтому в покрытии он относится к нижнему ярусу.
 UPPER_TYPES = {"upper_base", "shelf_unit"}
 KITCHEN_ZONES = {"кухня", "kitchen"}
+NON_FURNITURE_WORDS = ("кровать", "диван", "матрас", "пуф", "изголовье")
 DOORS_PER_M_MIN = 1.5
 DOORS_PER_M_MAX = 3.5
 COVERAGE_MIN = 0.95
@@ -39,6 +40,7 @@ class CompositionQuality:
     drawers: int
     doors_per_m: float | None
     flags: list[str] = field(default_factory=list)
+    non_furniture: bool = False
 
     @property
     def is_reliable(self) -> bool:
@@ -62,9 +64,34 @@ def assess(
     modules: list[Any],
     total_width_mm: float | None,
     zone_type: str | None = None,
+    notes: str | None = None,
 ) -> CompositionQuality:
     """Оценить состав листа по арифметике, без доверия к `confidence`."""
     flags: list[str] = []
+
+    # Лист без корпусных модулей: это либо не мебель (кровать/диван), либо
+    # лист не распознан. Обе причины менеджеру надо различать от «неполного
+    # состава кухни» — формулировка одна и честная.
+    lowered_notes = (notes or "").lower()
+    known_non_furniture = any(word in lowered_notes for word in NON_FURNITURE_WORDS)
+    if not modules:
+        reason = (
+            "на листе корпусной мебели нет (кровать/диван) — расчёт корпусов не требуется"
+            if known_non_furniture
+            else "корпусных модулей не найдено: либо это не мебель, либо лист не распознан — проверьте"
+        )
+        return CompositionQuality(
+            score=0.5,
+            coverage=None,
+            coverage_sum=None,
+            lower_width_mm=0,
+            upper_width_mm=0,
+            doors=0,
+            drawers=0,
+            doors_per_m=None,
+            flags=[reason],
+            non_furniture=known_non_furniture,
+        )
     score = 1.0
 
     lower = upper = 0.0

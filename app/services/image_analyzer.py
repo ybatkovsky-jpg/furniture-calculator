@@ -1003,6 +1003,7 @@ class GeminiImageAnalyzer:
         if cached and cached.get("data"):
             payload = cached["data"]
             self._projection = payload.get("projection") or {}
+            self._notes = str(payload.get("notes") or "")
             modules = recognition_cache.dicts_to_modules(payload.get("modules") or [])
             modules = self._reclassify_tall_modules(modules)
             zone_cached = payload.get("zone_type")
@@ -1224,6 +1225,7 @@ class GeminiImageAnalyzer:
                         "heights_mm": dict(heights_mm or {}),
                         "door_count": int(door_count_of(modules)),
                         "projection": dict(getattr(self, "_projection", {}) or {}),
+                        "notes": str(getattr(self, "_notes", "") or ""),
                     },
                     approved=False,
                     attempts=1,
@@ -1231,6 +1233,7 @@ class GeminiImageAnalyzer:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Не удалось сохранить кэш распознавания: %s", exc)
 
+            self._notes = str(data.get("notes") or "")
             modules = self._reclassify_tall_modules(modules)
 
             # Если ширины модулей не сходятся с габаритом (перебор >110 %) —
@@ -1282,7 +1285,9 @@ class GeminiImageAnalyzer:
         zone_type,
     ) -> dict[str, Any]:
         """Метаданные попытки для протокола стабильности (чисто, без сети)."""
-        quality = assess_composition(modules, total_width_mm, zone_type)
+        quality = assess_composition(
+            modules, total_width_mm, zone_type, notes=getattr(self, "_notes", None)
+        )
         return {
             "total_width_mm": int(total_width_mm or 0),
             "scale_ok": bool(scale_ok_meta(modules, total_width_mm or 0)),
@@ -1576,19 +1581,19 @@ class GeminiImageAnalyzer:
 
         `VISION_PROVIDER` задаёт ПЕРВОГО провайдера, остальные остаются
         резервом — падение облака/локала не обнуляет распознавание.
-        Пусто — авто: local → deepseek → routerai (первый живой).
+        Пусто — авто: local → deepseek (routerai отключён решением 20.11).
 
         Фолбэк особенно важен, когда локальный сервер (192.168.1.133) выключен:
         раньше любой локальный адрес в .env уводил все попытки в мёртвый сокет,
         и до облачных провайдеров дело не доходило.
         """
+        # Решение 20.11: routerai убран из цепочки — основная модель deepseek,
+        # локальная остаётся только для офлайн-прогонов (если поднята).
         available: list[tuple] = []
         if self.local_llm_url:
             available.append(("local", self.local_vision_model))
         if self.deepseek_key:
             available.append(("deepseek", self.deepseek_model))
-        if self.routerai_key:
-            available.append(("routerai", self.PRIMARY_MODEL))
 
         forced = (settings.vision_provider or "").strip().lower()
         if forced in ("local", "deepseek", "routerai"):

@@ -34,24 +34,24 @@ def analyzer(monkeypatch):
 # Порядок провайдеров
 # ════════════════════════════════════════════════════════════════════
 
-def test_auto_order_local_deepseek_routerai(analyzer):
-    """Без VISION_PROVIDER: local → deepseek → routerai."""
-    assert [p for p, _ in analyzer._unified_targets()] == ["local", "deepseek", "routerai"]
+def test_auto_order_local_deepseek(analyzer):
+    """Без VISION_PROVIDER: local → deepseek (routerai отключён решением 20.11)."""
+    assert [p for p, _ in analyzer._unified_targets()] == ["local", "deepseek"]
 
 
 def test_forced_provider_goes_first_and_others_stay_as_fallback(analyzer, monkeypatch):
-    """VISION_PROVIDER=deepseek: DeepSeek первым, local/routerai — резерв."""
+    """VISION_PROVIDER=deepseek: DeepSeek первым, local — резерв."""
     monkeypatch.setattr(settings, "vision_provider", "deepseek")
     targets = analyzer._unified_targets()
     assert targets[0] == ("deepseek", "deepseek-flash")
-    assert [p for p, _ in targets] == ["deepseek", "local", "routerai"]
+    assert [p for p, _ in targets] == ["deepseek", "local"]
 
 
 def test_forced_provider_without_key_falls_back_to_auto(analyzer, monkeypatch):
     """VISION_PROVIDER=deepseek, но ключа нет — авто-порядок, без падения."""
     monkeypatch.setattr(settings, "vision_provider", "deepseek")
     analyzer.deepseek_key = ""
-    assert [p for p, _ in analyzer._unified_targets()] == ["local", "routerai"]
+    assert [p for p, _ in analyzer._unified_targets()] == ["local"]
 
 
 def test_no_providers_at_all(analyzer):

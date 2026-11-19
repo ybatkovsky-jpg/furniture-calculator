@@ -27,6 +27,7 @@ from PIL import Image
 from app.config import settings
 from app.services.furniture_defaults import get_rules
 from app.services.recognition_protocol import door_count_of, scale_ok_meta
+from app.services.recognition_quality import assess as assess_composition
 from app.services.scale_calc import ScaledFacade, calculate_scaled_facades
 
 logger = logging.getLogger(__name__)
@@ -1144,12 +1145,18 @@ class GeminiImageAnalyzer:
         zone_type,
     ) -> dict[str, Any]:
         """Метаданные попытки для протокола стабильности (чисто, без сети)."""
+        quality = assess_composition(modules, total_width_mm, zone_type)
         return {
             "total_width_mm": int(total_width_mm or 0),
             "scale_ok": bool(scale_ok_meta(modules, total_width_mm or 0)),
             "heights_mm": dict(heights_mm or {}),
             "door_count": int(door_count_of(modules)),
             "zone_type": zone_type or "",
+            # Оценка по проверяемым фактам (покрытие, двери на метр) — не от модели.
+            "quality_score": quality.score,
+            "quality_flags": list(quality.flags),
+            "coverage": quality.coverage,
+            "doors_per_m": quality.doors_per_m,
         }
 
     def _facades_to_modules(

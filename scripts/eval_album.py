@@ -109,6 +109,10 @@ async def evaluate(page: dict, analyzer: GeminiImageAnalyzer) -> dict:
         "modules": len(modules),
         "confidence": confidence,
         "scale_ok": bool(meta.get("scale_ok")),
+        # Оценка по проверяемым фактам (P1), а не слово модели.
+        "quality_score": meta.get("quality_score"),
+        "quality_flags": list(meta.get("quality_flags") or []),
+        "model_confidence": confidence,
         "flags": flags,
     }
 
@@ -139,7 +143,7 @@ def render_report(rows: list[dict]) -> str:
         "",
         "## По страницам",
         "",
-        "| Лист | Габарит | Эталон | Δ | Покрытие | Двери | Ящики | Модули | Флаги |",
+        "| Лист | Габарит | Эталон | Δ | Покрытие | Двери | Модули | Оценка | Флаги |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in measured:
@@ -147,9 +151,10 @@ def render_report(rows: list[dict]) -> str:
         coverage = f"{row['coverage']:.0%}" if row["coverage"] is not None else "—"
         doors = f"{row['doors']} / {row['expected_doors']}" if row["expected_doors"] is not None else str(row["doors"])
         flags = "; ".join(row["flags"]) or "—"
+        score = f"{row['quality_score']:.2f}" if row.get("quality_score") is not None else "—"
         lines.append(
             f"| {row['page']} | {row['total_width_mm']} | {row['expected_width_mm'] or '—'} | "
-            f"{delta} | {coverage} | {doors} | {row['drawers']} | {row['modules']} | {flags} |"
+            f"{delta} | {coverage} | {doors} | {row['modules']} | {score} | {flags} |"
         )
     lines.append("")
     return "\n".join(lines)

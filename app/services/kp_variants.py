@@ -195,9 +195,13 @@ def build_variants(
     zone_type: str | None = None,
     options: dict | None = None,
     discount_percent: float = 0.0,
+    catalog: dict[str, list[dict]] | None = None,
 ) -> list[Variant]:
-    """Посчитать варианты КП по одному и тому же составу."""
-    catalog = _catalog()
+    """Посчитать варианты КП по одному и тому же составу.
+
+    `catalog` можно передать готовым — тестам не нужна рабочая БД.
+    """
+    catalog = catalog if catalog is not None else _catalog()
     variants: list[Variant] = []
 
     for index, (name, description, rules) in enumerate(TIERS):

@@ -9,6 +9,7 @@ from docx import Document
 
 from app.services.kp_docx import build_kp_docx
 from app.services.kp_variants import build_variants
+from tests.test_kp_variants import catalog
 
 MODULES = [
     {
@@ -31,7 +32,7 @@ COMPANY = {
 
 
 def _build():
-    variants = build_variants(MODULES, zone_type="Кухня")
+    variants = build_variants(MODULES, zone_type="Кухня", catalog=catalog())
     return build_kp_docx(
         variants=variants,
         company=COMPANY,

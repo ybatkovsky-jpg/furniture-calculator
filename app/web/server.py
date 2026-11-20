@@ -13,15 +13,19 @@ from __future__ import annotations
 import logging
 import sqlite3
 import uuid
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
+from app.config import settings
 from app.services.calc_engine import calculate_full_cost
 from app.services.calculation_persist import quote_from_result
 from app.services.image_analyzer import GeminiImageAnalyzer
+from app.services.kp_docx import build_kp_docx
+from app.services.kp_variants import build_variants
 from app.services.recognition_cache import module_to_dict
 from app.services.template_filler import fill_template_from_quote
 
@@ -185,7 +189,12 @@ async def analyze(file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
     )
     quote = quote_from_result(result, reason="web")
     quote_id = uuid.uuid4().hex
-    QUOTES[quote_id] = quote
+    QUOTES[quote_id] = {
+        "quote": quote,
+        "modules": module_dicts,
+        "zone": zone_type,
+        "image": str(temp_path),
+    }
 
     breakdown = result.cost_breakdown
     return JSONResponse(
@@ -217,9 +226,10 @@ async def analyze(file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
 @app.get("/api/excel/{quote_id}")
 async def excel(quote_id: str) -> FileResponse:
     """Excel из снимка расчёта — тот же путь, что у бота."""
-    quote = QUOTES.get(quote_id)
-    if not quote:
+    data = QUOTES.get(quote_id)
+    if not data:
         raise HTTPException(404, "Расчёт не найден — распознайте заново")
+    quote = data["quote"]
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     output = OUT_DIR / f"расчёт-{quote_id[:8]}.xlsx"
     fill_template_from_quote(quote, str(TEMPLATE), str(output))
@@ -227,6 +237,92 @@ async def excel(quote_id: str) -> FileResponse:
         output,
         filename="Расчёт.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+def _company_block() -> dict:
+    """Шапка КП: название, слоган, реквизиты, контакты."""
+    return {
+        "name": "ПРОМЕБЕЛЬ",
+        "tagline": "качество и индивидуальность",
+        "phone": settings.company_phone,
+        "email": settings.company_email,
+        "address": settings.company_address,
+        "requisites": [
+            settings.company_legal_name,
+            settings.company_legal_address,
+            f"ИНН {settings.company_inn}",
+            f"р/с {settings.company_account}",
+            f"Банк {settings.company_bank}",
+            f"БИК {settings.company_bik}",
+            f"кор/с {settings.company_kor_account}",
+        ],
+    }
+
+
+@app.post("/api/kp/{quote_id}")
+async def kp_docx(quote_id: str, payload: dict = Body(default={})) -> FileResponse:  # noqa: B008
+    """Собрать КП в DOCX по выбранным вариантам и опциям."""
+    data = QUOTES.get(quote_id)
+    if not data:
+        raise HTTPException(404, "Расчёт не найден — распознайте заново")
+
+    names = payload.get("variants") or ["Базовая", "Стандарт", "Комфорт"]
+    options = {
+        "gola": bool(payload.get("gola")),
+        "led": bool(payload.get("led")),
+        "accessories": bool(payload.get("accessories")),
+    }
+    discount = float(payload.get("discount") or 0)
+    client = str(payload.get("client") or "")
+    validity_days = int(payload.get("validity_days") or settings.company_kp_validity_days)
+    with_image = bool(payload.get("image", True))
+
+    variants = build_variants(
+        data["modules"],
+        zone_type=data.get("zone"),
+        options=options,
+        discount_percent=discount,
+    )
+    variants = [variant for variant in variants if variant.name in names]
+    if not variants:
+        raise HTTPException(400, "Не выбран ни один вариант КП")
+
+    options_text = []
+    if options["led"]:
+        options_text.append("Светодиодная подсветка рабочих зон")
+    if options["gola"]:
+        options_text.append("Профиль GOLA вместо ручек")
+    if options["accessories"]:
+        options_text.append("Внутреннее наполнение: сушка, лоток, поддон")
+
+    conditions = [
+        "Срок изготовления — 30 рабочих дней с момента согласования",
+        "Предоплата 50 %, остаток при приёмке",
+        f"Предложение действительно {validity_days} дней",
+        "Замер, доставка и монтаж включены в стоимость",
+        "Гарантия на корпусную мебель — 24 месяца",
+    ]
+
+    today = date.today()
+    document = build_kp_docx(
+        variants=variants,
+        company=_company_block(),
+        kp_date=today,
+        valid_until=today + timedelta(days=validity_days),
+        client=client,
+        options_text=options_text,
+        conditions=conditions,
+        image_path=data.get("image") if with_image else None,
+    )
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    output = OUT_DIR / f"КП-{quote_id[:8]}.docx"
+    output.write_bytes(document)
+    return FileResponse(
+        output,
+        filename="Коммерческое предложение.docx",
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
 
 
@@ -302,6 +398,29 @@ INDEX_HTML = """<!doctype html>
       </table>
       <button class="button" id="excel">Скачать Excel</button>
       <button class="button secondary" id="reset">Новый расчёт</button>
+
+      <div style="margin-top:22px;border-top:1px solid #eceff4;padding-top:16px">
+        <h3 style="margin:0 0 10px;font-size:15px">Коммерческое предложение</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px">
+          <label class="muted">Заказчик<br><input id="kp-client" type="text" placeholder="ФИО или объект" style="width:100%;padding:7px;border:1px solid #d6dce6;border-radius:7px"></label>
+          <label class="muted">Скидка, %<br><input id="kp-discount" type="number" min="0" max="30" value="0" style="width:100%;padding:7px;border:1px solid #d6dce6;border-radius:7px"></label>
+          <label class="muted">Действует, дней<br><input id="kp-validity" type="number" min="1" max="90" value="14" style="width:100%;padding:7px;border:1px solid #d6dce6;border-radius:7px"></label>
+        </div>
+        <div style="margin-top:10px" class="muted">
+          <label><input type="checkbox" class="kp-variant" value="Базовая" checked> Базовая</label>
+          <label style="margin-left:14px"><input type="checkbox" class="kp-variant" value="Стандарт" checked> Стандарт</label>
+          <label style="margin-left:14px"><input type="checkbox" class="kp-variant" value="Комфорт" checked> Комфорт</label>
+        </div>
+        <div style="margin-top:8px" class="muted">
+          <label><input type="checkbox" id="kp-led"> LED-подсветка</label>
+          <label style="margin-left:14px"><input type="checkbox" id="kp-gola"> Профиль GOLA</label>
+          <label style="margin-left:14px"><input type="checkbox" id="kp-accessories"> Наполнение (сушка, лоток, поддон)</label>
+        </div>
+        <div style="margin-top:8px" class="muted">
+          <label><input type="checkbox" id="kp-image" checked> Вставить эскиз чертежа</label>
+        </div>
+        <button class="button" id="kp-download" style="margin-top:12px">Скачать КП (Word)</button>
+      </div>
     </div>
   </div>
 </main>
@@ -393,6 +512,33 @@ function render(data) {
 
 document.getElementById('excel').addEventListener('click', () => {
   if (quoteId) window.location = '/api/excel/' + quoteId;
+});
+document.getElementById('kp-download').addEventListener('click', async () => {
+  if (!quoteId) return;
+  const variants = [...document.querySelectorAll('.kp-variant:checked')].map(el => el.value);
+  if (!variants.length) { alert('Выберите хотя бы один вариант'); return; }
+  const body = {
+    variants,
+    client: document.getElementById('kp-client').value,
+    discount: Number(document.getElementById('kp-discount').value || 0),
+    validity_days: Number(document.getElementById('kp-validity').value || 14),
+    led: document.getElementById('kp-led').checked,
+    gola: document.getElementById('kp-gola').checked,
+    accessories: document.getElementById('kp-accessories').checked,
+    image: document.getElementById('kp-image').checked,
+  };
+  const response = await fetch('/api/kp/' + quoteId, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) { alert('Не удалось собрать КП: ' + response.status); return; }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'Коммерческое предложение.docx';
+  link.click();
+  URL.revokeObjectURL(url);
 });
 document.getElementById('reset').addEventListener('click', () => {
   result.classList.add('hidden');

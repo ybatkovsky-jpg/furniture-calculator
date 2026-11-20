@@ -220,6 +220,15 @@ class Settings(BaseSettings):
     company_phone: str = "+7 999 256 3879"
     company_email: str = "pro.mebel25@mail.ru"
     kp_number_prefix: str = "КП-"
+    # Реквизиты для КП (правится в .env, не в коде документа).
+    company_legal_name: str = "ООО «Про Мебель»"
+    company_legal_address: str = "680000, Хабаровский край, г. Хабаровск, ул. Переясловская, д. 30"
+    company_inn: str = "2700061041"
+    company_account: str = "40702810110002014346"
+    company_bank: str = "АО \"ТБанк\""
+    company_bik: str = "044525974"
+    company_kor_account: str = "30101810145250000974"
+    company_kp_validity_days: int = 14
 
 
 def mask_database_url(url: str) -> str:

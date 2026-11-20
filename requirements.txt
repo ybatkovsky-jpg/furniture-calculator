@@ -16,3 +16,7 @@ pytesseract==0.3.13
 PyYAML==6.0.2
 PyMuPDF>=1.24,<2
 numpy>=1.26,<3   # image_prep: яркость, резкость, наклон скана
+# Веб-интерфейс (локальная обкатка): чертёж → смета → Excel
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+python-multipart>=0.0.9

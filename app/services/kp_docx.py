@@ -1,11 +1,8 @@
 """Коммерческое предложение в DOCX — правится в Word.
 
-Дизайн ближе к тому, что уходит клиентам (шапка с реквизитами, заголовок,
-варианты с ценами), но собран как редактируемый документ: тексты, цены и
-состав — обычные абзацы и таблицы, а не картинка.
-
-`build_kp_docx` принимает подготовленные данные — расчёт уже сделан
-(`kp_variants.build_variants`), здесь только вёрстка.
+Дизайн: тёмная шапка с логотипом, акцентные разделы, галерея визуализаций
+(картинки мебели из проекта), состав таблицей, цены вариантов, условия.
+Колонтитул с контактами и номером страницы на каждой странице.
 """
 
 from __future__ import annotations
@@ -22,12 +19,13 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
+logger = logging.getLogger(__name__)
+
 DARK = "1D2330"
 ACCENT = "2F6FED"
 LIGHT = "F2F5FA"
 MUTED = "6B7484"
-
-logger = logging.getLogger(__name__)
+LINE = "D8DEE9"
 
 TAGLINE = "качество и индивидуальность"
 
@@ -43,9 +41,8 @@ def _shade(cell, color: str) -> None:
 
 
 def _no_borders(table) -> None:
-    """Убрать рамки таблицы (для шапки и блоков без линий)."""
-    tbl = table._tbl
-    properties = tbl.tblPr
+    """Убрать рамки таблицы."""
+    properties = table._tbl.tblPr
     borders = OxmlElement("w:tblBorders")
     for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
         element = OxmlElement(f"w:{edge}")
@@ -54,10 +51,9 @@ def _no_borders(table) -> None:
     properties.append(borders)
 
 
-def _hairline(table, color: str = "D8DEE9") -> None:
+def _hairline(table, color: str = LINE) -> None:
     """Тонкие горизонтальные линии между строками."""
-    tbl = table._tbl
-    properties = tbl.tblPr
+    properties = table._tbl.tblPr
     borders = OxmlElement("w:tblBorders")
     for edge in ("top", "left", "bottom", "right", "insideV"):
         element = OxmlElement(f"w:{edge}")
@@ -71,11 +67,21 @@ def _hairline(table, color: str = "D8DEE9") -> None:
     properties.append(borders)
 
 
+def _no_split(table) -> None:
+    """Запретить разрыв строк таблицы между страницами."""
+    for row in table.rows:
+        properties = row._tr.get_or_add_trPr()
+        cant = OxmlElement("w:cantSplit")
+        properties.append(cant)
+
+
 def _cell_text(cell, text: str, *, bold: bool = False, size: int = 10,
                color: str | None = None, align: str = "left") -> None:
-    """Записать текст в ячейку с нужным оформлением."""
+    """Записать текст в ячейку с оформлением."""
     cell.text = ""
     paragraph = cell.paragraphs[0]
+    paragraph.paragraph_format.space_before = Pt(1)
+    paragraph.paragraph_format.space_after = Pt(1)
     paragraph.alignment = {
         "left": WD_ALIGN_PARAGRAPH.LEFT,
         "right": WD_ALIGN_PARAGRAPH.RIGHT,
@@ -94,10 +100,11 @@ def _money(value: float) -> str:
 
 
 def _paragraph(document, text: str = "", *, size: int = 10, bold: bool = False,
-               color: str | None = None, space_after: int = 4,
+               color: str | None = None, space_after: int = 4, space_before: int = 0,
                align: str = "left"):
     paragraph = document.add_paragraph()
     paragraph.paragraph_format.space_after = Pt(space_after)
+    paragraph.paragraph_format.space_before = Pt(space_before)
     paragraph.alignment = {
         "left": WD_ALIGN_PARAGRAPH.LEFT,
         "right": WD_ALIGN_PARAGRAPH.RIGHT,
@@ -111,18 +118,42 @@ def _paragraph(document, text: str = "", *, size: int = 10, bold: bool = False,
     return paragraph
 
 
-def _header(document, company: dict) -> None:
-    """Шапка: логотип слева, реквизиты справа.
+def _section_title(document, text: str) -> None:
+    """Заголовок раздела с акцентной линией под ним."""
+    heading = document.add_paragraph()
+    heading.paragraph_format.space_before = Pt(18)
+    heading.paragraph_format.space_after = Pt(0)
+    run = heading.add_run(text.upper())
+    run.bold = True
+    run.font.size = Pt(11)
+    run.font.color.rgb = RGBColor.from_string(DARK)
+    run.font.name = "Calibri"
+    heading.paragraph_format.keep_with_next = True
 
-    Если логотип не задан или файл не читается — выводим название текстом,
-    чтобы КП всё равно было узнаваемым.
-    """
+    underline = document.add_paragraph()
+    underline.paragraph_format.space_before = Pt(0)
+    underline.paragraph_format.space_after = Pt(8)
+    underline.paragraph_format.keep_with_next = True
+    properties = underline._p.get_or_add_pPr()
+    borders = OxmlElement("w:pBdr")
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), "12")
+    bottom.set(qn("w:color"), ACCENT)
+    borders.append(bottom)
+    properties.append(borders)
+
+
+def _header(document, company: dict) -> None:
+    """Тёмная шапка: логотип слева, название и реквизиты справа."""
     table = document.add_table(rows=1, cols=2)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     _no_borders(table)
     left, right = table.rows[0].cells
-    left.width = Cm(9)
-    right.width = Cm(8)
+    left.width = Cm(4.6)
+    right.width = Cm(12.4)
+    _shade(left, DARK)
+    _shade(right, DARK)
 
     left.text = ""
     logo_path = company.get("logo_path")
@@ -130,50 +161,155 @@ def _header(document, company: dict) -> None:
     if logo_path:
         try:
             paragraph = left.paragraphs[0]
-            paragraph.paragraph_format.space_after = Pt(0)
-            paragraph.add_run().add_picture(str(logo_path), width=Cm(3.4))
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            paragraph.paragraph_format.space_before = Pt(4)
+            paragraph.paragraph_format.space_after = Pt(4)
+            paragraph.add_run().add_picture(str(logo_path), width=Cm(2.8))
             logo_added = True
         except Exception:
             logger.warning("Логотип не вставлен: %s", logo_path, exc_info=True)
 
-    if not logo_added:
-        brand = left.paragraphs[0]
-        run = brand.add_run(company.get("name", "ПРОМЕБЕЛЬ"))
-        run.bold = True
-        run.font.size = Pt(20)
-        run.font.color.rgb = RGBColor.from_string(DARK)
-        tagline = left.add_paragraph()
-        tagline_run = tagline.add_run(company.get("tagline") or TAGLINE)
-        tagline_run.font.size = Pt(9)
-        tagline_run.font.color.rgb = RGBColor.from_string(MUTED)
-
-    requisites = company.get("requisites") or []
     right.text = ""
     first = right.paragraphs[0]
     first.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    name_run = first.add_run(requisites[0] if requisites else "")
-    name_run.font.size = Pt(8)
-    name_run.font.color.rgb = RGBColor.from_string(MUTED)
-    for line in requisites[1:]:
+    first.paragraph_format.space_before = Pt(6)
+    if not logo_added:
+        # Логотип не вставился — название выводим текстом.
+        run = first.add_run(company.get("name", "ПРОМЕБЕЛЬ"))
+        run.bold = True
+        run.font.size = Pt(16)
+        run.font.color.rgb = RGBColor.from_string("FFFFFF")
+
+    tagline = right.add_paragraph()
+    tagline.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    tagline.paragraph_format.space_after = Pt(4)
+    run = tagline.add_run(company.get("tagline") or TAGLINE)
+    run.font.size = Pt(8)
+    run.font.color.rgb = RGBColor.from_string("9AA4B5")
+
+    for line in company.get("requisites") or []:
         paragraph = right.add_paragraph()
         paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         paragraph.paragraph_format.space_after = Pt(0)
         run = paragraph.add_run(line)
-        run.font.size = Pt(8)
-        run.font.color.rgb = RGBColor.from_string(MUTED)
+        run.font.size = Pt(7.5)
+        run.font.color.rgb = RGBColor.from_string("C9D1DE")
+
+    spacer = right.add_paragraph()
+    spacer.paragraph_format.space_after = Pt(2)
+
+    if not logo_added:
+        logger.info("Логотип не задан — шапка только с названием")
+
+
+def _footer(document, company: dict) -> None:
+    """Колонтитул: контакты слева, номер страницы справа."""
+    section = document.sections[0]
+    footer = section.footer
+    paragraph = footer.paragraphs[0]
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    contacts = "  ·  ".join(
+        part for part in (company.get("phone"), company.get("email")) if part
+    )
+    run = paragraph.add_run(contacts)
+    run.font.size = Pt(8)
+    run.font.color.rgb = RGBColor.from_string(MUTED)
+    run = paragraph.add_run("\t")
+    run.font.size = Pt(8)
+    page_run = paragraph.add_run("стр. ")
+    page_run.font.size = Pt(8)
+    page_run.font.color.rgb = RGBColor.from_string(MUTED)
+    field = OxmlElement("w:fldSimple")
+    field.set(qn("w:instr"), "PAGE")
+    paragraph._p.append(field)
+
+
+def _normalize_image(path: str) -> str:
+    """Привести картинку к пропорции 4:3 (обрезка по центру) для ровной сетки.
+
+    Возвращает путь к временному файлу; при любой ошибке — исходный путь.
+    """
+    try:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            image = image.convert("RGB")
+            width, height = image.size
+            target_ratio = 4 / 3
+            if width / height > target_ratio:
+                new_width = int(height * target_ratio)
+                left = (width - new_width) // 2
+                image = image.crop((left, 0, left + new_width, height))
+            else:
+                new_height = int(width / target_ratio)
+                top = (height - new_height) // 2
+                image = image.crop((0, top, width, top + new_height))
+            if image.width > 1600:
+                image = image.resize((1600, int(1600 / target_ratio)))
+
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
+                image.save(handle.name, "JPEG", quality=88)
+                return handle.name
+    except Exception:  # без обработки вставим как есть
+        logger.warning("Картинка не нормализована: %s", path, exc_info=True)
+        return path
+
+
+def _gallery(document, images: list[str], width_cm: float = 8.2) -> None:
+    """Галерея визуализаций: по две картинки в ряд, пропорции выровнены."""
+    valid = []
+    for path in images[:6]:
+        try:
+            from PIL import Image
+
+            with Image.open(path) as image:
+                if image.width < 40 or image.height < 40:
+                    continue
+            valid.append(_normalize_image(path))
+        except Exception:
+            logger.warning("Картинка пропущена: %s", path, exc_info=True)
+
+    if not valid:
+        return
+
+    _section_title(document, "Визуализация проекта")
+    for start in range(0, len(valid), 2):
+        pair = valid[start:start + 2]
+        table = document.add_table(rows=1, cols=2)
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        _no_borders(table)
+        for index, path in enumerate(pair):
+            cell = table.rows[0].cells[index]
+            cell.width = Cm(width_cm)
+            paragraph = cell.paragraphs[0]
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            paragraph.paragraph_format.space_after = Pt(10)
+            try:
+                paragraph.add_run().add_picture(path, width=Cm(width_cm - 0.6))
+            except Exception:
+                logger.warning("Картинка не вставлена: %s", path, exc_info=True)
+        if len(pair) == 1:
+            table.rows[0].cells[1].width = Cm(width_cm)
 
 
 def _variant_block(document, variant: Any, number: int) -> None:
-    """Блок одного варианта: название, описание, материалы, состав, цена."""
+    """Блок варианта: название, описание, материалы, состав, цена."""
     heading = document.add_paragraph()
-    heading.paragraph_format.space_before = Pt(14)
-    heading.paragraph_format.space_after = Pt(2)
+    heading.paragraph_format.space_before = Pt(16)
+    heading.paragraph_format.space_after = Pt(1)
     run = heading.add_run(f"Вариант {number}. {variant.name}")
     run.bold = True
-    run.font.size = Pt(14)
+    run.font.size = Pt(13)
     run.font.color.rgb = RGBColor.from_string(DARK)
 
-    _paragraph(document, variant.description, size=9, color=MUTED, space_after=8)
+    marker = document.add_paragraph()
+    marker.paragraph_format.space_after = Pt(6)
+    run = marker.add_run(variant.description)
+    run.font.size = Pt(9)
+    run.font.color.rgb = RGBColor.from_string(MUTED)
+    run.italic = True
 
     materials = document.add_table(rows=1, cols=1)
     _no_borders(materials)
@@ -186,6 +322,10 @@ def _variant_block(document, variant: Any, number: int) -> None:
         paragraph.paragraph_format.space_after = Pt(1)
         bullet = paragraph.add_run(f"• {line}")
         bullet.font.size = Pt(9)
+
+    gap = document.add_paragraph()
+    gap.paragraph_format.space_after = Pt(2)
+    gap.paragraph_format.space_before = Pt(0)
 
     table = document.add_table(rows=1, cols=5)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -212,6 +352,7 @@ def _variant_block(document, variant: Any, number: int) -> None:
         "tumbler": "Тумба",
         "corner": "Угловой модуль",
     }
+    _no_split(table)
     for module in variant.modules or []:
         row = table.add_row()
         facades = module.get("facades") or {}
@@ -226,8 +367,7 @@ def _variant_block(document, variant: Any, number: int) -> None:
         for index, value in enumerate(values):
             cell = row.cells[index]
             cell.width = widths[index]
-            _cell_text(cell, value, size=9,
-                       align="left" if index == 0 else "center")
+            _cell_text(cell, value, size=9, align="left" if index == 0 else "center")
 
     totals = document.add_table(rows=2, cols=2)
     totals.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -256,6 +396,7 @@ def build_kp_docx(
     options_text: list[str] | None = None,
     conditions: list[str] | None = None,
     image_path: str | None = None,
+    images: list[str] | None = None,
 ) -> bytes:
     """Собрать DOCX коммерческого предложения и вернуть байты."""
     company = company or {}
@@ -268,7 +409,7 @@ def build_kp_docx(
     section.page_height = Cm(29.7)
     section.left_margin = Cm(2)
     section.right_margin = Cm(2)
-    section.top_margin = Cm(1.6)
+    section.top_margin = Cm(1.2)
     section.bottom_margin = Cm(1.6)
 
     style = document.styles["Normal"]
@@ -277,14 +418,15 @@ def build_kp_docx(
     style.element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
 
     _header(document, company)
+    _footer(document, company)
 
     title = document.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title.paragraph_format.space_before = Pt(22)
+    title.paragraph_format.space_before = Pt(10)
     title.paragraph_format.space_after = Pt(2)
     run = title.add_run("КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ")
     run.bold = True
-    run.font.size = Pt(19)
+    run.font.size = Pt(20)
     run.font.color.rgb = RGBColor.from_string(DARK)
 
     subtitle = document.add_paragraph()
@@ -296,17 +438,26 @@ def build_kp_docx(
 
     validity = document.add_paragraph()
     validity.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    validity.paragraph_format.space_after = Pt(14)
+    validity.paragraph_format.space_after = Pt(6)
     run = validity.add_run(f"Предложение действительно до {valid_until:%d.%m.%Y}")
     run.italic = True
     run.font.size = Pt(9)
     run.font.color.rgb = RGBColor.from_string(MUTED)
 
     if client:
-        _paragraph(document, f"Заказчик: {client}", size=11, bold=True, space_after=10)
+        _paragraph(document, f"Заказчик: {client}", size=11, bold=True,
+                   space_after=4, space_before=8)
 
-    # Сводка: три варианта в одну таблицу — клиенту видно разницу сразу.
-    _paragraph(document, "Варианты исполнения", size=12, bold=True, space_after=6)
+    gallery = list(images or [])
+    if image_path:
+        gallery.append(image_path)
+    _gallery(document, gallery)
+    if gallery:
+        # Картинки проекта занимают свою страницу, варианты начинаются с новой —
+        # иначе сводная таблица рвётся между страницами.
+        document.add_page_break()
+
+    _section_title(document, "Варианты и стоимость")
     summary = document.add_table(rows=1, cols=4)
     summary.alignment = WD_TABLE_ALIGNMENT.CENTER
     _hairline(summary)
@@ -318,6 +469,7 @@ def build_kp_docx(
         _shade(cell, DARK)
         _cell_text(cell, header, bold=True, size=8, color="FFFFFF",
                    align="right" if index >= 2 else "left")
+    _no_split(summary)
     for variant in variants:
         row = summary.add_row()
         values = (variant.name, variant.description,
@@ -329,12 +481,15 @@ def build_kp_docx(
                        color=ACCENT if index == 2 else None,
                        align="right" if index >= 2 else "left")
 
+    _section_title(document, "Состав и комплектация")
     for number, variant in enumerate(variants, start=1):
+        if number > 1:
+            # Каждый вариант — со своей страницы: таблица состава не рвётся.
+            document.add_page_break()
         _variant_block(document, variant, number)
 
     if options_text:
-        _paragraph(document, "Дополнительно включено", size=12, bold=True,
-                   space_after=4)
+        _section_title(document, "Дополнительно включено")
         for line in options_text:
             paragraph = document.add_paragraph()
             paragraph.paragraph_format.space_after = Pt(1)
@@ -342,33 +497,17 @@ def build_kp_docx(
             run.font.size = Pt(9)
 
     if conditions:
-        _paragraph(document, "Условия", size=12, bold=True, space_after=4)
+        _section_title(document, "Условия")
         for line in conditions:
             paragraph = document.add_paragraph()
             paragraph.paragraph_format.space_after = Pt(1)
             run = paragraph.add_run(f"• {line}")
             run.font.size = Pt(9)
 
-    if image_path:
-        try:
-            _paragraph(document, "Эскиз", size=12, bold=True, space_after=4)
-            document.add_picture(image_path, width=Cm(15))
-        except Exception:
-            logger.warning("Эскиз не вставлен в КП", exc_info=True)
-
-    footer = document.add_paragraph()
-    footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    footer.paragraph_format.space_before = Pt(16)
-    run = footer.add_run(
-        " ".join(
-            part for part in (
-                company.get("phone"),
-                company.get("email"),
-                company.get("address"),
-            ) if part
-        )
-    )
-    run.font.size = Pt(8)
+    signature = document.add_paragraph()
+    signature.paragraph_format.space_before = Pt(22)
+    run = signature.add_run("С уважением, команда ПРОМЕБЕЛЬ")
+    run.font.size = Pt(9)
     run.font.color.rgb = RGBColor.from_string(MUTED)
 
     buffer = io.BytesIO()

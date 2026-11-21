@@ -102,7 +102,7 @@ def test_logo_is_inserted_in_header(tmp_path) -> None:
     )
     document = Document(BytesIO(payload))
     assert len(document.inline_shapes) == 1
-    assert round(document.inline_shapes[0].width.cm, 1) == 3.4
+    assert round(document.inline_shapes[0].width.cm, 1) == 2.8
 
 
 def test_without_logo_brand_is_text() -> None:
@@ -113,3 +113,57 @@ def test_without_logo_brand_is_text() -> None:
     assert len(document.inline_shapes) == 0
     text = "\n".join(paragraph.text for paragraph in document.paragraphs)
     assert "КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ" in text
+
+
+def _photo(path, color) -> str:
+    from PIL import Image
+
+    Image.new("RGB", (800, 600), color).save(path)
+    return str(path)
+
+
+def test_gallery_images_are_inserted(tmp_path) -> None:
+    """Картинки мебели из проекта попадают в раздел «Визуализация»."""
+    logo = tmp_path / "logo.png"
+    _photo(logo, (29, 35, 48))
+    photos = [
+        _photo(tmp_path / "one.png", (200, 180, 160)),
+        _photo(tmp_path / "two.png", (120, 140, 160)),
+    ]
+    variants = build_variants(MODULES, zone_type="Кухня", catalog=catalog())
+    payload = build_kp_docx(
+        variants=variants,
+        company={**COMPANY, "logo_path": logo},
+        kp_date=date(2026, 11, 20),
+        images=photos,
+    )
+    document = Document(BytesIO(payload))
+    text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    assert "ВИЗУАЛИЗАЦИЯ ПРОЕКТА" in text
+    # логотип + две картинки
+    assert len(document.inline_shapes) == 3
+
+
+def test_without_images_no_gallery_section() -> None:
+    variants = build_variants(MODULES, zone_type="Кухня", catalog=catalog())
+    payload = build_kp_docx(variants=variants, company=COMPANY, kp_date=date(2026, 11, 20))
+    document = Document(BytesIO(payload))
+    text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    assert "ВИЗУАЛИЗАЦИЯ ПРОЕКТА" not in text
+    assert len(document.inline_shapes) == 0
+
+
+def test_sections_have_titles() -> None:
+    variants = build_variants(MODULES, zone_type="Кухня", catalog=catalog())
+    payload = build_kp_docx(
+        variants=variants,
+        company=COMPANY,
+        kp_date=date(2026, 11, 20),
+        options_text=["Светодиодная подсветка"],
+        conditions=["Срок изготовления — 30 рабочих дней"],
+    )
+    document = Document(BytesIO(payload))
+    text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    for title in ("ВАРИАНТЫ И СТОИМОСТЬ", "СОСТАВ И КОМПЛЕКТАЦИЯ",
+                  "ДОПОЛНИТЕЛЬНО ВКЛЮЧЕНО", "УСЛОВИЯ"):
+        assert title in text

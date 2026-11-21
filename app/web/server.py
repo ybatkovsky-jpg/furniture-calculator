@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import uuid
@@ -17,7 +18,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from app.config import settings
@@ -261,23 +262,49 @@ def _company_block() -> dict:
     }
 
 
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+
+
 @app.post("/api/kp/{quote_id}")
-async def kp_docx(quote_id: str, payload: dict = Body(default={})) -> FileResponse:  # noqa: B008
-    """Собрать КП в DOCX по выбранным вариантам и опциям."""
+async def kp_docx(
+    quote_id: str,
+    payload: str = Form("{}"),
+    images: list[UploadFile] = File(default=[]),  # noqa: B008 — идиома FastAPI
+) -> FileResponse:
+    """Собрать КП в DOCX: варианты, опции и картинки мебели из проекта."""
     data = QUOTES.get(quote_id)
     if not data:
         raise HTTPException(404, "Расчёт не найден — распознайте заново")
 
-    names = payload.get("variants") or ["Базовая", "Стандарт", "Комфорт"]
+    try:
+        payload_data = json.loads(payload or "{}")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(400, f"Некорректные параметры КП: {exc}") from exc
+
+    names = payload_data.get("variants") or ["Базовая", "Стандарт", "Комфорт"]
     options = {
-        "gola": bool(payload.get("gola")),
-        "led": bool(payload.get("led")),
-        "accessories": bool(payload.get("accessories")),
+        "gola": bool(payload_data.get("gola")),
+        "led": bool(payload_data.get("led")),
+        "accessories": bool(payload_data.get("accessories")),
     }
-    discount = float(payload.get("discount") or 0)
-    client = str(payload.get("client") or "")
-    validity_days = int(payload.get("validity_days") or settings.company_kp_validity_days)
-    with_image = bool(payload.get("image", True))
+    discount = float(payload_data.get("discount") or 0)
+    client = str(payload_data.get("client") or "")
+    validity_days = int(
+        payload_data.get("validity_days") or settings.company_kp_validity_days
+    )
+    with_image = bool(payload_data.get("image", False))
+
+    gallery: list[str] = []
+    if images:
+        images_dir = OUT_DIR / f"images-{quote_id[:8]}"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        for index, upload in enumerate(images[:6], start=1):
+            suffix = Path(upload.filename or "photo.jpg").suffix.lower()
+            if suffix not in IMAGE_SUFFIXES:
+                continue
+            target = images_dir / f"{index:02}{suffix}"
+            target.write_bytes(await upload.read())
+            gallery.append(str(target))
 
     variants = build_variants(
         data["modules"],
@@ -315,6 +342,7 @@ async def kp_docx(quote_id: str, payload: dict = Body(default={})) -> FileRespon
         options_text=options_text,
         conditions=conditions,
         image_path=data.get("image") if with_image else None,
+        images=gallery,
     )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -417,8 +445,14 @@ INDEX_HTML = """<!doctype html>
           <label style="margin-left:14px"><input type="checkbox" id="kp-gola"> Профиль GOLA</label>
           <label style="margin-left:14px"><input type="checkbox" id="kp-accessories"> Наполнение (сушка, лоток, поддон)</label>
         </div>
+        <div style="margin-top:10px">
+          <label class="muted">Картинки мебели для КП (рендеры, фото из проекта)<br>
+            <input id="kp-images" type="file" accept="image/*" multiple style="margin-top:6px">
+          </label>
+          <div id="kp-preview" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
+        </div>
         <div style="margin-top:8px" class="muted">
-          <label><input type="checkbox" id="kp-image" checked> Вставить эскиз чертежа</label>
+          <label><input type="checkbox" id="kp-image"> Добавить эскиз чертежа</label>
         </div>
         <button class="button" id="kp-download" style="margin-top:12px">Скачать КП (Word)</button>
       </div>
@@ -514,11 +548,22 @@ function render(data) {
 document.getElementById('excel').addEventListener('click', () => {
   if (quoteId) window.location = '/api/excel/' + quoteId;
 });
+document.getElementById('kp-images').addEventListener('change', (event) => {
+  const box = document.getElementById('kp-preview');
+  box.innerHTML = '';
+  for (const file of event.target.files) {
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(file);
+    img.style.cssText = 'width:96px;height:72px;object-fit:cover;border-radius:8px;border:1px solid #d6dce6';
+    box.appendChild(img);
+  }
+});
+
 document.getElementById('kp-download').addEventListener('click', async () => {
   if (!quoteId) return;
   const variants = [...document.querySelectorAll('.kp-variant:checked')].map(el => el.value);
   if (!variants.length) { alert('Выберите хотя бы один вариант'); return; }
-  const body = {
+  const payload = {
     variants,
     client: document.getElementById('kp-client').value,
     discount: Number(document.getElementById('kp-discount').value || 0),
@@ -528,10 +573,11 @@ document.getElementById('kp-download').addEventListener('click', async () => {
     accessories: document.getElementById('kp-accessories').checked,
     image: document.getElementById('kp-image').checked,
   };
-  const response = await fetch('/api/kp/' + quoteId, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const form = new FormData();
+  form.append('payload', JSON.stringify(payload));
+  const files = document.getElementById('kp-images').files;
+  for (const file of files) form.append('images', file);
+  const response = await fetch('/api/kp/' + quoteId, { method: 'POST', body: form });
   if (!response.ok) { alert('Не удалось собрать КП: ' + response.status); return; }
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);

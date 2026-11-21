@@ -132,6 +132,17 @@ def select_total_width(
     if not valid:
         return None, 0.0
 
+    # Глубина корпуса (600/560/320/350) — частая цифра на чертеже и на
+    # 3D-визуализации. Если на листе есть крупный размер (>= 1000 мм), то
+    # глубина не может быть габаритом: иначе 600 «побеждает» ширину 2400.
+    if any(c["value"] >= 1000 for c in valid):
+        valid = [
+            c for c in valid
+            if not (c["value"] < 800 and _is_depth_like(c["value"]))
+        ]
+        if not valid:
+            return None, 0.0
+
     has_vlm = isinstance(vlm_width, (int, float)) and vlm_width > 0
 
     # Повтор одного и того же числа на листе — признак настоящего габарита
@@ -180,6 +191,14 @@ def select_total_width(
     # (Ограничение: у высоких изделий высота может быть больше ширины — но сюда
     # попадаем только когда модель уже дала ширину без OCR-подтверждения.)
     return _largest_with_dominance(valid)
+
+
+DEPTH_LIKE_MM = (300, 320, 350, 560, 580, 600, 620)
+
+
+def _is_depth_like(value: float) -> bool:
+    """Похоже ли число на глубину корпуса, а не на габарит по ширине."""
+    return any(abs(value - depth) <= 30 for depth in DEPTH_LIKE_MM)
 
 
 def _dim_line_quality(c: dict, duplicates: int = 1) -> float:

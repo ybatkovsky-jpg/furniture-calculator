@@ -1144,6 +1144,23 @@ class GeminiImageAnalyzer:
                 except Exception:
                     logger.debug("OCR габарита не удался — используем ответ модели", exc_info=True)
 
+            # Габарит не может быть меньше самого широкого модуля: на 3D-рендере
+            # OCR принял глубину 600 за ширину, а модель вернула модуль 2000.
+            # Поднимаем габарит до ширины модуля, иначе масштаб врёт втрое.
+            module_widths = [
+                float(m.get("width") or 0)
+                for m in (data.get("modules") or [])
+                if isinstance(m, dict)
+            ]
+            if module_widths:
+                widest = max(module_widths)
+                if widest > 0 and total_width_mm < widest * 0.8:
+                    logger.warning(
+                        "Габарит %s мм меньше модуля %.0f мм — беру ширину модуля",
+                        total_width_mm, widest,
+                    )
+                    total_width_mm = int(widest)
+
             # Если есть и габарит, и bbox-данные → точные размеры через scale_calc
             scaled_facades = []
             if total_width_mm > 0 and facades_data:

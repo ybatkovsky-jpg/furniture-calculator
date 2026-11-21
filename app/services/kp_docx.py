@@ -275,6 +275,17 @@ def _gallery(document, images: list[str], width_cm: float = 8.2) -> None:
         return
 
     _section_title(document, "Визуализация проекта")
+    if len(valid) == 1:
+        # Одна картинка — на всю ширину, а не половину полосы.
+        single = document.add_paragraph()
+        single.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        single.paragraph_format.space_after = Pt(6)
+        try:
+            single.add_run().add_picture(valid[0], width=Cm(15))
+        except Exception:
+            logger.warning("Картинка не вставлена: %s", valid[0], exc_info=True)
+        return
+
     for start in range(0, len(valid), 2):
         pair = valid[start:start + 2]
         table = document.add_table(rows=1, cols=2)

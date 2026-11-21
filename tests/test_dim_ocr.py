@@ -241,3 +241,22 @@ def test_parse_glm_empty():
     assert parse_glm_dimensions({"md_results": ""}) == []
     assert parse_glm_dimensions(None) == []
     assert parse_glm_dimensions("строка вместо dict") == []
+
+
+def test_depth_number_does_not_beat_large_dimension() -> None:
+    """600 — глубина, а не габарит: при наличии 2400 выбираем 2400."""
+    candidates = [
+        {"value": 600, "x": 0.5, "y": 0.4, "w": 0.08},
+        {"value": 2400, "x": 0.55, "y": 0.55, "w": 0.12},
+        {"value": 1500, "x": 0.2, "y": 0.5, "w": 0.10},
+    ]
+    value, confidence = select_total_width(candidates, 600)
+    assert value == 2400
+    assert confidence > 0.5
+
+
+def test_narrow_total_survives_without_large_numbers() -> None:
+    """Лист шириной 800 без крупных чисел: глубину не отбрасываем."""
+    candidates = [{"value": 800, "x": 0.5, "y": 0.5, "w": 0.10}]
+    value, _ = select_total_width(candidates, 800)
+    assert value == 800

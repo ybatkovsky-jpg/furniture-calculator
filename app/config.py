@@ -229,6 +229,7 @@ class Settings(BaseSettings):
     company_bik: str = "044525974"
     company_kor_account: str = "30101810145250000974"
     company_kp_validity_days: int = 14
+    company_logo_path: str = "assets/logo.png"
 
 
 def mask_database_url(url: str) -> str:

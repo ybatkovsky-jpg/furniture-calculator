@@ -112,7 +112,11 @@ def _paragraph(document, text: str = "", *, size: int = 10, bold: bool = False,
 
 
 def _header(document, company: dict) -> None:
-    """Шапка: название и слоган слева, реквизиты справа."""
+    """Шапка: логотип слева, реквизиты справа.
+
+    Если логотип не задан или файл не читается — выводим название текстом,
+    чтобы КП всё равно было узнаваемым.
+    """
     table = document.add_table(rows=1, cols=2)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     _no_borders(table)
@@ -121,15 +125,27 @@ def _header(document, company: dict) -> None:
     right.width = Cm(8)
 
     left.text = ""
-    brand = left.paragraphs[0]
-    run = brand.add_run(company.get("name", "ПРО МЕБЕЛЬ"))
-    run.bold = True
-    run.font.size = Pt(20)
-    run.font.color.rgb = RGBColor.from_string(DARK)
-    tagline = left.add_paragraph()
-    tagline_run = tagline.add_run(company.get("tagline") or TAGLINE)
-    tagline_run.font.size = Pt(9)
-    tagline_run.font.color.rgb = RGBColor.from_string(MUTED)
+    logo_path = company.get("logo_path")
+    logo_added = False
+    if logo_path:
+        try:
+            paragraph = left.paragraphs[0]
+            paragraph.paragraph_format.space_after = Pt(0)
+            paragraph.add_run().add_picture(str(logo_path), width=Cm(3.4))
+            logo_added = True
+        except Exception:
+            logger.warning("Логотип не вставлен: %s", logo_path, exc_info=True)
+
+    if not logo_added:
+        brand = left.paragraphs[0]
+        run = brand.add_run(company.get("name", "ПРОМЕБЕЛЬ"))
+        run.bold = True
+        run.font.size = Pt(20)
+        run.font.color.rgb = RGBColor.from_string(DARK)
+        tagline = left.add_paragraph()
+        tagline_run = tagline.add_run(company.get("tagline") or TAGLINE)
+        tagline_run.font.size = Pt(9)
+        tagline_run.font.color.rgb = RGBColor.from_string(MUTED)
 
     requisites = company.get("requisites") or []
     right.text = ""

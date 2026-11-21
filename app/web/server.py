@@ -248,6 +248,7 @@ def _company_block() -> dict:
         "phone": settings.company_phone,
         "email": settings.company_email,
         "address": settings.company_address,
+        "logo_path": (ROOT / settings.company_logo_path) if settings.company_logo_path else None,
         "requisites": [
             settings.company_legal_name,
             settings.company_legal_address,

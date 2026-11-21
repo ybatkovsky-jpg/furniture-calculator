@@ -85,3 +85,31 @@ def test_document_is_editable_docx_not_image() -> None:
     document = Document(BytesIO(payload))
     assert len(document.paragraphs) > 5
     assert document.tables
+
+
+def test_logo_is_inserted_in_header(tmp_path) -> None:
+    """Логотип — картинка в шапке, а не текст-заглушка."""
+    from PIL import Image
+
+    logo = tmp_path / "logo.png"
+    Image.new("RGB", (200, 200), (29, 35, 48)).save(logo)
+
+    variants = build_variants(MODULES, zone_type="Кухня", catalog=catalog())
+    payload = build_kp_docx(
+        variants=variants,
+        company={**COMPANY, "logo_path": logo},
+        kp_date=date(2026, 11, 20),
+    )
+    document = Document(BytesIO(payload))
+    assert len(document.inline_shapes) == 1
+    assert round(document.inline_shapes[0].width.cm, 1) == 3.4
+
+
+def test_without_logo_brand_is_text() -> None:
+    """Нет файла логотипа — КП всё равно собирается, бренд текстом."""
+    variants = build_variants(MODULES, zone_type="Кухня", catalog=catalog())
+    payload = build_kp_docx(variants=variants, company=COMPANY, kp_date=date(2026, 11, 20))
+    document = Document(BytesIO(payload))
+    assert len(document.inline_shapes) == 0
+    text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    assert "КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ" in text

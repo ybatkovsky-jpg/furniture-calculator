@@ -79,6 +79,30 @@ def _brand_from(selection: Any) -> str:
     return ""
 
 
+COST_TYPE_BY_KIND = {
+    "ldsp": "material",
+    "edge": "material",
+    "hdf": "material",
+    "facade": "material",
+    "countertop": "material",
+    "glass": "material",
+    "hinge": "hardware",
+    "drawer": "hardware",
+    "drawer_internal": "hardware",
+    "handle": "hardware",
+    "gola": "hardware",
+    "push_open": "hardware",
+    "lift": "hardware",
+    "fastener": "hardware",
+    "rod": "hardware",
+    "bottle_holder": "hardware",
+    "cutlery_tray": "hardware",
+    "drying_rack": "hardware",
+    "hygienic_mat": "hardware",
+    "led": "hardware",
+}
+
+
 @dataclass
 class CostLine:
     """Одна строка себестоимости."""
@@ -101,6 +125,20 @@ class CostLine:
     # P0-02: поле строки шаблона Excel (см. templates/row_mapping.json).
     # None — строки в шаблоне нет, документ покажет её в блоке «ПРОЧЕЕ».
     field: str | None = None
+
+    @property
+    def cost_type(self) -> str:
+        """Группа затрат для запрета двойного учёта."""
+        return COST_TYPE_BY_KIND.get(self.kind, "other")
+
+
+def cost_type_totals(lines: list[CostLine]) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    for line in lines:
+        totals[line.cost_type] = round(
+            totals.get(line.cost_type, 0.0) + line.amount, 2
+        )
+    return dict(sorted(totals.items()))
 
 
 @dataclass

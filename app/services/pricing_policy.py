@@ -46,6 +46,8 @@ class PricingPolicy:
     risk_reserve_rate: float = 0.0
     # P1-10: версия политики — попадает в снимок и версию расчёта.
     version: str = "1.0"
+    # Решение собственника 24.11.2026: 35/10/15 зафиксированы.
+    policy_status: str = "approved"
     designer_bonus_rate: float = 0.10
     sheet_utilization: float = 0.85
 
@@ -138,7 +140,10 @@ def coerce_policy(value: Any | None) -> PricingPolicy:
         merged = base.as_dict()
         for key, item in value.items():
             if key in merged and item is not None:
-                merged[key] = float(item)
+                if key in ("policy_status", "version"):
+                    merged[key] = str(item)
+                else:
+                    merged[key] = float(item)
         return PricingPolicy(**merged)
     return PricingPolicy.from_config()
 

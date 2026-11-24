@@ -159,11 +159,20 @@
 - 23 позиции без цены блокируют КП до счёта поставщика;
 - тест `tests/test_price_sku.py`.
 
+## Этап 6 — финансовое ядро (начат)
+
+- `CostLine.cost_type`: material / hardware / other; сумма групп = сумма строк;
+- `cost_type_totals` сохраняется в `quote`;
+- `PricingPolicy.policy_status = "approved"` (решение 24.11);
+- `policy_status` сохраняется в снимке рядом с `policy_version`;
+- `coerce_policy` больше не пытается сделать `float("approved")`;
+- тест `tests/test_cost_types.py`.
+
 ## Проверки
 
 | Проверка | Результат |
 |---|---|
-| `pytest -q` | **747 passed, 1 skipped** |
+| `pytest -q` | **750 passed, 1 skipped** |
 | `check_phases.py` | 59/59 |
 | `ruff check app` | чисто |
 | Alembic | `a8c1e3f5b7d9` (head) |

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, fields
 from datetime import UTC, datetime
 
+from app.domain.cost_lines import cost_type_totals
 from app.models.calculation import Calculation
 from app.services.calc_engine import CalculationResult
 
@@ -56,6 +57,7 @@ def apply_result(
         "reason": reason,
         "zone_type": calculation.zone_type,
         "lines": [asdict(line) for line in result.lines],
+        "cost_type_totals": cost_type_totals(result.lines),
         "warnings": result.warnings,
         "missing_prices": result.missing_prices,
         "can_issue_kp": result.can_issue_kp,
@@ -63,6 +65,7 @@ def apply_result(
         "price_book": result.price_book,
         "policy": result.policy,
         "policy_version": str((result.policy or {}).get("version") or "1.0"),
+        "policy_status": str((result.policy or {}).get("policy_status") or "unknown"),
         "recognition": {
             "confidence": calculation.recognition_confidence,
             "quality_score": calculation.quality_score,

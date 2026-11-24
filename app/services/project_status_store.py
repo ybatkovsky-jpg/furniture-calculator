@@ -11,6 +11,19 @@ from app.models.project_status import ProjectStatus
 
 logger = logging.getLogger(__name__)
 
+PROJECT_STATUSES = (
+    "IMPORTED",
+    "RECOGNIZED",
+    "CALCULATED",
+    "APPROVED",
+    "SENT",
+    "ARCHIVED",
+)
+
+
+def is_valid_status(status: str) -> bool:
+    return status in PROJECT_STATUSES
+
 
 async def set_project_status(project_id: str, status: str) -> bool:
     """Записать статус; False — БД недоступна/таблицы нет."""

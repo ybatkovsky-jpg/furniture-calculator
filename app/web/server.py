@@ -38,7 +38,12 @@ from app.services.importing import (
 from app.services.kp_docx import build_kp_docx
 from app.services.kp_variants import build_variants
 from app.services.price_book import load_price_book_sync
-from app.services.project_status_store import set_project_status
+from app.services.project_status_store import (
+    PROJECT_STATUSES,
+    get_project_status,
+    is_valid_status,
+    set_project_status,
+)
 from app.services.recognition_cache import module_to_dict
 from app.services.template_filler import fill_template_from_quote
 from app.services.web_quote_store import load_web_quote, save_web_quote
@@ -275,6 +280,34 @@ async def project_import(file: UploadFile = File(...)) -> JSONResponse:  # noqa:
         shutil.rmtree(source.parent, ignore_errors=True)
     await set_project_status(project.project_id, project.status)
     return JSONResponse(_project_payload(project))
+
+
+@app.get("/api/projects/{project_id}/status")
+async def project_status(project_id: str) -> JSONResponse:
+    status = await get_project_status(project_id)
+    return JSONResponse(
+        {
+            "project_id": project_id,
+            "status": status,
+            "allowed": list(PROJECT_STATUSES),
+        }
+    )
+
+
+@app.patch("/api/projects/{project_id}/status")
+async def update_project_status(
+    project_id: str,
+    payload: dict = Body(default={}),  # noqa: B008
+) -> JSONResponse:
+    status = str(payload.get("status") or "").upper()
+    if not is_valid_status(status):
+        raise HTTPException(
+            400,
+            f"Недопустимый статус: {status}. Разрешены: {', '.join(PROJECT_STATUSES)}",
+        )
+    if not await set_project_status(project_id, status):
+        raise HTTPException(500, "Не удалось сохранить статус проекта")
+    return JSONResponse({"ok": True, "project_id": project_id, "status": status})
 
 
 @app.patch("/api/projects/{project_id}/pages/{page_index}")
@@ -752,7 +785,11 @@ async def recalc(quote_id: str, payload: dict = Body(default={})) -> JSONRespons
         raise HTTPException(404, "Расчёт не найден — распознайте заново")
 
     modules = _validate_modules(payload.get("modules"))
-    materials, hardware = default_materials()
+    default_materials_, default_hardware = default_materials()
+    materials = payload.get("materials") or default_materials_
+    hardware = payload.get("hardware") or default_hardware
+    if not isinstance(materials, dict) or not isinstance(hardware, dict):
+        raise HTTPException(400, "Материалы и фурнитура должны быть объектами")
     result = calculate_full_cost(
         modules, materials, hardware, [], zone_type=data.get("zone"),
         price_book=load_price_book_sync(),

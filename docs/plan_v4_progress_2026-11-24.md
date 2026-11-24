@@ -180,7 +180,7 @@
 - конструкция модулей сохраняется, различия — в материалах/фурнитуре;
 - тесты `tests/test_kp_variants.py`.
 
-## Этап 8 — веб менеджера (начат)
+## Этап 8 — веб менеджера — **закрыт 25.11**
 
 - `POST /api/quotes/{id}/approve` — подтверждение состава с автором;
 - `GET /api/quotes/{id}/approval` — статус подтверждения;
@@ -188,13 +188,15 @@
 - пересчёт сбрасывает подтверждение;
 - версия `approved` пишется в историю;
 - кнопка «Подтвердить состав» в веб-интерфейсе;
+- `PATCH /api/projects/{id}/status` — статусы `IMPORTED` … `ARCHIVED`;
+- `POST /api/recalc/{id}` принимает `materials` и `hardware`;
 - тесты `tests/test_web.py`.
 
 ## Проверки
 
 | Проверка | Результат |
 |---|---|
-| `pytest -q` | **756 passed, 1 skipped** |
+| `pytest -q` | **759 passed, 1 skipped** |
 | `check_phases.py` | 59/59 |
 | `ruff check app` | чисто |
 | Alembic | `a8c1e3f5b7d9` (head) |

@@ -375,6 +375,57 @@ def test_recalc_returns_totals(monkeypatch) -> None:
     assert data["validation"]["values"][0]["source_type"] == "manual"
 
 
+def test_recalc_accepts_materials_and_hardware(monkeypatch) -> None:
+    quote = _prepare_quote(monkeypatch)
+    modules = [
+        {"type": "lower_base", "width": 600, "depth": 560, "height": 820,
+         "quantity": 1, "facades": {"count": 1}, "drawers": {"count": 0}},
+    ]
+    default = client.post(f"/api/recalc/{quote}", json={"modules": modules}).json()
+    premium_materials = {
+        "ldsp": {"name": "EGGER", "price": 12000, "price_unit": "лист",
+                 "thickness_mm": 16, "brand": "EGGER"},
+        "edge": {"name": "EGGER 0,4", "price": 40},
+        "facades": {"name": "АКРИЛ", "price": 15000, "price_unit": "м²"},
+    }
+    premium = client.post(
+        f"/api/recalc/{quote}",
+        json={"modules": modules, "materials": premium_materials},
+    ).json()
+
+    assert premium["totals"]["cost_price"] > default["totals"]["cost_price"]
+
+
+def test_project_status_can_be_updated(monkeypatch) -> None:
+    from app.web import server
+
+    async def fake_set(project_id, status):
+        return True
+
+    monkeypatch.setattr(server, "set_project_status", fake_set)
+    response = client.patch(
+        "/api/projects/project-a/status",
+        json={"status": "approved"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "APPROVED"
+    assert "APPROVED" in response.json()["status"]
+
+
+def test_project_status_rejects_unknown(monkeypatch) -> None:
+    from app.web import server
+
+    async def fake_set(project_id, status):
+        return True
+
+    monkeypatch.setattr(server, "set_project_status", fake_set)
+    response = client.patch(
+        "/api/projects/project-a/status",
+        json={"status": "сделано"},
+    )
+    assert response.status_code == 400
+
+
 def test_recalc_rejects_zero_width(monkeypatch) -> None:
     quote = _prepare_quote(monkeypatch)
     response = client.post(

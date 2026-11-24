@@ -27,6 +27,13 @@ def _no_db_status(monkeypatch):
     monkeypatch.setattr(server, "save_web_quote_version", no_version)
 
 
+def test_health_endpoint() -> None:
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["database"] is True
+
+
 def test_index_returns_page() -> None:
     response = client.get("/")
     assert response.status_code == 200

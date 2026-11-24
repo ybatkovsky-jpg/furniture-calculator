@@ -22,8 +22,10 @@ from typing import Any
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from sqlalchemy import text
 
 from app.config import settings
+from app.db.session import AsyncSessionLocal
 from app.domain.kp_reference import check_price_corridor
 from app.domain.recognition_validation import validate_modules
 from app.services.calc_engine import calculate_full_cost
@@ -100,6 +102,19 @@ TYPE_LABELS = {
 }
 
 app = FastAPI(title="ПРО МЕБЕЛЬ — расчёт", docs_url=None, redoc_url=None)
+
+
+@app.get("/healthz")
+async def healthz() -> JSONResponse:
+    """Проверка живости: процесс и БД."""
+    database_ok = True
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("select 1"))
+    except Exception:  # noqa: BLE001 — health не должен падать
+        database_ok = False
+    payload = {"status": "ok" if database_ok else "degraded", "database": database_ok}
+    return JSONResponse(payload, status_code=200 if database_ok else 503)
 
 
 def _price_item(connection: sqlite3.Connection, category: str) -> dict | None:

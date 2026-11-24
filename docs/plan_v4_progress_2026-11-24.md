@@ -138,7 +138,7 @@
 цоколь; саморезы/гвозди не выдумываются, если их нет в прайсе
 (`tests/test_fasteners.py`).
 
-## Этап 4 — закупка (начат)
+## Этап 4 — раскрой и закупка — **закрыт 25.11**
 
 - `app/domain/purchase.py`: `PurchaseLine`, `build_purchase_list`;
 - листы по материалам из раскроя + кромка по толщинам;
@@ -146,7 +146,12 @@
 - в закупке: листы ЛДСП, лист ХДФ, МДФ (если нет фасадов по м²),
   фасады по м², кромка по толщинам;
 - список сохраняется в `quote["purchase"]`;
-- тест `tests/test_purchase.py`.
+- тест `tests/test_purchase.py`;
+- MaxRects / Guillotine / Skyline в `app/domain/nesting_algorithms.py`;
+- мультилист и SVG-карты листов;
+- `scripts/nesting_benchmark.py` на 4 выгрузках ПРО100;
+- 3 детали больше листа попадают в `unplaced` с размерами;
+- рабочая смета пока на полочной укладке (`nest_parts`), переключение — после техдира.
 
 ## Этап 5 — фурнитура и прайс — **закрыт 25.11**
 
@@ -220,7 +225,7 @@
 
 | Проверка | Результат |
 |---|---|
-| `pytest -q` | **764 passed, 1 skipped** |
+| `pytest -q` | **773 passed, 1 skipped** |
 | `check_phases.py` | 59/59 |
 | `ruff check app` | чисто |
 | Alembic | `a8c1e3f5b7d9` (head) |

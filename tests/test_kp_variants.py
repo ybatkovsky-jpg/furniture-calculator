@@ -102,7 +102,8 @@ def test_variants_differ_by_materials() -> None:
     variants = build_variants(MODULES, zone_type="Кухня", catalog=catalog())
     assert len({variant.materials_text for variant in variants}) == len(variants)
     assert "ТОМЛЕСДРЕВ" in variants[0].materials_text
-    assert "LAMARTY" in variants[-1].materials_text
+    # Комфорт — самая дорогая ЛДСП из прайса (EGGER), Стандарт — LAMARTY.
+    assert "EGGER" in variants[-1].materials_text
 
 
 def test_catalog_reads_database(tmp_path, monkeypatch) -> None:

@@ -36,6 +36,7 @@ from app.services.importing import (
     safe_filename,
 )
 from app.services.kp_docx import build_kp_docx
+from app.services.kp_pdf import build_kp_pdf
 from app.services.kp_variants import build_variants
 from app.services.price_book import load_price_book_sync
 from app.services.project_status_store import (
@@ -731,6 +732,79 @@ ALLOWED_TYPES = {
 }
 
 
+@app.post("/api/kp-pdf/{quote_id}")
+async def kp_pdf(
+    quote_id: str,
+    payload: str = Form("{}"),
+    images: list[UploadFile] = File(default=[]),  # noqa: B008
+) -> FileResponse:
+    """Фирменный PDF из того же снимка и вариантов, что DOCX."""
+    data = await _get_quote(quote_id)
+    if not data:
+        raise HTTPException(404, "Расчёт не найден — распознайте заново")
+    if not (data.get("quote") or {}).get("approval"):
+        raise HTTPException(409, "Сначала подтвердите состав кнопкой «Подтвердить состав»")
+    try:
+        payload_data = json.loads(payload or "{}")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(400, f"Некорректные параметры КП: {exc}") from exc
+
+    names = payload_data.get("variants") or ["Базовая", "Стандарт", "Комфорт"]
+    options = {
+        "gola": bool(payload_data.get("gola")),
+        "led": bool(payload_data.get("led")),
+        "accessories": bool(payload_data.get("accessories")),
+    }
+    variants = [
+        variant
+        for variant in build_variants(
+            data["modules"],
+            zone_type=data.get("zone"),
+            options=options,
+            discount_percent=float(payload_data.get("discount") or 0),
+        )
+        if variant.name in names
+    ]
+    if not variants:
+        raise HTTPException(400, "Не выбран ни один вариант КП")
+
+    gallery: list[str] = []
+    if images:
+        images_dir = OUT_DIR / f"pdf-images-{quote_id[:8]}"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        for index, upload in enumerate(images[:6], start=1):
+            suffix = Path(upload.filename or "photo.jpg").suffix.lower()
+            if suffix not in IMAGE_SUFFIXES:
+                continue
+            target = images_dir / f"{index:02}{suffix}"
+            target.write_bytes(await upload.read())
+            gallery.append(str(target))
+
+    options_text = []
+    if options["led"]:
+        options_text.append("Светодиодная подсветка рабочих зон")
+    if options["gola"]:
+        options_text.append("Профиль GOLA")
+    if options["accessories"]:
+        options_text.append("Наполнение: сушка, лоток, поддон")
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    output = OUT_DIR / f"КП-{quote_id[:8]}.pdf"
+    build_kp_pdf(
+        output,
+        client=str(payload_data.get("client") or ""),
+        variants=variants,
+        company=_company_block(),
+        validity_days=int(
+            payload_data.get("validity_days") or settings.company_kp_validity_days
+        ),
+        options_text=options_text,
+        images=gallery,
+    )
+    return FileResponse(output, filename="Коммерческое предложение.pdf",
+                        media_type="application/pdf")
+
+
 def _validate_modules(modules: Any) -> list[dict]:
     """Проверить состав, который менеджер правит в редакторе.
 
@@ -976,6 +1050,7 @@ INDEX_HTML = """<!doctype html>
           <label><input type="checkbox" id="kp-image"> Добавить эскиз чертежа</label>
         </div>
         <button class="button" id="kp-download" style="margin-top:12px">Скачать КП (Word)</button>
+        <button class="button secondary" id="kp-pdf" style="margin-top:12px">Скачать КП (PDF)</button>
       </div>
     </div>
   </div>
@@ -1326,7 +1401,7 @@ document.getElementById('kp-images').addEventListener('change', (event) => {
   }
 });
 
-document.getElementById('kp-download').addEventListener('click', async () => {
+async function downloadKp(endpoint, filename) {
   if (!quoteId) return;
   const variants = [...document.querySelectorAll('.kp-variant:checked')].map(el => el.value);
   if (!variants.length) { alert('Выберите хотя бы один вариант'); return; }
@@ -1344,16 +1419,21 @@ document.getElementById('kp-download').addEventListener('click', async () => {
   form.append('payload', JSON.stringify(payload));
   const files = document.getElementById('kp-images').files;
   for (const file of files) form.append('images', file);
-  const response = await fetch('/api/kp/' + quoteId, { method: 'POST', body: form });
+  const response = await fetch(endpoint + quoteId, { method: 'POST', body: form });
   if (!response.ok) { alert('Не удалось собрать КП: ' + response.status); return; }
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'Коммерческое предложение.docx';
+  link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
-});
+}
+
+document.getElementById('kp-download').addEventListener('click', () =>
+  downloadKp('/api/kp/', 'Коммерческое предложение.docx'));
+document.getElementById('kp-pdf').addEventListener('click', () =>
+  downloadKp('/api/kp-pdf/', 'Коммерческое предложение.pdf'));
 document.getElementById('reset').addEventListener('click', () => {
   result.classList.add('hidden');
   pagesCard.classList.add('hidden');

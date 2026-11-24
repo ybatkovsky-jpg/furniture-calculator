@@ -192,11 +192,21 @@
 - `POST /api/recalc/{id}` принимает `materials` и `hardware`;
 - тесты `tests/test_web.py`.
 
+## Этап 9 — PDF КП — **закрыт 25.11**
+
+- `app/services/kp_pdf.py` на ReportLab: фирменный PDF, Arial/DejaVu;
+- три варианта с наличными/безналом и составом;
+- картинки проекта, опции LED/GOLA/наполнение;
+- внутри нет себестоимости, маржи и закупочных цен (проверка текста PDF);
+- `POST /api/kp-pdf/{id}` с блокировкой без подтверждения;
+- DOCX остаётся временным форматом;
+- тесты `tests/test_web.py`.
+
 ## Проверки
 
 | Проверка | Результат |
 |---|---|
-| `pytest -q` | **759 passed, 1 skipped** |
+| `pytest -q` | **761 passed, 1 skipped** |
 | `check_phases.py` | 59/59 |
 | `ruff check app` | чисто |
 | Alembic | `a8c1e3f5b7d9` (head) |

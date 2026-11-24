@@ -124,6 +124,50 @@ def test_approve_quote_sets_author(monkeypatch) -> None:
     assert server.QUOTES["approve-quote"]["quote"]["approval"]
 
 
+def test_kp_pdf_endpoint_returns_pdf(monkeypatch) -> None:
+    """PDF КП содержит клиентские цены и не содержит себестоимости."""
+    import fitz
+
+    from app.web import server
+    from tests.test_kp_variants import MODULES, build_variants, catalog
+
+    server.QUOTES["pdf-quote"] = {
+        "quote": {"approval": {"approved_by": "manager"}},
+        "modules": MODULES,
+        "zone": "Кухня",
+        "image": None,
+    }
+    monkeypatch.setattr(
+        server,
+        "build_variants",
+        lambda modules, **kwargs: build_variants(modules, catalog=catalog(), **kwargs),
+    )
+    response = client.post(
+        "/api/kp-pdf/pdf-quote",
+        json={"variants": ["Базовая", "Стандарт"], "client": "Тест"},
+    )
+    assert response.status_code == 200
+    assert response.content[:4] == b"%PDF"
+    with fitz.open(stream=response.content, filetype="pdf") as document:
+        text = "".join(page.get_text() for page in document).lower()
+    assert "базовая" in text
+    assert "себестоимость" not in text
+    assert "маржа" not in text
+
+
+def test_kp_pdf_requires_approval() -> None:
+    from app.web import server
+
+    server.QUOTES["pdf-unapproved"] = {
+        "quote": {},
+        "modules": [],
+        "zone": "Кухня",
+        "image": None,
+    }
+    response = client.post("/api/kp-pdf/pdf-unapproved", json={"variants": ["Базовая"]})
+    assert response.status_code == 409
+
+
 def test_get_quote_restores_from_db(monkeypatch) -> None:
     """После «перезапуска» кэш пуст, но снимок читается из web_quotes."""
     import asyncio

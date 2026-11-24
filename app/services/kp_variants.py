@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services.calc_engine import calculate_full_cost
+from app.services.price_book import load_price_book_sync
 
 DB_PATH = Path(__file__).resolve().parents[2] / "data" / "furniture.db"
 
@@ -25,6 +26,7 @@ CATEGORIES = {
     "facades": ("Фасады", "МДФ плиты", "МДФ", "ЭФТРИ ПВХ", "Алюминиевый фасад"),
     "hinges": ("Петли",),
     "drawers": ("Ящики",),
+    "handles": ("Ручки",),
 }
 
 # Что не может быть основным материалом варианта.
@@ -45,6 +47,7 @@ TIERS: tuple[tuple[str, str, dict[str, tuple[str, ...]]], ...] = (
             "facades": ("пвх", "ivego"),
             "hinges": ("), "),
             "drawers": ("старт",),
+            "handles": ("ручка торцевая",),
             "edge": ("extravert", "evo"),
         },
     ),
@@ -52,10 +55,11 @@ TIERS: tuple[tuple[str, str, dict[str, tuple[str, ...]]], ...] = (
         "Стандарт",
         "Оптимальный выбор: износостойкие фасады и доводчики",
         {
-            "ldsp": ("egger", "lamarty", "slotex 3000"),
+            "ldsp": ("lamarty", "slotex 3000"),
             "facades": ("акриловые 18мм матовый", "акрил"),
             "hinges": ("боярд evo", "blum накладная", "блюм", "боярд"),
             "drawers": ("avantech", "innotech"),
+            "handles": ("ручка торцевая",),
             "edge": ("egger", "agt"),
         },
     ),
@@ -63,10 +67,11 @@ TIERS: tuple[tuple[str, str, dict[str, tuple[str, ...]]], ...] = (
         "Комфорт",
         "Премиум: акрил или эмаль, фурнитура Blum / LEGRABOX",
         {
-            "ldsp": ("lamarty", "egger"),
+            "ldsp": ("egger", "lamarty"),
             "facades": ("глянец металлик", "глянец", "акрил"),
             "hinges": ("blum 155", "blum накладная", "hettich", "blum"),
             "drawers": ("legrabox", "avantech you"),
+            "handles": ("ручка торцевая",),
             "edge": ("supramat", "agt", "мдф"),
         },
     ),
@@ -140,6 +145,7 @@ def _materials_for(
     facade = _pick(catalog["facades"], rules["facades"], share)
     hinges = _pick(catalog["hinges"], rules["hinges"], share)
     drawers = _pick(catalog["drawers"], rules["drawers"], share)
+    handles = _pick(catalog.get("handles", []), rules.get("handles", ()), share)
 
     materials: dict[str, Any] = {}
     if ldsp:
@@ -178,6 +184,12 @@ def _materials_for(
             "name": drawers["name"],
             "price": drawers["unit_price"],
         }
+    if handles:
+        hardware["handles"] = {
+            "id": handles["id"],
+            "name": handles["name"],
+            "price": handles["unit_price"],
+        }
 
     parts = [
         f"Корпус: {ldsp['name']}" if ldsp else "",
@@ -196,12 +208,20 @@ def build_variants(
     options: dict | None = None,
     discount_percent: float = 0.0,
     catalog: dict[str, list[dict]] | None = None,
+    price_book: dict[str, float] | None = None,
 ) -> list[Variant]:
     """Посчитать варианты КП по одному и тому же составу.
 
     `catalog` можно передать готовым — тестам не нужна рабочая БД.
     """
     catalog = catalog if catalog is not None else _catalog()
+    if price_book is None:
+        try:
+            # ХДФ, крепёж, цоколь, LED, подъёмники, ручки, столешница: без этого
+            # набора эти строки уходили в ноль и занижали смету.
+            price_book = load_price_book_sync()
+        except Exception:  # noqa: BLE001 — без прайса считаем как раньше
+            price_book = {}
     variants: list[Variant] = []
 
     for index, (name, description, rules) in enumerate(TIERS):
@@ -216,6 +236,7 @@ def build_variants(
             [],
             zone_type=zone_type,
             options=options or None,
+            price_book=price_book,
         )
         breakdown = result.cost_breakdown
         cash = float(breakdown.final_cash)

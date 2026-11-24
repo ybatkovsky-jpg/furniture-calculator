@@ -27,6 +27,7 @@ from app.services.calculation_persist import quote_from_result
 from app.services.image_analyzer import GeminiImageAnalyzer
 from app.services.kp_docx import build_kp_docx
 from app.services.kp_variants import build_variants
+from app.services.price_book import load_price_book_sync
 from app.services.recognition_cache import module_to_dict
 from app.services.template_filler import fill_template_from_quote
 
@@ -186,7 +187,8 @@ async def analyze(file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
     materials, hardware = default_materials()
     module_dicts = [module_to_dict(module) for module in modules]
     result = calculate_full_cost(
-        module_dicts, materials, hardware, [], zone_type=zone_type
+        module_dicts, materials, hardware, [], zone_type=zone_type,
+        price_book=load_price_book_sync(),
     )
     quote = quote_from_result(result, reason="web")
     quote_id = uuid.uuid4().hex

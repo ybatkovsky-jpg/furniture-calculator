@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -98,6 +99,41 @@ async def load_price_book(session: AsyncSession) -> dict[str, float]:
             book.setdefault(f"edge_{thickness_value:g}", float(item.unit_price))
 
     return book
+
+
+def load_price_book_sync(db_path: str | Path | None = None) -> dict[str, float]:
+    """Синхронный подбор цен из SQLite — для веба и КП без async-сессии.
+
+    Тот же набор правил `PRICE_BOOK_RULES`, что и в `load_price_book`:
+    ХДФ, крепёж, цоколь, LED, подъёмники, ручки, столешница.
+    """
+    import sqlite3
+    from types import SimpleNamespace
+
+    path = Path(db_path) if db_path else Path(__file__).resolve().parents[2] / "data" / "furniture.db"
+    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        rows = connection.execute(
+            "select name, category, unit_price, price_unit, thickness_mm "
+            "from price_items where is_active=1 and unit_price is not null "
+            "and unit_price > 0 and coalesce(requires_manual_price, 0) = 0 "
+            "order by id"
+        ).fetchall()
+    finally:
+        connection.close()
+
+    items = [
+        SimpleNamespace(
+            name=row["name"],
+            category=row["category"],
+            unit_price=row["unit_price"],
+            price_unit=row["price_unit"],
+            thickness_mm=row["thickness_mm"],
+        )
+        for row in rows
+    ]
+    return build_price_book(items)
 
 
 def build_price_book(items: Iterable[Any]) -> dict[str, float]:

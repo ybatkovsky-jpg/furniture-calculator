@@ -13,6 +13,7 @@ GLM-OCR → структура помещений → рендеринг стр�
 import asyncio
 import logging
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
@@ -351,6 +352,7 @@ class FullPipeline:
             project_name=project.original_filename,
             total_pages=len(project.pages),
         )
+        started = time.perf_counter()
         pages = [page for page in project.pages if page.image_path][:max_pages]
         if not pages:
             result.errors.append(
@@ -413,9 +415,10 @@ class FullPipeline:
                 room.quality_flags.extend(room.validation["blocking"])
         result.success = bool(result.rooms)
         logger.info(
-            "✅ Импортированный проект обработан: %d помещений, %d модулей",
+            "✅ Импортированный проект обработан: %d помещений, %d модулей, %.1f с",
             len(result.rooms),
             sum(len(room.modules) for room in result.rooms),
+            time.perf_counter() - started,
         )
         return result
 

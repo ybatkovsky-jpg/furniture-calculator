@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import shutil
@@ -20,7 +21,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from sqlalchemy import text
 
@@ -102,6 +103,21 @@ TYPE_LABELS = {
 }
 
 app = FastAPI(title="ПРО МЕБЕЛЬ — расчёт", docs_url=None, redoc_url=None)
+
+
+@app.middleware("http")
+async def manager_auth(request: Request, call_next):
+    """Опциональный токен менеджера; без токена веб работает только локально."""
+    token = (settings.web_manager_token or "").strip()
+    if token and request.url.path.startswith("/api/"):
+        supplied = request.headers.get("X-Manager-Token", "")
+        if not supplied:
+            authorization = request.headers.get("Authorization", "")
+            if authorization.lower().startswith("bearer "):
+                supplied = authorization[7:].strip()
+        if not hmac.compare_digest(supplied, token):
+            return JSONResponse({"detail": "Нужен токен менеджера"}, status_code=401)
+    return await call_next(request)
 
 
 @app.get("/healthz")
@@ -1071,6 +1087,21 @@ INDEX_HTML = """<!doctype html>
   </div>
 </main>
 <script>
+const nativeFetch = window.fetch.bind(window);
+window.fetch = async (input, init = {}) => {
+  const headers = new Headers(init.headers || {});
+  const token = localStorage.getItem('managerToken');
+  if (token) headers.set('X-Manager-Token', token);
+  const response = await nativeFetch(input, { ...init, headers });
+  if (response.status === 401) {
+    const entered = prompt('Введите токен менеджера');
+    if (entered) {
+      localStorage.setItem('managerToken', entered.trim());
+      location.reload();
+    }
+  }
+  return response;
+};
 const drop = document.getElementById('drop');
 const fileInput = document.getElementById('file');
 const status = document.getElementById('status');

@@ -12,7 +12,7 @@ Telegram-бот и локальный веб-интерфейс для расч�
 > Импорт приведён к единому слою `app/services/importing/` (изображения, PDF,
 > выгрузка ПРО100). Коэффициенты — из `app/config.py`/`.env`; цены — из прайса
 > SQLite. Смета чата, Excel и КП используют один `CostBreakdown`. Проверки:
-> `pytest` — 763 passed, `scripts/check_phases.py` — 59/59,
+> `pytest` — 764 passed, `scripts/check_phases.py` — 59/59,
 > `ruff check app` — чисто.
 >
 > **Важно:** `docs/financial_policy_v1.0.md` имеет статус «проект на утверждение»

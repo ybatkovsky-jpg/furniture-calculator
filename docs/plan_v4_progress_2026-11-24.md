@@ -210,14 +210,17 @@
 - `GET /healthz` — процесс + БД, при сбое БД `503`;
 - `PROMPT_VERSION` и логирование `usage` (prompt/completion/total) в vision-запросах;
 - защита от второго запуска веб-сервера: `data/web.lock`;
-- осталось: роли/авторизация, тайминги этапов, PostgreSQL;
+- опциональный `WEB_MANAGER_TOKEN`: при заданном токене API требует
+  `X-Manager-Token` (или `Bearer`), иначе `401`;
+- тайминг `process_imported` в логе (секунды на проект);
+- осталось: полноценные роли, PostgreSQL после локального MVP;
 - `data/projects` пока отсутствует, backup проектов не проверен на реальных данных.
 
 ## Проверки
 
 | Проверка | Результат |
 |---|---|
-| `pytest -q` | **763 passed, 1 skipped** |
+| `pytest -q` | **764 passed, 1 skipped** |
 | `check_phases.py` | 59/59 |
 | `ruff check app` | чисто |
 | Alembic | `a8c1e3f5b7d9` (head) |

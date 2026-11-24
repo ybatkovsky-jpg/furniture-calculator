@@ -232,6 +232,8 @@ class Settings(BaseSettings):
     designer_bonus_rate: float = 0.10
 
     # Настройки компании для КП
+    # Если задан, API веб-менеджера требует заголовок X-Manager-Token.
+    web_manager_token: str = Field(default="", description="Токен веб-менеджера")
     company_name: str = "Мебельная Компания"
     company_address: str = "г. Хабаровск, ул. Дикопольцева, 7а"
     company_phone: str = "+7 999 256 3879"

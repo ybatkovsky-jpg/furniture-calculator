@@ -27,6 +27,18 @@ def _no_db_status(monkeypatch):
     monkeypatch.setattr(server, "save_web_quote_version", no_version)
 
 
+def test_manager_token_protects_api(monkeypatch) -> None:
+    from app.web import server
+
+    monkeypatch.setattr(server.settings, "web_manager_token", "secret-token")
+    assert client.get("/api/quotes/any/versions").status_code == 401
+    response = client.get(
+        "/api/quotes/any/versions",
+        headers={"X-Manager-Token": "secret-token"},
+    )
+    assert response.status_code == 200
+
+
 def test_health_endpoint() -> None:
     response = client.get("/healthz")
     assert response.status_code == 200

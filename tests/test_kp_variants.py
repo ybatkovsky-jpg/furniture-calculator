@@ -74,6 +74,7 @@ def catalog() -> dict[str, list[dict]]:
 def test_three_variants_in_order() -> None:
     variants = build_variants(MODULES, zone_type="Кухня", catalog=catalog())
     assert [variant.name for variant in variants] == ["Базовая", "Стандарт", "Комфорт"]
+    assert [variant.id for variant in variants] == ["base", "standard", "comfort"]
 
 
 def test_prices_grow_from_base_to_comfort() -> None:

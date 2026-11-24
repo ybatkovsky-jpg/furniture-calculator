@@ -77,6 +77,8 @@ TIERS: tuple[tuple[str, str, dict[str, tuple[str, ...]]], ...] = (
     ),
 )
 
+VARIANT_IDS = ("base", "standard", "comfort")
+
 
 @dataclass
 class Variant:
@@ -90,6 +92,7 @@ class Variant:
     cost_price: float
     modules: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    id: str = ""
 
 
 def _catalog() -> dict[str, list[dict]]:
@@ -255,6 +258,7 @@ def build_variants(
                 cost_price=float(breakdown.cost_price),
                 modules=modules,
                 warnings=list(result.warnings or []),
+                id=VARIANT_IDS[index],
             )
         )
     return variants

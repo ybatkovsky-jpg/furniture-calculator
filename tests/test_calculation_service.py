@@ -111,9 +111,8 @@ def test_recalculate_is_full_and_persisted():
         result = await service.recalculate(calculation, reason="initial")
 
         # Все 10 компонентов на месте: скидка больше не увидит «дыру».
-        # 23 578 = 23 473 + 105 ₽: P2-12 — скрытая кромка 0,4 мм больше не
-        # уменьшается от добавления дверей (16 м вместо 10).
-        assert result.cost_breakdown.cost_price == 23578
+        # 23 661,5 = 23 578 + 83,5 ₽: кромка теперь по деталям (0.8 + 0.4).
+        assert result.cost_breakdown.cost_price == 23661.5
         assert calculation.cost_price == result.cost_breakdown.cost_price
         assert calculation.final_price_cash == result.total_cash
         assert calculation.final_price_noncash == result.total_noncash

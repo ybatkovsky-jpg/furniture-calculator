@@ -185,6 +185,84 @@ def nest_parts(
     return result
 
 
+def nest_parts_guillotine(
+    parts: list,
+    sheet_sizes: dict[str, tuple[int, int]] | None = None,
+    *,
+    grain_locked: bool = False,
+) -> NestingResult:
+    """Рабочий раскрой: Guillotine по физическим деталям.
+
+    Поворот разрешён только нетекстурированным деталям: если у детали задано
+    `grain_direction` или включён `grain_locked`, она кладётся только как есть.
+    """
+    from app.domain.nesting_algorithms import Rect, pack_guillotine, pack_multi
+
+    sizes = dict(SHEET_SIZES)
+    if sheet_sizes:
+        sizes.update(sheet_sizes)
+
+    parts_by_material: dict[str, list] = {}
+    for part in parts or []:
+        raw_material = getattr(part, "material", "")
+        material = getattr(part, "material_group", None) or raw_material
+        if material not in sizes:
+            from app.domain.parts import material_group
+
+            material = material_group(str(raw_material or ""))
+        if material not in sizes:
+            continue
+        parts_by_material.setdefault(material, []).append(part)
+
+    result = NestingResult()
+    for material, material_parts in parts_by_material.items():
+        sheet_w, sheet_h = sizes[material]
+        rects = []
+        for part in material_parts:
+            rotatable = not (
+                grain_locked or bool(getattr(part, "grain_direction", None))
+            )
+            for _ in range(max(1, int(getattr(part, "quantity", 1) or 1))):
+                rects.append(
+                    Rect(
+                        name=str(getattr(part, "name", "деталь")),
+                        width_mm=int(part.width_mm),
+                        height_mm=int(part.height_mm),
+                        rotatable=rotatable,
+                    )
+                )
+        rects.sort(key=lambda r: (r.height_mm, r.width_mm), reverse=True)
+        sheets, unplaced = pack_multi(
+            pack_guillotine, rects, sheet_w, sheet_h, SAW_KERF_MM
+        )
+
+        for sheet_index, placements in enumerate(sheets, start=1):
+            layout = SheetLayout(material, sheet_index, sheet_w, sheet_h)
+            layout.parts = [
+                PlacedPart(
+                    name=item.name,
+                    width_mm=item.width_mm,
+                    height_mm=item.height_mm,
+                    x_mm=item.x_mm,
+                    y_mm=item.y_mm,
+                    rotated=item.rotated,
+                )
+                for item in placements
+            ]
+            result.layouts.append(layout)
+
+        for rect in unplaced:
+            result.unplaced.append(
+                {
+                    "material": material,
+                    "part": rect.name,
+                    "width_mm": rect.width_mm,
+                    "height_mm": rect.height_mm,
+                }
+            )
+    return result
+
+
 def nest_bom(
     bom: list,
     sheet_sizes: dict[str, tuple[int, int]] | None = None,

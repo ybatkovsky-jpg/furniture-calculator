@@ -3,7 +3,7 @@
 import math
 from types import SimpleNamespace
 
-from app.domain.nesting import SheetLayout, nest_bom
+from app.domain.nesting import nest_bom, nest_parts_guillotine
 from app.services.calc_engine import calculate_full_cost
 
 
@@ -16,6 +16,41 @@ def _line(name, width, height, material="ЛДСП", quantity=1):
 
 def _bom(*lines):
     return [SimpleNamespace(lines=list(lines))]
+
+
+def _part(name, width, height, material="ЛДСП", quantity=1, grain=None):
+    return SimpleNamespace(
+        name=name, width_mm=width, height_mm=height, material=material,
+        quantity=quantity, grain_direction=grain,
+    )
+
+
+def test_guillotine_places_parts_and_keeps_texture():
+    parts = [
+        _part("Боковина", 600, 800, grain="vertical"),
+        _part("Полка", 500, 300),
+        _part("Дно", 600, 300),
+    ]
+    result = nest_parts_guillotine(parts, {"ЛДСП": (2800, 2070)})
+
+    assert result.sheets_count == 1
+    assert not result.unplaced
+    assert {p.name for p in result.layouts[0].parts} == {"Боковина", "Полка", "Дно"}
+
+
+def test_textured_part_is_not_rotated_but_plain_is():
+    textured = nest_parts_guillotine(
+        [_part("Текстура", 900, 500, grain="vertical")],
+        {"ЛДСП": (600, 1000)},
+    )
+    plain = nest_parts_guillotine(
+        [_part("Однотон", 900, 500)],
+        {"ЛДСП": (600, 1000)},
+    )
+
+    assert textured.unplaced
+    assert not plain.unplaced
+    assert plain.layouts[0].parts[0].rotated is True
 
 
 def test_small_parts_fit_one_sheet():

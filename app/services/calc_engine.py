@@ -20,7 +20,7 @@ from typing import Any
 
 from app.domain.bom import ModuleBOM, build_bom
 from app.domain.cost_lines import CostLine, build_cost_lines
-from app.domain.nesting import NestingResult, nest_bom, nest_parts
+from app.domain.nesting import NestingResult, nest_bom, nest_parts_guillotine
 from app.domain.parts import edge_totals, material_group, parts_area_by_group
 from app.domain.purchase import PurchaseList, build_purchase_list
 from app.services.cost_calc import CostBreakdown, DiscountInfo, calculate_cost
@@ -104,7 +104,7 @@ def _part_bom_pricing_enabled() -> bool:
 
 def _part_bom_edge_enabled() -> bool:
     """Этап 3: кромка по Part. Отдельный флаг, пока правила не совпали."""
-    return os.getenv("PART_BOM_EDGE", "0").strip() == "1"
+    return os.getenv("PART_BOM_EDGE", "1").strip() == "1"
 
 
 def _purchase_prices(
@@ -293,7 +293,7 @@ def calculate_full_cost(
     ldsp_parts = [
         part for part in all_parts if material_group(part.material) == "ЛДСП"
     ]
-    result.parts_nesting = nest_parts(
+    result.parts_nesting = nest_parts_guillotine(
         ldsp_parts,
         sheet_sizes={"ЛДСП": (ldsp_sheet["width_mm"], ldsp_sheet["height_mm"])},
         grain_locked=str(quantities.ldsp_material or "") == "текстура",
@@ -322,6 +322,9 @@ def calculate_full_cost(
         quantities.edge_08_m = round(result.parts_edge_totals.get("0.8", 0))
         quantities.edge_04_m = round(result.parts_edge_totals.get("0.4", 0))
         quantities.edge_2_m = round(result.parts_edge_totals.get("2", 0))
+        quantities.edge_mdf_1mm_m = round(
+            result.parts_edge_totals.get("1.0", 0)
+        )
     result.sheets_calc.total_sheets = quantities.ldsp_sheets
     result.sheets_calc.total_area_m2 = round(quantities.ldsp_area_m2, 3)
 

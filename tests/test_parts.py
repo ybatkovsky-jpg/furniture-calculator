@@ -62,6 +62,17 @@ def test_edge_is_everywhere_visible_08() -> None:
     )
 
 
+def test_mdf_facade_edge_is_1_mm() -> None:
+    parts = build_module_parts(
+        _module(facades={"count": 2, "type": "МДФ"})
+    )
+    facade = next(part for part in parts if part.name == "Фасад 1")
+
+    assert facade.edge_operations
+    assert all(edge.thickness_mm == 1.0 for edge in facade.edge_operations)
+    assert edge_totals(parts)["1.0"] > 0
+
+
 def test_edge_totals_are_meters() -> None:
     totals = edge_totals(build_module_parts(_module()))
 

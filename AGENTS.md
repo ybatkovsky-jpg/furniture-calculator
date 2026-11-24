@@ -4,7 +4,7 @@
 > `furniture-calculator` («ПРО МЕБЕЛЬ», Хабаровск).
 > Здесь: **куда мы идём, что нельзя ломать, что уже проверено фактами**.
 > Новые проверенные факты дописываем сюда с датой — не оставляем в чате.
-> Последняя сверка: **2026-11-25** — `pytest` **773 passed, 1 skipped**, покрытие
+> Последняя сверка: **2026-11-25** — `pytest` **776 passed, 1 skipped**, покрытие
 > **63 %** (`pytest-cov`), `check_phases` 59/59, `ruff check app` — чисто,
 > `VISION_PROVIDER=deepseek` в `.env`. HEAD `6e897e0`, ветка `commit-changes`.
 > Запущен `MASTER_IMPLEMENTATION_PLAN.md` (этапы 1–11); Sprint 0 зафиксирован в
@@ -103,7 +103,7 @@ JSON (`zone_type`, `total_width_mm`, `facades[]`, `drawer_indices[]`, `heights_m
 6. **Не менять основную vision-модель на слабую.** 8B/4B систематически не видят двери/ящики
    (см. §5) — это прямой недосчёт петель и ручек в смете.
 7. **Тесты:** `pytest` из корня (в `pytest.ini` `testpaths = tests` — иначе pytest лезет в `temp/`
-   и падает на разовых скриптах). Сейчас **773 passed, 1 skipped**, покрытие 63 %.
+   и падает на разовых скриптах). Сейчас **776 passed, 1 skipped**, покрытие 63 %.
    Правка расчётов без теста не принимается.
 8. **Python 3.12, type hints, async/await, SQLAlchemy 2.0, aiogram 3 FSM.** Не `print()` — `logging`.
    Комментарии, docstring'и, коммиты и сообщения пользователю — **по-русски**.
@@ -628,7 +628,7 @@ confidence по доминированию над вторым. Проверен
 ## 8. Проверка перед словом «готово»
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q                # ожидаем 773 passed, 1 skipped
+.\.venv\Scripts\python.exe -m pytest -q                # ожидаем 776 passed, 1 skipped
 $env:PYTHONIOENCODING='utf-8'; .\.venv\Scripts\python.exe scripts\check_phases.py  # ожидаем 59/59
 ```
 

@@ -113,6 +113,7 @@ def _part(
     visible_sides: tuple[str, ...] = ("front",),
     source_rule: str = "carcass",
     with_edges: bool = True,
+    edge_mm: float = EDGE_VISIBLE_MM,
 ) -> Part:
     module_qty = max(1, _int(module.get("quantity"), 1))
     module_id = str(module.get("id") or module.get("module_id") or "module")
@@ -127,7 +128,7 @@ def _part(
         quantity=max(1, quantity * module_qty),
         grain_direction=grain,
         edge_operations=(
-            _edges(width_mm, height_mm, visible_sides=visible_sides)
+            _edges(width_mm, height_mm, visible_sides=visible_sides, visible_mm=edge_mm)
             if with_edges
             else []
         ),
@@ -314,6 +315,7 @@ def build_module_parts(
                     height_mm=door_h,
                     thickness_mm=4.0 if facade_is_glass else MDF_THICKNESS_MM,
                     visible_sides=() if facade_is_glass else ("front", "back", "left", "right"),
+                    edge_mm=1.0 if "мдф" in facade_type.lower() else EDGE_VISIBLE_MM,
                     source_rule="facade",
                 )
             )
@@ -455,7 +457,7 @@ def edge_totals(parts: list[Part], reserve_rate: float = 1.0) -> dict[str, float
                 and thickness == EDGE_VISIBLE_MM
             ):
                 thickness = 2.0
-            key = f"{thickness:g}"
+            key = "1.0" if thickness == 1.0 else f"{thickness:g}"
             totals[key] = (
                 totals.get(key, 0.0)
                 + edge.length_mm * part.quantity * reserve_rate / 1000

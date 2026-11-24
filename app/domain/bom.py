@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.domain.parts import Part, build_module_parts
+
 SAW_KERF_MM = 4  # припуск на пропил, как в quantity_calc
 BACK_PANEL_THICKNESS_MM = 3.0
 LDSP_THICKNESS_MM = 16.0
@@ -41,6 +43,8 @@ class ModuleBOM:
     height_mm: int
     quantity: int
     lines: list[BOMLine] = field(default_factory=list)
+    parts: list[Part] = field(default_factory=list)
+    module_id: str = ""
 
 
 def _int(value: Any) -> int:
@@ -50,17 +54,19 @@ def _int(value: Any) -> int:
         return 0
 
 
-def build_module_bom(module: dict) -> ModuleBOM:
+def build_module_bom(module: dict, module_id: str | None = None) -> ModuleBOM:
     """Деталировка одного модуля (dict из распознавания/ручного ввода)."""
     module_type = str(module.get("type") or "lower_base")
     width = _int(module.get("width") or module.get("width_mm"))
     depth = _int(module.get("depth") or module.get("depth_mm"))
     height = _int(module.get("height") or module.get("height_mm"))
     quantity = max(1, _int(module.get("quantity") or 1))
+    mid = module_id or str(module.get("id") or module.get("module_id") or "")
 
-    result = ModuleBOM(module_type, width, depth, height, quantity)
+    result = ModuleBOM(module_type, width, depth, height, quantity, module_id=mid)
     if width <= 0 or depth <= 0 or height <= 0:
         return result
+    result.parts = build_module_parts(module, module_id=mid or None)
 
     # Габариты с пропилом
     w = width + SAW_KERF_MM
@@ -142,4 +148,7 @@ def build_module_bom(module: dict) -> ModuleBOM:
 
 def build_bom(modules: list[dict]) -> list[ModuleBOM]:
     """BOM по всем модулям проекта."""
-    return [build_module_bom(module) for module in modules or []]
+    return [
+        build_module_bom(module, module_id=f"m{index + 1}")
+        for index, module in enumerate(modules or [])
+    ]

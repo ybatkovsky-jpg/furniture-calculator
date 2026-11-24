@@ -10,8 +10,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import shutil
 import sqlite3
 import uuid
 from datetime import date, timedelta
@@ -22,14 +24,28 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from app.config import settings
+from app.domain.kp_reference import check_price_corridor
+from app.domain.recognition_validation import validate_modules
 from app.services.calc_engine import calculate_full_cost
 from app.services.calculation_persist import quote_from_result
 from app.services.image_analyzer import GeminiImageAnalyzer
+from app.services.importing import (
+    ImportedProject,
+    ProjectImportError,
+    ProjectImportService,
+    safe_filename,
+)
 from app.services.kp_docx import build_kp_docx
 from app.services.kp_variants import build_variants
 from app.services.price_book import load_price_book_sync
+from app.services.project_status_store import set_project_status
 from app.services.recognition_cache import module_to_dict
 from app.services.template_filler import fill_template_from_quote
+from app.services.web_quote_store import load_web_quote, save_web_quote
+from app.services.web_quote_versions import (
+    list_web_quote_versions,
+    save_web_quote_version,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +53,31 @@ ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = ROOT / "templates" / "Таблица для расчетов пустая.xlsx"
 DB_PATH = ROOT / "data" / "furniture.db"
 OUT_DIR = ROOT / "temp" / "web"
+INCOMING_DIR = OUT_DIR / "incoming"
+PROJECTS_DIR = (
+    Path(settings.projects_dir)
+    if Path(settings.projects_dir).is_absolute()
+    else ROOT / settings.projects_dir
+)
 
-# Снимки расчётов в памяти: id → quote. Локальная обкатка, живут до перезапуска.
+# Снимки расчётов: быстрый кэш процесса + постоянное хранение в web_quotes.
 QUOTES: dict[str, dict[str, Any]] = {}
+
+
+async def _get_quote(quote_id: str) -> dict[str, Any] | None:
+    """Кэш → БД. После перезапуска сервера ссылка на Excel/КП остаётся живой."""
+    data = QUOTES.get(quote_id)
+    if data is not None:
+        return data
+    loaded = await load_web_quote(quote_id)
+    if loaded is not None:
+        QUOTES[quote_id] = loaded
+    return loaded
+
+
+async def _put_quote(quote_id: str, data: dict[str, Any]) -> None:
+    QUOTES[quote_id] = data
+    await save_web_quote(quote_id, data)
 
 TYPE_LABELS = {
     "lower_base": "Нижняя база",
@@ -148,25 +186,173 @@ async def index() -> str:
     return INDEX_HTML
 
 
-@app.post("/api/analyze")
-async def analyze(file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
-    """Принять чертёж, распознать состав и посчитать смету."""
-    suffix = Path(file.filename or "upload.jpg").suffix.lower() or ".jpg"
-    if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".bmp"}:
-        raise HTTPException(400, "Поддерживаются изображения: JPG, PNG, WEBP, BMP")
+UPLOAD_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".pdf", ".sto", ".txt"}
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    temp_path = OUT_DIR / f"{uuid.uuid4().hex}{suffix}"
 
+def _project_payload(project: ImportedProject) -> dict[str, Any]:
+    """Краткая карточка проекта: без тяжёлых строк деталировки."""
+    pages = []
+    for page in project.pages:
+        can_render = project.source_type == "pdf" and page.source_page is not None
+        ready = bool(page.image_path) or can_render
+        pages.append(
+            {
+                "index": page.index,
+                "source_page": page.source_page,
+                "width_mm": page.width_mm,
+                "height_mm": page.height_mm,
+                "width_px": page.width_px,
+                "height_px": page.height_px,
+                "room_id": page.room_id,
+                "room_name": page.room_name,
+                "view_type": page.view_type,
+                "view_group": page.view_group,
+                "ready": ready,
+                "url": (
+                    f"/api/projects/{project.project_id}/pages/{page.index}"
+                    if ready
+                    else None
+                ),
+            }
+        )
+    metadata = project.metadata or {}
+    details_count = int(metadata.get("details_count") or 0)
+    return {
+        "ok": True,
+        "project_id": project.project_id,
+        "source_type": project.source_type,
+        "original_filename": project.original_filename,
+        "status": project.status,
+        "pages": pages,
+        "warnings": list(project.warnings or []),
+        "is_duplicate": project.is_duplicate,
+        "ready_for_recognition": bool(pages) or details_count > 0,
+        "metadata": {
+            "format": metadata.get("format"),
+            "page_count": metadata.get("page_count", len(project.pages)),
+            "details_count": details_count,
+            "panels_count": int(metadata.get("panels_count") or 0),
+            "parsed": bool(metadata.get("parsed", True)),
+        },
+    }
+
+
+async def _save_upload(file: UploadFile) -> Path:
+    name = Path(file.filename or "upload.jpg").name
+    suffix = Path(name).suffix.lower() or ".jpg"
+    if suffix not in UPLOAD_SUFFIXES:
+        raise HTTPException(
+            400,
+            "Поддерживаются JPG, PNG, WEBP, BMP, PDF и выгрузка ПРО100 "
+            "(details.txt или .sto)",
+        )
+    if suffix == ".txt" and name.lower() != "details.txt":
+        raise HTTPException(
+            400,
+            "Текстовый файл поддерживается только как details.txt из ПРО100",
+        )
+
+    INCOMING_DIR.mkdir(parents=True, exist_ok=True)
+    upload_dir = INCOMING_DIR / uuid.uuid4().hex
+    upload_dir.mkdir()
+    target = upload_dir / safe_filename(name)
     try:
-        temp_path.write_bytes(await file.read())
+        target.write_bytes(await file.read())
     except OSError as exc:
         raise HTTPException(500, f"Не удалось сохранить файл: {exc}") from exc
+    return target
 
+
+@app.post("/api/projects/import")
+async def project_import(file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
+    """Принять изображение, PDF или выгрузку ПРО100 в единое хранилище."""
+    source = await _save_upload(file)
+    try:
+        project = await ProjectImportService(PROJECTS_DIR).import_project(source)
+    except ProjectImportError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        shutil.rmtree(source.parent, ignore_errors=True)
+    await set_project_status(project.project_id, project.status)
+    return JSONResponse(_project_payload(project))
+
+
+@app.patch("/api/projects/{project_id}/pages/{page_index}")
+async def update_project_page(
+    project_id: str,
+    page_index: int,
+    payload: dict = Body(default={}),  # noqa: B008
+) -> JSONResponse:
+    """Назначить странице помещение и проекцию (модель B)."""
+    service = ProjectImportService(PROJECTS_DIR)
+    project = service.store.load(project_id)
+    if project is None:
+        raise HTTPException(404, "Проект не найден")
+    if page_index < 0 or page_index >= len(project.pages):
+        raise HTTPException(404, "Страница не найдена")
+    page = project.pages[page_index]
+
+    view_type = payload.get("view_type")
+    allowed_views = {None, "", "plan", "elevation", "section", "render", "detail"}
+    if view_type not in allowed_views:
+        raise HTTPException(400, "Неизвестный тип проекции")
+
+    for field_name in ("room_id", "room_name", "view_group"):
+        if field_name in payload:
+            value = payload.get(field_name)
+            text = str(value).strip() if value is not None else ""
+            setattr(page, field_name, text[:120] or None)
+    if "room_name" in payload and "room_id" not in payload:
+        page.room_id = page.room_name
+    page.view_type = (str(view_type).strip() or None) if view_type else None
+    service.store.save_manifest(project)
+    return JSONResponse(
+        {
+            "ok": True,
+            "page": {
+                "index": page.index,
+                "room_id": page.room_id,
+                "room_name": page.room_name,
+                "view_type": page.view_type,
+                "view_group": page.view_group,
+            },
+        }
+    )
+
+
+@app.get("/api/projects/{project_id}/pages/{page_index}")
+async def project_page(project_id: str, page_index: int) -> FileResponse:
+    """Отдать страницу проекта, при необходимости отрендерив её из PDF."""
+    service = ProjectImportService(PROJECTS_DIR)
+    try:
+        page = await asyncio.to_thread(service.ensure_page_image, project_id, page_index)
+    except ProjectImportError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    if not page.image_path:
+        raise HTTPException(404, "Страница не отрендерена")
+    path = Path(page.image_path).resolve()
+    project = service.store.load(project_id)
+    storage = Path(project.storage_dir).resolve() if project else None
+    if storage is None or not path.is_relative_to(storage):
+        raise HTTPException(403, "Некорректный путь страницы")
+    if not path.is_file():
+        raise HTTPException(404, "Файл страницы отсутствует")
+    media = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    return FileResponse(path, media_type=media)
+
+
+async def _analyze_image_path(
+    image_path: Path,
+    *,
+    project_id: str | None = None,
+    page_index: int = 0,
+    pages_total: int = 1,
+) -> dict[str, Any]:
+    """Распознать одну страницу и посчитать смету; без HTTP-обёртки."""
     analyzer = GeminiImageAnalyzer()
     try:
         modules, zone_type, _materials, confidence, meta = await analyzer.analyze_page(
-            temp_path, return_meta=True
+            image_path, return_meta=True
         )
     except Exception as exc:
         logger.exception("Распознавание не удалось")
@@ -176,61 +362,169 @@ async def analyze(file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
 
     if not modules:
         flags = list(meta.get("quality_flags") or [])
-        return JSONResponse(
-            {
-                "ok": False,
-                "reason": flags[0] if flags else "модули не найдены",
-                "flags": flags,
-                "quality_score": meta.get("quality_score"),
-            }
-        )
+        return {
+            "ok": False,
+            "reason": flags[0] if flags else "модули не найдены",
+            "flags": flags,
+            "quality_score": meta.get("quality_score"),
+        }
+
+    validation = validate_modules(
+        modules,
+        page_index=page_index,
+        confidence=confidence,
+        meta=meta,
+    )
+    if not validation.can_calculate:
+        return {
+            "ok": False,
+            "reason": validation.blocking[0],
+            "flags": validation.blocking,
+            "questions": validation.questions,
+            "validation": validation.as_dict(),
+            "quality_score": meta.get("quality_score"),
+        }
 
     materials, hardware = default_materials()
     module_dicts = [module_to_dict(module) for module in modules]
     result = calculate_full_cost(
-        module_dicts, materials, hardware, [], zone_type=zone_type,
+        module_dicts,
+        materials,
+        hardware,
+        [],
+        zone_type=zone_type,
         price_book=load_price_book_sync(),
     )
     quote = quote_from_result(result, reason="web")
     quote_id = uuid.uuid4().hex
-    QUOTES[quote_id] = {
-        "quote": quote,
-        "modules": module_dicts,
-        "zone": zone_type,
-        "image": str(temp_path),
-    }
+    await _put_quote(
+        quote_id,
+        {
+            "quote": quote,
+            "modules": module_dicts,
+            "validation": validation.as_dict(),
+            "zone": zone_type,
+            "image": str(image_path),
+            "project_id": project_id,
+            "page_index": page_index,
+        },
+    )
+    await save_web_quote_version(
+        quote_id,
+        {
+            "quote": quote,
+            "modules": module_dicts,
+            "validation": validation.as_dict(),
+        },
+        reason="initial",
+    )
 
     breakdown = result.cost_breakdown
-    return JSONResponse(
-        {
-            "ok": True,
-            "quote_id": quote_id,
-            "zone": zone_type,
-            "confidence": confidence,
-            "total_width_mm": int(meta.get("total_width_mm") or 0) or sum(
-                row["width"] for row in (_module_row(m) for m in modules)
-            ),
-            "doors": int(meta.get("door_count") or 0),
-            "drawers": int(meta.get("drawer_count") or 0),
-            "modules": [_module_row(module) for module in modules],
-            "totals": {
-                "cost_price": round(breakdown.cost_price),
-                "subtotal": round(breakdown.subtotal),
-                "final_cash": round(breakdown.final_cash),
-                "final_noncash": round(result.total_noncash),
-            },
-            "flags": list(meta.get("quality_flags") or []),
-            "quality_score": meta.get("quality_score"),
-            "can_issue_kp": bool(result.can_issue_kp),
-            "missing_prices": list(result.missing_prices or []),
-        }
+    flags = list(meta.get("quality_flags") or []) + list(validation.warnings)
+    corridor = check_price_corridor(
+        float(breakdown.final_cash),
+        str(zone_type or "Прочее"),
     )
+    if corridor.get("ok") is False:
+        flags.append(f"Цена вне коридора 22 КП: {corridor['reason']}")
+    can_issue = bool(result.can_issue_kp) and str(confidence).lower() != "low"
+    payload: dict[str, Any] = {
+        "ok": True,
+        "quote_id": quote_id,
+        "zone": zone_type,
+        "confidence": confidence,
+        "total_width_mm": int(meta.get("total_width_mm") or 0)
+        or sum(row["width"] for row in (_module_row(m) for m in modules)),
+        "doors": int(meta.get("door_count") or 0),
+        "drawers": int(meta.get("drawer_count") or 0),
+        "modules": [_module_row(module) for module in modules],
+        "totals": {
+            "cost_price": round(breakdown.cost_price),
+            "subtotal": round(breakdown.subtotal),
+            "final_cash": round(breakdown.final_cash),
+            "final_noncash": round(result.total_noncash),
+        },
+        "flags": flags,
+        "quality_score": meta.get("quality_score"),
+        "can_issue_kp": can_issue,
+        "missing_prices": list(result.missing_prices or []),
+        "validation": validation.as_dict(),
+    }
+    if project_id:
+        payload["project_id"] = project_id
+        payload["page_index"] = page_index
+        payload["pages_total"] = pages_total
+    return payload
+
+
+@app.post("/api/projects/{project_id}/analyze")
+async def analyze_project_page(
+    project_id: str,
+    payload: dict = Body(default={}),  # noqa: B008
+) -> JSONResponse:
+    """Распознать выбранную страницу импортированного проекта."""
+    service = ProjectImportService(PROJECTS_DIR)
+    project = service.store.load(project_id)
+    if project is None:
+        raise HTTPException(404, "Проект не найден")
+    try:
+        page_index = int(payload.get("page_index") or 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "page_index должен быть числом") from exc
+    if page_index < 0 or page_index >= len(project.pages):
+        raise HTTPException(404, "Страница не найдена")
+    try:
+        page = await asyncio.to_thread(service.ensure_page_image, project_id, page_index)
+    except ProjectImportError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not page.image_path:
+        raise HTTPException(
+            400,
+            "Страница не отрендерена. Загрузите PDF заново или выберите другую страницу",
+        )
+    data = await _analyze_image_path(
+        Path(page.image_path),
+        project_id=project_id,
+        page_index=page_index,
+        pages_total=len(project.pages),
+    )
+    if data.get("ok"):
+        project.status = "CALCULATED"
+        service.store.save_manifest(project)
+        await set_project_status(project_id, project.status)
+        data["project_status"] = project.status
+    return JSONResponse(data)
+
+
+@app.post("/api/analyze")
+async def analyze(file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
+    """Принять изображение, распознать состав и посчитать смету (старый путь)."""
+    suffix = Path(file.filename or "upload.jpg").suffix.lower() or ".jpg"
+    if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".bmp"}:
+        raise HTTPException(400, "Поддерживаются изображения: JPG, PNG, WEBP, BMP")
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    temp_path = OUT_DIR / f"{uuid.uuid4().hex}{suffix}"
+    try:
+        temp_path.write_bytes(await file.read())
+    except OSError as exc:
+        raise HTTPException(500, f"Не удалось сохранить файл: {exc}") from exc
+
+    data = await _analyze_image_path(temp_path)
+    return JSONResponse(data)
+
+
+
+@app.get("/api/quotes/{quote_id}/versions")
+async def quote_versions(quote_id: str) -> JSONResponse:
+    """История редакций состава для веб-расчёта."""
+    return JSONResponse({"versions": await list_web_quote_versions(quote_id)})
 
 
 @app.get("/api/excel/{quote_id}")
 async def excel(quote_id: str) -> FileResponse:
     """Excel из снимка расчёта — тот же путь, что у бота."""
-    data = QUOTES.get(quote_id)
+    data = await _get_quote(quote_id)
     if not data:
         raise HTTPException(404, "Расчёт не найден — распознайте заново")
     quote = data["quote"]
@@ -275,7 +569,7 @@ async def kp_docx(
     images: list[UploadFile] = File(default=[]),  # noqa: B008 — идиома FastAPI
 ) -> FileResponse:
     """Собрать КП в DOCX: варианты, опции и картинки мебели из проекта."""
-    data = QUOTES.get(quote_id)
+    data = await _get_quote(quote_id)
     if not data:
         raise HTTPException(404, "Расчёт не найден — распознайте заново")
 
@@ -413,7 +707,7 @@ def _validate_modules(modules: Any) -> list[dict]:
 @app.post("/api/recalc/{quote_id}")
 async def recalc(quote_id: str, payload: dict = Body(default={})) -> JSONResponse:  # noqa: B008
     """Пересчитать смету по составу, отредактированному в вебе."""
-    data = QUOTES.get(quote_id)
+    data = await _get_quote(quote_id)
     if not data:
         raise HTTPException(404, "Расчёт не найден — распознайте заново")
 
@@ -428,7 +722,22 @@ async def recalc(quote_id: str, payload: dict = Body(default={})) -> JSONRespons
     # Обновляем снимок: Excel и КП должны взять исправленный состав.
     data["modules"] = modules
     data["quote"] = quote_from_result(result, reason="web-edit")
-    QUOTES[quote_id] = data
+    data["validation"] = validate_modules(
+        modules,
+        confidence="high",
+        source_type="manual",
+    ).as_dict()
+    await _put_quote(quote_id, data)
+    await save_web_quote_version(
+        quote_id,
+        {
+            "quote": data["quote"],
+            "modules": modules,
+            "validation": data["validation"],
+        },
+        reason="web-edit",
+        created_by="manager",
+    )
 
     doors = sum(module["facades"]["count"] * module["quantity"] for module in modules)
     drawers = sum(module["drawers"]["count"] * module["quantity"] for module in modules)
@@ -460,6 +769,7 @@ async def recalc(quote_id: str, payload: dict = Body(default={})) -> JSONRespons
         },
         "can_issue_kp": bool(result.can_issue_kp),
         "missing_prices": list(result.missing_prices or []),
+        "validation": data["validation"],
     })
 
 
@@ -504,6 +814,16 @@ INDEX_HTML = """<!doctype html>
   .error { background:#fdecec; border-left:4px solid #d64545; padding:12px 16px;
            border-radius:8px; margin-top:16px; }
   .muted { color:#6b7484; font-size:13px; }
+  .pages { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; margin-top:12px; }
+  .page-button { border:1px solid #d6dce6; background:#fff; border-radius:10px; padding:8px;
+                 cursor:pointer; text-align:left; }
+  .page-button:hover { border-color:#2f6fed; }
+  .page-button img { width:100%; height:110px; object-fit:contain; background:#f7f9fc;
+                     border-radius:6px; display:block; }
+  .page-button span { display:block; margin-top:6px; font-size:12px; color:#5b6472; }
+  .page-meta { display:grid; grid-template-columns:1fr; gap:4px; margin-top:6px; }
+  .page-meta input, .page-meta select { width:100%; box-sizing:border-box; padding:4px 6px;
+    border:1px solid #d6dce6; border-radius:6px; font-size:12px; }
 </style>
 </head>
 <body>
@@ -512,12 +832,18 @@ INDEX_HTML = """<!doctype html>
   <div id="drop" class="drop">
     <p><strong>Перетащите чертёж сюда</strong></p>
     <p>или нажмите, чтобы выбрать файл</p>
-    <p class="muted">JPG, PNG, WEBP, BMP</p>
-    <input id="file" type="file" accept="image/*" class="hidden">
+    <p class="muted">JPG, PNG, WEBP, BMP, PDF или выгрузка ПРО100</p>
+    <input id="file" type="file" accept="image/*,.pdf,.sto,.txt" class="hidden">
   </div>
 
   <div id="status" class="card hidden"><span class="spinner"></span><span id="status-text">Распознаю…</span></div>
   <div id="error" class="error hidden"></div>
+
+  <div id="pages-card" class="card hidden">
+    <h3 style="margin:0 0 4px;font-size:15px">Страницы проекта</h3>
+    <p id="pages-hint" class="muted" style="margin:0"></p>
+    <div id="pages" class="pages"></div>
+  </div>
 
   <div id="result" class="hidden">
     <div class="card">
@@ -542,6 +868,7 @@ INDEX_HTML = """<!doctype html>
       </div>
       <button class="button" id="excel">Скачать Excel</button>
       <button class="button secondary" id="reset">Новый расчёт</button>
+      <div id="versions" class="muted" style="margin-top:10px"></div>
 
       <div style="margin-top:22px;border-top:1px solid #eceff4;padding-top:16px">
         <h3 style="margin:0 0 10px;font-size:15px">Коммерческое предложение</h3>
@@ -581,7 +908,11 @@ const status = document.getElementById('status');
 const statusText = document.getElementById('status-text');
 const errorBox = document.getElementById('error');
 const result = document.getElementById('result');
+const pagesCard = document.getElementById('pages-card');
+const pagesBox = document.getElementById('pages');
+const pagesHint = document.getElementById('pages-hint');
 let quoteId = null;
+let projectId = null;
 let currentModules = [];
 
 const TYPE_OPTIONS = [
@@ -643,21 +974,127 @@ function money(value) {
 async function upload(file) {
   errorBox.classList.add('hidden');
   result.classList.add('hidden');
+  pagesCard.classList.add('hidden');
   status.classList.remove('hidden');
-  statusText.textContent = 'Распознаю чертёж — это занимает до минуты…';
+  statusText.textContent = 'Загружаю проект…';
 
   const form = new FormData();
   form.append('file', file);
   try {
-    const response = await fetch('/api/analyze', { method: 'POST', body: form });
+    const response = await fetch('/api/projects/import', { method: 'POST', body: form });
+    const project = await response.json();
+    if (!response.ok) throw new Error(project.detail || 'Не удалось импортировать проект');
+    if (!project.ready_for_recognition) {
+      status.classList.add('hidden');
+      errorBox.textContent = (project.warnings || []).join(' ') ||
+        'Проект сохранён, но автоматический разбор этого формата не поддерживается.';
+      errorBox.classList.remove('hidden');
+      return;
+    }
+    projectId = project.project_id;
+    renderProject(project);
+    if (project.pages.length === 1) {
+      await analyzePage(projectId, 0);
+    } else {
+      status.classList.add('hidden');
+      pagesCard.classList.remove('hidden');
+    }
+  } catch (err) {
+    status.classList.add('hidden');
+    errorBox.textContent = err.message || 'Не удалось связаться с сервером';
+    errorBox.classList.remove('hidden');
+  }
+}
+
+function renderProject(project) {
+  const pages = project.pages || [];
+  pagesHint.textContent = pages.length
+    ? `Найдено страниц: ${pages.length}. Выберите страницу для распознавания.`
+    : 'Страниц нет: проект содержит только деталировку.';
+  pagesBox.innerHTML = pages.map(page => {
+    const preview = page.url
+      ? `<img src="${page.url}" alt="Страница ${page.index + 1}" loading="lazy">`
+      : '<div class="muted" style="height:110px">нет изображения</div>';
+    const viewOptions = [
+      ['', 'проекция?'], ['plan', 'план'], ['elevation', 'фасад'],
+      ['section', 'разрез'], ['render', 'рендер'], ['detail', 'деталь'],
+    ].map(([value, label]) =>
+      `<option value="${value}"${(page.view_type || '') === value ? ' selected' : ''}>${label}</option>`
+    ).join('');
+    return `<div class="page-card" data-page="${page.index}">
+      <button class="page-button" data-page="${page.index}" ${page.ready ? '' : 'disabled'}>
+        ${preview}<span>Страница ${page.index + 1}${page.width_mm ? ` · ${Math.round(page.width_mm)}×${Math.round(page.height_mm)} мм` : ''}</span>
+      </button>
+      <div class="page-meta">
+        <input class="page-room" placeholder="Помещение" value="${escapeHtml(page.room_name || '')}">
+        <input class="page-group" placeholder="Группа проекций" value="${escapeHtml(page.view_group || '')}">
+        <select class="page-view">${viewOptions}</select>
+      </div>
+    </div>`;
+  }).join('');
+  pagesBox.querySelectorAll('.page-button').forEach(button => {
+    button.addEventListener('click', () => analyzePage(projectId, Number(button.dataset.page)));
+  });
+  pagesBox.querySelectorAll('.page-room, .page-group, .page-view').forEach(input => {
+    input.addEventListener('change', () => savePageMeta(input.closest('.page-card')));
+  });
+  if (project.warnings && project.warnings.length) {
+    errorBox.innerHTML = project.warnings.map(w => `<div>⚠ ${escapeHtml(w)}</div>`).join('');
+    errorBox.classList.remove('hidden');
+  }
+}
+
+async function savePageMeta(card) {
+  if (!card) return;
+  const pageIndex = Number(card.dataset.page);
+  const payload = {
+    room_name: card.querySelector('.page-room').value,
+    view_group: card.querySelector('.page-group').value,
+    view_type: card.querySelector('.page-view').value,
+  };
+  try {
+    const response = await fetch(`/api/projects/${projectId}/pages/${pageIndex}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      alert(data.detail || 'Не удалось сохранить проекцию');
+    }
+  } catch (err) {
+    alert('Не удалось сохранить проекцию');
+  }
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+async function analyzePage(id, pageIndex) {
+  errorBox.classList.add('hidden');
+  result.classList.add('hidden');
+  status.classList.remove('hidden');
+  statusText.textContent = `Распознаю страницу ${pageIndex + 1} — это занимает до минуты…`;
+  try {
+    const response = await fetch(`/api/projects/${id}/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ page_index: pageIndex }),
+    });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Ошибка распознавания');
     if (!data.ok) {
       status.classList.add('hidden');
-      errorBox.textContent = 'Не удалось получить состав: ' + (data.reason || 'модули не найдены');
+      const questions = (data.questions || []).join('; ');
+      errorBox.textContent = 'Не удалось получить состав: ' +
+        (data.reason || 'модули не найдены') + (questions ? '. ' + questions : '');
       errorBox.classList.remove('hidden');
       return;
     }
+    pagesCard.classList.add('hidden');
     render(data);
   } catch (err) {
     status.classList.add('hidden');
@@ -678,7 +1115,7 @@ function render(data) {
     ['Клиенту (безнал)', money(totals.final_noncash)],
   ].map(([label, value]) => `<div class="kpi"><span>${label}</span><b>${value}</b></div>`).join('');
 
-  const flags = [...(data.flags || [])];
+  const flags = [...(data.flags || []), ...((data.validation || {}).questions || [])];
   if ((data.missing_prices || []).length) {
     flags.push('без цены в прайсе: ' + data.missing_prices.join(', '));
   }
@@ -691,9 +1128,27 @@ function render(data) {
 
   currentModules = (data.modules || []).map(m => ({ ...m }));
   renderModules();
+  loadVersions();
 
   status.classList.add('hidden');
+  pagesCard.classList.add('hidden');
   result.classList.remove('hidden');
+}
+
+async function loadVersions() {
+  if (!quoteId) return;
+  const box = document.getElementById('versions');
+  try {
+    const response = await fetch(`/api/quotes/${quoteId}/versions`);
+    if (!response.ok) return;
+    const data = await response.json();
+    const versions = data.versions || [];
+    box.textContent = versions.length
+      ? 'История: ' + versions.map(v => `v${v.version_no} (${v.reason})`).join(', ')
+      : '';
+  } catch (err) {
+    box.textContent = '';
+  }
 }
 
 // Изменение ячейки таблицы
@@ -751,6 +1206,7 @@ document.getElementById('recalc').addEventListener('click', async () => {
     const flags = [...(data.missing_prices || []).map(p => 'без цены в прайсе: ' + p)];
     document.getElementById('flags').innerHTML = flags.length
       ? flags.map(f => `<div class="flag">⚠ ${f}</div>`).join('') : '';
+    loadVersions();
   } finally {
     button.disabled = false;
     button.textContent = 'Пересчитать';
@@ -801,7 +1257,12 @@ document.getElementById('kp-download').addEventListener('click', async () => {
 });
 document.getElementById('reset').addEventListener('click', () => {
   result.classList.add('hidden');
+  pagesCard.classList.add('hidden');
+  errorBox.classList.add('hidden');
   fileInput.value = '';
+  quoteId = null;
+  projectId = null;
+  currentModules = [];
 });
 </script>
 </body>

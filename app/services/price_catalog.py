@@ -60,6 +60,11 @@ class PriceCatalogItem:
     price: float
     unit: str
     thickness_mm: float | None
+    sku: str | None = None
+
+    @property
+    def sku_or_id(self) -> str:
+        return self.sku or f"ID-{self.id}"
 
     @property
     def text(self) -> str:
@@ -93,6 +98,7 @@ async def load_price_catalog(session: AsyncSession) -> list[PriceCatalogItem]:
             price=float(item.unit_price or 0),
             unit=item.price_unit or "",
             thickness_mm=item.thickness_mm,
+            sku=item.sku,
         )
         for item in result.scalars().all()
     ]

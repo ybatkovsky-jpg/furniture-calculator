@@ -1099,6 +1099,8 @@ def fill_template_for_room(
                       "требуется уточнение цены", 0, round(q.countertop_length_m, 1)))
 
     # ── 11. Крепёж ──
+    # Только позиции, которые есть в прайсе/Excel: конфирмат, опоры, подвесы,
+    # цоколь. Саморезы/гвозди не выдумываем: если их нет в прайсе — не считаем.
     if q.confirmat_count > 0:
         items.append(("КРЕПЁЖ", "Конфирмат 7×50",
                       f"{q.confirmat_count} шт × 2₽", 2, q.confirmat_count))

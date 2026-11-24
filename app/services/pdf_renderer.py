@@ -7,7 +7,7 @@
 import logging
 from pathlib import Path
 
-import fitz  # PyMuPDF
+import pymupdf as fitz  # PyMuPDF: новое имя модуля, старый `fitz` устарел
 
 logger = logging.getLogger(__name__)
 

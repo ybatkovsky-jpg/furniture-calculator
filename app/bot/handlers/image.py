@@ -19,6 +19,7 @@ from app.bot.keyboards.inline import (
     recognition_result_keyboard,
 )
 from app.db.session import get_session
+from app.domain.recognition_validation import validate_modules
 from app.models import Calculation
 from app.services.access import get_owned_project
 from app.services.image_analyzer import GeminiImageAnalyzer, RecognitionResult
@@ -200,6 +201,12 @@ async def process_pdf_album(message: Message, state: FSMContext, bot: Bot):
             "zone_type": room.zone_type,
             "confidence": room.confidence,
             "quality_score": room.quality_score,
+            "room_id": room.room_id,
+            "view_type": room.view_type,
+            "view_group": room.view_group,
+            "is_duplicate_view": room.is_duplicate_view,
+            "duplicate_of_page": room.duplicate_of_page,
+            "projection_warnings": room.projection_warnings,
             "modules": [_module_to_dict(module) for module in room.modules],
         }
         for room in result.rooms
@@ -273,8 +280,25 @@ async def show_recognition_result(
             "Лучше нажать «Скорректировать» и ввести модули вручную."
         )
 
+    text += format_validation_questions(result)
+
     await message.answer(text, reply_markup=recognition_result_keyboard())
     await state.set_state(ImageRecognitionState.showing_result)
+
+
+def format_validation_questions(result: RecognitionResult) -> str:
+    """Блокирующие вопросы этапа 2: что менеджер должен уточнить."""
+    validation = validate_modules(
+        result.modules,
+        confidence=result.confidence,
+    )
+    if not validation.blocking and not validation.questions:
+        return ""
+    lines = ["\n\n❓ Проверьте перед расчётом:"]
+    lines.extend(f"• {question}" for question in validation.questions[:5])
+    if validation.blocking:
+        lines.append("⛔ Без ответа на эти вопросы расчёт будет заблокирован.")
+    return "\n".join(lines)
 
 
 def format_recognition_result(result: RecognitionResult) -> str:
@@ -366,6 +390,7 @@ def build_album_preview(rooms: list[dict]) -> str:
     total_modules = sum(
         sum(int(module.get("quantity") or 0) for module in room.get("modules", []))
         for room in rooms
+        if not room.get("is_duplicate_view")
     )
     lines = [
         f"📐 Распознано помещений: {len(rooms)}, модулей: {total_modules}.",
@@ -385,11 +410,17 @@ def build_album_preview(rooms: list[dict]) -> str:
     }
     for room in rooms:
         modules = room.get("modules", [])
+        duplicate = room.get("is_duplicate_view")
         lines.append("")
+        suffix = ""
+        if duplicate:
+            suffix = f" — дубль проекции стр. {room.get('duplicate_of_page')}, в расчёт не войдёт"
         lines.append(
             f"🏠 {room.get('name') or 'Без названия'} — "
-            f"{len(modules)} поз., {sum(int(m.get('quantity') or 0) for m in modules)} корп."
+            f"{len(modules)} поз., {sum(int(m.get('quantity') or 0) for m in modules)} корп.{suffix}"
         )
+        for warning in room.get("projection_warnings") or []:
+            lines.append(f"  ⚠ {warning}")
         for module in modules:
             type_name = type_names.get(module.get("type"), module.get("type"))
             quantity = int(module.get("quantity") or 0)
@@ -488,6 +519,8 @@ async def _create_room_calculations(
         if project is None:
             return []
         for room in rooms:
+            if room.get("is_duplicate_view"):
+                continue
             calculation = Calculation(
                 project_id=project_id,
                 modules=list(room.get("modules") or []),

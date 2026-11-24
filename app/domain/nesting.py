@@ -103,6 +103,88 @@ def _try_place(sheet: SheetLayout, part: PlacedPart) -> bool:
     return False
 
 
+def nest_parts(
+    parts: list,
+    sheet_sizes: dict[str, tuple[int, int]] | None = None,
+    *,
+    grain_locked: bool = False,
+) -> NestingResult:
+    """Разложить физические детали (`Part`) по листам.
+
+    В отличие от `nest_bom`, здесь количество уже учтено в `Part.quantity`,
+    а направление текстуры задаётся самим Part: `grain_direction` запрещает
+    поворот только этой детали. `grain_locked=True` запрещает поворот всем
+    деталям (текстурный ЛДСП на весь проект).
+    """
+    sizes = dict(SHEET_SIZES)
+    if sheet_sizes:
+        sizes.update(sheet_sizes)
+
+    parts_by_material: dict[str, list] = {}
+    for part in parts or []:
+        raw_material = getattr(part, "material", "")
+        material = getattr(part, "material_group", None) or raw_material
+        if material not in sizes:
+            from app.domain.parts import material_group
+
+            material = material_group(str(raw_material or ""))
+        if material not in sizes:
+            continue
+        parts_by_material.setdefault(material, []).append(part)
+
+    result = NestingResult()
+    for material, material_parts in parts_by_material.items():
+        sheet_w, sheet_h = sizes[material]
+        expanded: list = []
+        for part in material_parts:
+            expanded.extend(
+                [part] * max(1, int(getattr(part, "quantity", 1) or 1))
+            )
+        expanded.sort(
+            key=lambda part: (part.height_mm, part.width_mm),
+            reverse=True,
+        )
+
+        sheets: list[SheetLayout] = []
+        for part in expanded:
+            placed = False
+            locked = grain_locked or bool(
+                getattr(part, "grain_direction", None)
+            )
+            variants = [(part.width_mm, part.height_mm, False)]
+            if part.width_mm != part.height_mm and not locked:
+                variants.append((part.height_mm, part.width_mm, True))
+            for variant_w, variant_h, rotated in variants:
+                placed_part = PlacedPart(
+                    part.name, variant_w, variant_h, 0, 0, rotated
+                )
+                for sheet in sheets:
+                    if _try_place(sheet, placed_part):
+                        placed = True
+                        break
+                if placed:
+                    break
+                if variant_w <= sheet_w and variant_h <= sheet_h:
+                    new_sheet = SheetLayout(
+                        material, len(sheets) + 1, sheet_w, sheet_h
+                    )
+                    if _try_place(new_sheet, placed_part):
+                        sheets.append(new_sheet)
+                        placed = True
+                        break
+            if not placed:
+                result.unplaced.append(
+                    {
+                        "material": material,
+                        "part": part.name,
+                        "width_mm": part.width_mm,
+                        "height_mm": part.height_mm,
+                    }
+                )
+        result.layouts.extend(sheets)
+    return result
+
+
 def nest_bom(
     bom: list,
     sheet_sizes: dict[str, tuple[int, int]] | None = None,

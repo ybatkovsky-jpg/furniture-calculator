@@ -1,0 +1,14 @@
+{
+  "project": "pro100_project_a",
+  "source": "реальная выгрузка ПРО100 «Список деталей»",
+  "approval": "входные данные реальные; BOM, раскрой и цена требуют подтверждения технолога",
+  "details_count": 14,
+  "panels_count": 13,
+  "first_detail": {
+    "width_mm": 1163,
+    "height_mm": 200,
+    "thickness_mm": 16,
+    "quantity": 2,
+    "material": "Цвета\\Белый"
+  }
+}

@@ -10,8 +10,15 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from collections import Counter
 from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from app.services.importing.pro100_importer import parse_details_line
 
 ROOT = Path("docs/pro100_reports")
 OUT = Path("docs/pro100_details_summary.json")
@@ -20,38 +27,17 @@ RESERVE = 1.3
 
 
 def parse_line(line: str) -> dict | None:
-    parts = [part.strip() for part in line.split("\t")]
-    tokens = [part for part in parts if part]
-    if len(tokens) < 4:
+    """Совместимая обёртка над единым парсером импорта."""
+    row = parse_details_line(line)
+    if row is None:
         return None
-    material = ""
-    last = tokens[-1]
-    if any(ch.isalpha() for ch in last) or "\\" in last:
-        material = last
-        tokens = tokens[:-1]
-    numbers = []
-    for token in tokens:
-        cleaned = token.replace(",", ".")
-        try:
-            numbers.append(float(cleaned))
-        except ValueError:
-            continue
-    if len(numbers) < 4:
-        return None
-    # Часть строк содержит глубину: [W, H, D, толщина, количество],
-    # часть — без неё: [W, H, толщина, количество].
-    if len(numbers) >= 5:
-        width, height, _depth, thickness, quantity = numbers[-5:]
-    else:
-        width, height, thickness, quantity = numbers[-4:]
-    name = " ".join(t for t in tokens if not t.replace(",", ".").replace(".", "").isdigit())
     return {
-        "name": name.strip(),
-        "width": width,
-        "height": height,
-        "thickness": thickness,
-        "quantity": quantity,
-        "material": material,
+        "name": row["name"],
+        "width": row["width_mm"],
+        "height": row["height_mm"],
+        "thickness": row["thickness_mm"],
+        "quantity": row["quantity"],
+        "material": row["material"],
     }
 
 

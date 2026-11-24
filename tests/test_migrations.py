@@ -31,7 +31,9 @@ def test_init_db_applies_migrations_to_fresh_database(tmp_path):
         assert {"quote", "zone_type", "fastener_cost"} <= _columns(
             connection, "calculations"
         )
-        assert {"thickness_mm", "pack_size"} <= _columns(connection, "price_items")
+        assert {"thickness_mm", "pack_size", "sku"} <= _columns(
+            connection, "price_items"
+        )
         assert {"sheet_width_mm", "sheet_height_mm"} <= _columns(
             connection, "price_items"
         )
@@ -40,10 +42,17 @@ def test_init_db_applies_migrations_to_fresh_database(tmp_path):
         )
         version_columns = _columns(connection, "calculation_versions")
         assert {"calculation_id", "version_no", "quote", "reason"} <= version_columns
+        assert {"id", "project_id", "quote", "modules", "validation"} <= _columns(
+            connection, "web_quotes"
+        )
+        assert {"project_id", "status"} <= _columns(connection, "project_statuses")
+        assert {"quote_id", "version_no", "modules", "reason", "validation"} <= _columns(
+            connection, "web_quote_versions"
+        )
         revision = connection.execute(
             "select version_num from alembic_version"
         ).fetchone()[0]
-        assert revision == "c9d3e5f7a1b2"
+        assert revision == "a8c1e3f5b7d9"
     finally:
         connection.close()
 

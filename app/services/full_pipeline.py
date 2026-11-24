@@ -17,9 +17,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
+from app.domain.recognition_validation import validate_modules
 from app.services.image_analyzer import GeminiImageAnalyzer, RecognitionResult
+from app.services.importing import ImportedProject
 from app.services.pdf_parser import GLMOCRParser, ParsedRoom, PDFParseResult
 from app.services.pdf_renderer import get_page_count, render_page
+from app.services.projections import mark_duplicate_projection_rooms
 
 logger = logging.getLogger(__name__)
 
@@ -121,12 +124,19 @@ class RoomSpec:
     room_name: str = ""
     page: int = 0
     zone_type: str | None = None      # тип помещения из AI
+    room_id: str | None = None        # модель B: помещение страницы
+    view_type: str | None = None      # план/фасад/разрез/рендер
+    view_group: str | None = None     # одна и та же мебель в разных проекциях
     modules: list = field(default_factory=list)   # RecognizedModule
     materials: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     confidence: str = ""
     quality_score: float = 0.0        # 0..1, чем выше тем лучше
     quality_flags: list[str] = field(default_factory=list)  # предупреждения
+    validation: dict | None = None    # provenance значений (этап 2)
+    is_duplicate_view: bool = False   # та же мебель в другой проекции
+    duplicate_of_page: int | None = None
+    projection_warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -240,6 +250,12 @@ class FullPipeline:
                     spec.confidence = recog_result.confidence
                     if recog_result.zone_type and not spec.zone_type:
                         spec.zone_type = recog_result.zone_type
+                    validation = validate_modules(
+                        recog_result.modules,
+                        page_index=page_num,
+                        confidence=recog_result.confidence,
+                    )
+                    spec.validation = validation.as_dict()
 
                     logger.info(
                         f"    ✅ Стр.{page_num + 1} {recog_result.zone_type or '?'}: "
@@ -273,6 +289,8 @@ class FullPipeline:
         for room in result.rooms:
             # 1. Расчёт оценки качества
             _calculate_quality(room)
+            if room.validation and room.validation.get("blocking"):
+                room.quality_flags.extend(room.validation["blocking"])
 
             # 2. Кросс-валидация: ширины модулей должны встречаться в OCR-размерах.
             # P2-04: раньше сравнивали ЧИСЛО размерных линий с числом модулей —
@@ -317,6 +335,90 @@ class FullPipeline:
         )
         return result
 
+    async def process_imported(
+        self,
+        project: ImportedProject,
+        max_pages: int = 30,
+    ) -> PipelineResult:
+        """Обработать уже импортированный проект (без повторного рендера PDF).
+
+        Это единая точка для бота и веба: страницы приходят из
+        `ImportedProject`, а не из повторного `render_page(pdf_path)`.
+        OCR-структура здесь не используется: имена помещений строит Vision,
+        а страницы уже отобраны импортом.
+        """
+        result = PipelineResult(
+            project_name=project.original_filename,
+            total_pages=len(project.pages),
+        )
+        pages = [page for page in project.pages if page.image_path][:max_pages]
+        if not pages:
+            result.errors.append(
+                "В проекте нет готовых страниц для распознавания — "
+                "отрендерите страницы или загрузите PDF заново"
+            )
+            return result
+
+        room_specs: dict[int, RoomSpec] = {}
+        batch_size = 3
+        for batch_start in range(0, len(pages), batch_size):
+            batch = pages[batch_start:batch_start + batch_size]
+            tasks = [
+                self._process_image_page(
+                    Path(page.image_path), page.index, result.total_pages
+                )
+                for page in batch
+            ]
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for page, recog_or_error in zip(batch, batch_results):
+                if isinstance(recog_or_error, Exception):
+                    logger.error("    ❌ Стр. %d: %s", page.index + 1, recog_or_error)
+                    result.errors.append(
+                        f"Стр. {page.index + 1}: {recog_or_error}"
+                    )
+                    continue
+                recog = recog_or_error
+                if recog is None or not recog.modules:
+                    logger.info("    ⏭️  Стр.%d: модули не найдены", page.index + 1)
+                    continue
+                room_name = page.room_name or _generate_room_name(recog, page.index)
+                spec = room_specs.setdefault(
+                    page.index,
+                    RoomSpec(
+                        room_name=room_name,
+                        page=page.index + 1,
+                        zone_type=recog.zone_type,
+                        room_id=page.room_id,
+                        view_type=page.view_type,
+                        view_group=page.view_group,
+                    ),
+                )
+                spec.modules.extend(recog.modules)
+                spec.materials.extend(recog.materials_mentioned)
+                spec.confidence = recog.confidence
+                if recog.zone_type and not spec.zone_type:
+                    spec.zone_type = recog.zone_type
+                validation = validate_modules(
+                    recog.modules,
+                    page_index=page.index,
+                    confidence=recog.confidence,
+                )
+                spec.validation = validation.as_dict()
+
+        result.rooms = sorted(room_specs.values(), key=lambda room: room.page)
+        mark_duplicate_projection_rooms(result.rooms)
+        for room in result.rooms:
+            _calculate_quality(room)
+            if room.validation and room.validation.get("blocking"):
+                room.quality_flags.extend(room.validation["blocking"])
+        result.success = bool(result.rooms)
+        logger.info(
+            "✅ Импортированный проект обработан: %d помещений, %d модулей",
+            len(result.rooms),
+            sum(len(room.modules) for room in result.rooms),
+        )
+        return result
+
     # -----------------------------------------------------------
     # ВСПОМОГАТЕЛЬНЫЕ
     # -----------------------------------------------------------
@@ -329,10 +431,10 @@ class FullPipeline:
         total_pages: int,
     ):
         """
-        Обработать одну страницу: рендеринг → Единый анализ → Fallback.
+        Обработать одну страницу PDF: рендеринг → единый анализ → fallback.
 
-        1. analyze_page (Qwen3-VL-235B + unified prompt: bbox + модули + материалы)
-        2. Если 0 модулей → fallback: analyze_drawing (GLM-5V-Turbo)
+        Сама логика анализа вынесена в `_process_image_page`, чтобы её могли
+        использовать и PDF-путь, и `process_imported` без второго рендера.
         """
         logger.info(f"  ▶ Стр. {page_num + 1}/{total_pages}...")
 
@@ -343,41 +445,51 @@ class FullPipeline:
             tmp_path = tmp.name
 
         try:
-            # ── 1. Единый анализ (bbox + модули) ──
-            modules, zone_type, materials, confidence = await self.vision.analyze_page(tmp_path)
-
-            if modules:
-                logger.info(
-                    f"    ✅ Стр.{page_num + 1} (единый): "
-                    f"{len(modules)} модулей, confidence={confidence}"
-                )
-                return RecognitionResult(
-                    modules=modules,
-                    confidence=confidence,
-                    zone_type=zone_type,
-                    materials_mentioned=materials or [],
-                )
-
-            # ── 2. Гейт: мебель без дверец (кровать/стол/диван) → fallback не нужен ──
-            if is_no_door_zone_page(zone_type, modules):
-                logger.info(
-                    f"    ⏭️ Стр.{page_num + 1}: не корпусная мебель "
-                    f"({zone_type}) — fallback пропущен"
-                )
-                return RecognitionResult(
-                    modules=[],
-                    confidence=confidence,
-                    zone_type=zone_type,
-                    materials_mentioned=materials or [],
-                    notes=f"не корпусная мебель: {zone_type}",
-                )
-
-            # ── 3. Fallback: модульный анализ (GLM-5V-Turbo) ──
-            logger.info("    ⚠️ Единый анализ не дал модулей, fallback на GLM-5V...")
-            return await self.vision.analyze_drawing(tmp_path)
-
+            return await self._process_image_page(tmp_path, page_num, total_pages)
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+    async def _process_image_page(
+        self,
+        image_path: str | Path,
+        page_num: int,
+        total_pages: int,
+    ):
+        """Распознать готовую страницу (JPEG/PNG) без рендера PDF."""
+        # ── 1. Единый анализ (bbox + модули) ──
+        modules, zone_type, materials, confidence = await self.vision.analyze_page(
+            str(image_path)
+        )
+
+        if modules:
+            logger.info(
+                f"    ✅ Стр.{page_num + 1} (единый): "
+                f"{len(modules)} модулей, confidence={confidence}"
+            )
+            return RecognitionResult(
+                modules=modules,
+                confidence=confidence,
+                zone_type=zone_type,
+                materials_mentioned=materials or [],
+            )
+
+        # ── 2. Гейт: мебель без дверец (кровать/стол/диван) → fallback не нужен ──
+        if is_no_door_zone_page(zone_type, modules):
+            logger.info(
+                f"    ⏭️ Стр.{page_num + 1}: не корпусная мебель "
+                f"({zone_type}) — fallback пропущен"
+            )
+            return RecognitionResult(
+                modules=[],
+                confidence=confidence,
+                zone_type=zone_type,
+                materials_mentioned=materials or [],
+                notes=f"не корпусная мебель: {zone_type}",
+            )
+
+        # ── 3. Fallback: модульный анализ ──
+        logger.info("    ⚠️ Единый анализ не дал модулей, fallback на analyze_drawing...")
+        return await self.vision.analyze_drawing(str(image_path))
 
     # Индикаторы: страница содержит чертёж (размеры, масштаб, виды)
     DRAWING_INDICATORS: ClassVar[list[str]] = [

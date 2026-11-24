@@ -177,6 +177,23 @@ class Settings(BaseSettings):
         description="URL подключения к БД",
     )
 
+    # Импорт проектов: исходники, страницы и манифесты (этап 1).
+    projects_dir: str = Field(
+        default="data/projects",
+        validation_alias=AliasChoices("PROJECTS_DIR"),
+        description="Каталог проектов: исходники, страницы, project.json",
+    )
+    import_max_image_mb: int = Field(
+        default=20,
+        validation_alias=AliasChoices("IMPORT_MAX_IMAGE_MB"),
+        description="Максимальный размер изображения при импорте, МБ",
+    )
+    import_max_pdf_mb: int = Field(
+        default=50,
+        validation_alias=AliasChoices("IMPORT_MAX_PDF_MB"),
+        description="Максимальный размер PDF при импорте, МБ",
+    )
+
     # Коэффициенты расчёта
     manufacturing_rate: float = 0.80
     installation_rate: float = 0.15

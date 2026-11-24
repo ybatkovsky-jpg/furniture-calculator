@@ -14,6 +14,7 @@ Win32-меню и стандартные диалоги. Скрипт:
 from __future__ import annotations
 
 import ctypes
+import os
 import shutil
 import subprocess
 import sys
@@ -25,7 +26,6 @@ from pathlib import Path
 EXE = Path("D:/ПРОГРАММЫ/PRO100/PRO100v7.08x64/PRO100.exe")
 WM_COMMAND, WM_SETTEXT, BM_CLICK, WM_CLOSE = 0x0111, 0x000C, 0x00F5, 0x0010
 CMD_REPORTS = 148
-import os
 LOAD_DELAY = float(os.getenv("PRO100_LOAD_DELAY", "20"))
 
 user32 = ctypes.windll.user32
@@ -94,6 +94,28 @@ def _wait(predicate, timeout: float = 60.0, step: float = 0.5):
     return None
 
 
+def capture_window(hwnd: int, target: Path) -> bool:
+    """Снимок окна PRO100: визуальный контекст проекта для менеджера."""
+    try:
+        from PIL import ImageGrab
+    except ImportError:
+        return False
+    try:
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+        time.sleep(0.8)
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return False
+        image = ImageGrab.grab(
+            bbox=(rect.left, rect.top, rect.right, rect.bottom)
+        )
+        image.save(target, format="PNG")
+        return True
+    except Exception:  # noqa: BLE001 — снимок не должен ломать выгрузку
+        return False
+
+
 def export(sto: Path, out_dir: Path) -> dict:
     out_dir = out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -138,6 +160,9 @@ def export(sto: Path, out_dir: Path) -> dict:
         if time.time() - start >= LOAD_DELAY:
             break
     time.sleep(2)
+
+    screenshot = out_dir / "screenshot.png"
+    screenshot_ok = capture_window(main_hwnd, screenshot)
 
     user32.PostMessageW(main_hwnd, WM_COMMAND, CMD_REPORTS, 0)
     report = _wait(lambda: next((w for w in _windows(pid) if w[2] == "Отчёты"), None), 60)
@@ -210,7 +235,14 @@ def export(sto: Path, out_dir: Path) -> dict:
     shutil.rmtree(save_dir, ignore_errors=True)
     files = sorted(p.name for p in out_dir.iterdir() if p.is_file())
     sizes = {p.name: p.stat().st_size for p in out_dir.iterdir() if p.is_file()}
-    return {"status": "ok", "saved": saved, "files": files, "sizes": sizes, "pid": pid}
+    return {
+        "status": "ok",
+        "saved": saved,
+        "files": files,
+        "sizes": sizes,
+        "pid": pid,
+        "screenshot": "screenshot.png" if screenshot_ok else None,
+    }
 
 
 def main() -> int:

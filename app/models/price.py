@@ -22,6 +22,7 @@ class PriceItem(Base):
     
     # Основные данные
     name = Column(String(255), nullable=False, index=True)  # Название позиции
+    sku = Column(String(100), nullable=True, index=True)  # Артикул поставщика
     category = Column(String(100), nullable=False, index=True)  # Категория (ЛДСП, фасады и т.д.)
     subcategory = Column(String(100), nullable=True)  # Подкатегория
     brand = Column(String(100), nullable=True)  # Производитель

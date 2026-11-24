@@ -13,13 +13,16 @@
 
 import logging
 import math
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.domain.bom import ModuleBOM, build_bom
 from app.domain.cost_lines import CostLine, build_cost_lines
-from app.domain.nesting import NestingResult, nest_bom
+from app.domain.nesting import NestingResult, nest_bom, nest_parts
+from app.domain.parts import edge_totals, material_group, parts_area_by_group
+from app.domain.purchase import PurchaseList, build_purchase_list
 from app.services.cost_calc import CostBreakdown, DiscountInfo, calculate_cost
 from app.services.edge_calc import EdgeCalculation
 from app.services.glass_calc import GlassCalculation, calculate_glass_for_modules
@@ -53,6 +56,11 @@ class CalculationResult:
     # S5-01/S5-03: деталировка и заготовка раскроя (сохраняются в quote)
     bom: list[ModuleBOM] = field(default_factory=list)
     nesting: NestingResult | None = None
+    # Этап 3: Part-раскрой и кромка по физическим деталям
+    parts_nesting: NestingResult | None = None
+    parts_area_m2: float = 0.0
+    parts_edge_totals: dict[str, float] = field(default_factory=dict)
+    purchase: PurchaseList | None = None
 
     # P1-10: снимок цен и коэффициентов, по которому посчитан результат.
     price_book: dict[str, float] = field(default_factory=dict)
@@ -87,6 +95,44 @@ class CalculationResult:
             self.glass_calc = GlassCalculation()
         if self.cost_breakdown is None:
             self.cost_breakdown = CostBreakdown()
+
+
+def _part_bom_pricing_enabled() -> bool:
+    """Этап 3: считать листы по Part, а не по старым линиям BOM."""
+    return os.getenv("PART_BOM_PRICING", "1").strip() == "1"
+
+
+def _part_bom_edge_enabled() -> bool:
+    """Этап 3: кромка по Part. Отдельный флаг, пока правила не совпали."""
+    return os.getenv("PART_BOM_EDGE", "0").strip() == "1"
+
+
+def _purchase_prices(
+    selected_materials: dict[str, Any],
+    price_book: dict[str, float],
+) -> dict[str, float]:
+    prices: dict[str, float] = {}
+    ldsp = selected_materials.get("ldsp") or {}
+    if isinstance(ldsp, dict) and ldsp.get("price"):
+        prices["Лист ЛДСП"] = float(ldsp["price"])
+    edge = selected_materials.get("edge") or {}
+    if isinstance(edge, list):
+        edge = edge[0] if edge else {}
+    if isinstance(edge, dict) and edge.get("price"):
+        thickness = float(edge.get("thickness_mm") or 0.8)
+        prices[f"Кромка {thickness:g} мм"] = float(edge["price"])
+    book = price_book or {}
+    if book.get("hdf"):
+        prices["Лист ХДФ"] = float(book["hdf"])
+    if book.get("mdf_sheet"):
+        prices["Лист МДФ"] = float(book["mdf_sheet"])
+    facades = selected_materials.get("facades") or {}
+    if isinstance(facades, dict) and facades.get("price"):
+        prices["Фасады"] = float(facades["price"])
+    for key, thickness in (("edge_0.4", 0.4), ("edge_2", 2.0)):
+        if book.get(key):
+            prices[f"Кромка {thickness:g} мм"] = float(book[key])
+    return prices
 
 
 def _apply_nesting_sheets(
@@ -236,14 +282,46 @@ def calculate_full_cost(
         # Направление рисунка: у текстурного ЛДСП детали не крутим.
         grain_locked=str(quantities.ldsp_material or "") == "текстура",
     )
+
+    # Этап 3: параллельный Part-раскрой. Цену пока не меняет — нужен для
+    # сверки и для перехода на детали без изменения финансовых ставок.
+    all_parts = [part for module_bom in result.bom for part in module_bom.parts]
+    result.parts_area_m2 = round(
+        sum(parts_area_by_group(all_parts).values()), 3
+    )
+    result.parts_edge_totals = edge_totals(all_parts, reserve_rate=1.3)
+    ldsp_parts = [
+        part for part in all_parts if material_group(part.material) == "ЛДСП"
+    ]
+    result.parts_nesting = nest_parts(
+        ldsp_parts,
+        sheet_sizes={"ЛДСП": (ldsp_sheet["width_mm"], ldsp_sheet["height_mm"])},
+        grain_locked=str(quantities.ldsp_material or "") == "текстура",
+    )
+    result.purchase = build_purchase_list(
+        result.parts_nesting,
+        result.parts_edge_totals,
+        prices=_purchase_prices(selected_materials, price_book),
+        hdf_sheets=quantities.hdf_sheets,
+        mdf_sheets=quantities.mdf_sheets,
+        facades_area_m2=quantities.facades_area_m2,
+    )
     _apply_nesting_sheets(
         quantities,
-        result.nesting,
+        (
+            result.parts_nesting
+            if _part_bom_pricing_enabled() and result.parts_nesting
+            else result.nesting
+        ),
         reserve_rate=policy.sheet_reserve_rate,
         sheet_area_m2=(
             ldsp_sheet["width_mm"] * ldsp_sheet["height_mm"] / 1_000_000
         ),
     )
+    if _part_bom_edge_enabled():
+        quantities.edge_08_m = round(result.parts_edge_totals.get("0.8", 0))
+        quantities.edge_04_m = round(result.parts_edge_totals.get("0.4", 0))
+        quantities.edge_2_m = round(result.parts_edge_totals.get("2", 0))
     result.sheets_calc.total_sheets = quantities.ldsp_sheets
     result.sheets_calc.total_area_m2 = round(quantities.ldsp_area_m2, 3)
 

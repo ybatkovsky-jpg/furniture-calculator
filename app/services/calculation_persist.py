@@ -78,6 +78,12 @@ def apply_result(
         ),
         "bom": [asdict(module_bom) for module_bom in result.bom],
         "nesting": asdict(result.nesting) if result.nesting else None,
+        "parts_nesting": (
+            asdict(result.parts_nesting) if result.parts_nesting else None
+        ),
+        "parts_area_m2": result.parts_area_m2,
+        "parts_edge_totals": result.parts_edge_totals,
+        "purchase": result.purchase.as_dict() if result.purchase else None,
         "cost_price": breakdown.cost_price,
         "discount_amount": breakdown.discount_amount,
         "total_base_cash": breakdown.total_base_cash,

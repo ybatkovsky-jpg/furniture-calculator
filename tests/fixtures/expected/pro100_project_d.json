@@ -1,0 +1,14 @@
+{
+  "project": "pro100_project_d",
+  "source": "реальная выгрузка ПРО100 «Список деталей»",
+  "approval": "входные данные реальные; BOM, раскрой и цена требуют подтверждения технолога",
+  "details_count": 72,
+  "panels_count": 52,
+  "first_detail": {
+    "width_mm": 529,
+    "height_mm": 400,
+    "thickness_mm": 18,
+    "quantity": 2,
+    "material": "Цвета\\NCS\\NCS-S-2002-Y50R"
+  }
+}

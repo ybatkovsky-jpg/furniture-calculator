@@ -8,6 +8,7 @@
 | Данные | Путь | Куда |
 |---|---|---|
 | SQLite-база | `data/furniture.db` | `..\backups\furniture-calculator\` (вне Git) |
+| Проекты импорта (исходники, страницы, `project.json`) | `data/projects/` | `..\backups\furniture-calculator\projects_ГГГГММДД_ЧЧММСС\` |
 | Сгенерированные КП и PDF | `pdfs/` | архив вне Git (zip, по регламенту) |
 | Сканы/рендеры (эталоны) | `input_images/`, `output/`, `temp/` | не в Git; при необходимости — архив |
 
@@ -27,6 +28,19 @@
 2. проверяет `PRAGMA integrity_check` у источника и у копии;
 3. кладёт файл `furniture_ГГГГММДД_ЧЧММСС.db` в каталог вне репозитория;
 4. удаляет копии старше `--keep` дней (по умолчанию 14).
+
+### Копия проектов импорта
+
+```powershell
+.\.venv\Scripts\python.exe scripts\backup_all.py
+```
+
+Одна команда копирует БД и `data/projects/` в `..\backups\furniture-calculator\`,
+проверяет `integrity_check` и хранит последние копии (`--keep-db`, `--keep-projects`).
+Отдельно можно вызвать `scripts\backup_projects.py`.
+Без копии проектов после восстановления БД пропадут исходники и страницы проектов,
+хотя записи `web_quotes` останутся.
+
 
 Переопределение путей: `--db`, `--dest` или переменные `DB_PATH`, `BACKUP_DIR`,
 `BACKUP_KEEP_DAYS`.

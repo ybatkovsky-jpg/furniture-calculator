@@ -208,14 +208,16 @@
   12 таблиц, `integrity_check=ok`;
 - восстановление проверено на копии: `integrity=ok`, 532 позиции прайса;
 - `GET /healthz` — процесс + БД, при сбое БД `503`;
-- осталось: роли/авторизация, тайминги этапов, защита от повторного запуска,
-  учёт расходов AI и версий промптов, PostgreSQL.
+- `PROMPT_VERSION` и логирование `usage` (prompt/completion/total) в vision-запросах;
+- защита от второго запуска веб-сервера: `data/web.lock`;
+- осталось: роли/авторизация, тайминги этапов, PostgreSQL;
+- `data/projects` пока отсутствует, backup проектов не проверен на реальных данных.
 
 ## Проверки
 
 | Проверка | Результат |
 |---|---|
-| `pytest -q` | **762 passed, 1 skipped** |
+| `pytest -q` | **763 passed, 1 skipped** |
 | `check_phases.py` | 59/59 |
 | `ruff check app` | чисто |
 | Alembic | `a8c1e3f5b7d9` (head) |

@@ -34,6 +34,9 @@ from app.services.scale_calc import ScaledFacade, calculate_scaled_facades
 
 logger = logging.getLogger(__name__)
 
+# Версия промпта для аудита: меняешь prompts/unified.txt — подними версию.
+PROMPT_VERSION = "unified-v2-2026-11-25"
+
 
 # ================================================================
 # ДАТАКЛАССЫ
@@ -1701,6 +1704,15 @@ class GeminiImageAnalyzer:
                             f"{data['choices'][0].get('finish_reason')})"
                         )
                     logger.info(f"🎯 Ответ получен: {provider} ({model})")
+                    usage = data.get("usage") or {}
+                    if usage:
+                        logger.info(
+                            "🎯 AI usage: prompt=%s completion=%s total=%s prompt_version=%s",
+                            usage.get("prompt_tokens"),
+                            usage.get("completion_tokens"),
+                            usage.get("total_tokens"),
+                            PROMPT_VERSION,
+                        )
                     return text
 
                 except Exception as e:  # noqa: BLE001

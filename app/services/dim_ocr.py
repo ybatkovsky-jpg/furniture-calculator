@@ -309,6 +309,29 @@ def _tesseract_available() -> bool:
     return _tesseract_checked
 
 
+def _prepared_variants(image):
+    """Варианты предобработки для Tesseract.
+
+    Размерные числа на 3D-визуализациях пишут серым тонким шрифтом по фактурной
+    стене — в исходном виде Tesseract их не видит (на листе `shema_kx_13` из
+    семи чисел не нашлось ни одного >= 1000). Поэтому читаем несколько версий:
+    исходник, повышенный контраст и увеличенную копию.
+    """
+    from PIL import Image, ImageFilter, ImageOps
+
+    yield "original", image
+
+    try:
+        gray = ImageOps.autocontrast(image.convert("L"), cutoff=2)
+        sharp = gray.filter(ImageFilter.SHARPEN)
+        yield "contrast", sharp
+
+        big = sharp.resize((gray.width * 2, gray.height * 2), Image.LANCZOS)
+        yield "contrast_x2", big
+    except Exception:
+        logger.debug("dim_ocr: предобработка не удалась", exc_info=True)
+
+
 def _extract_tesseract(
     path: Path,
     img_w: int | None,
@@ -329,38 +352,41 @@ def _extract_tesseract(
     raw: list[tuple[int, float, float, float, float]] = []
     seen = set()
     # psm 6 — «строки чисел»; psm 11 — разреженный текст (запасной)
-    for psm in ("6", "11"):
-        try:
-            data = pytesseract.image_to_data(
-                image,
-                output_type=pytesseract.Output.DICT,
-                config=f"--psm {psm} -c tessedit_char_whitelist=0123456789.",
-            )
-        except Exception:
-            logger.debug("dim_ocr: image_to_data не удался", exc_info=True)
-            continue
-        rows = len(data.get("text") or [])
-        for i in range(rows):
-            text = data["text"][i] or ""
+    for variant_name, variant in _prepared_variants(image):
+        scale_x = (img_w or image.width) / float(variant.width or 1)
+        scale_y = (img_h or image.height) / float(variant.height or 1)
+        for psm in ("6", "11"):
             try:
-                conf = float(data["conf"][i])
-            except (TypeError, ValueError, IndexError):
-                conf = -1.0
-            if conf < 40:
+                data = pytesseract.image_to_data(
+                    variant,
+                    output_type=pytesseract.Output.DICT,
+                    config=f"--psm {psm} -c tessedit_char_whitelist=0123456789.",
+                )
+            except Exception:
+                logger.debug("dim_ocr: image_to_data не удался", exc_info=True)
                 continue
-            try:
-                x = float(data["left"][i])
-                y = float(data["top"][i])
-                w = float(data["width"][i])
-                h = float(data["height"][i])
-            except (TypeError, ValueError, IndexError):
-                continue
-            for value in _int_groups(text):
-                key = (value, round(x), round(y))
-                if key in seen:
+            rows = len(data.get("text") or [])
+            for i in range(rows):
+                text = data["text"][i] or ""
+                try:
+                    conf = float(data["conf"][i])
+                except (TypeError, ValueError, IndexError):
+                    conf = -1.0
+                if conf < 40:
                     continue
-                seen.add(key)
-                raw.append((value, x, y, w, h))
+                try:
+                    x = float(data["left"][i]) * scale_x
+                    y = float(data["top"][i]) * scale_y
+                    w = float(data["width"][i]) * scale_x
+                    h = float(data["height"][i]) * scale_y
+                except (TypeError, ValueError, IndexError):
+                    continue
+                for value in _int_groups(text):
+                    key = (value, round(x / 20), round(y / 20))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    raw.append((value, x, y, w, h))
 
     out: list[dict] = []
     for value, x, y, w, h in raw:

@@ -18,7 +18,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from app.config import settings
@@ -133,6 +133,7 @@ def _module_row(module: Any) -> dict:
     drawers = getattr(module, "drawers", None) or {}
     return {
         "type": TYPE_LABELS.get(kind, kind or "модуль"),
+        "type_key": kind,
         "width": int(getattr(module, "width", 0) or 0),
         "depth": int(getattr(module, "depth", 0) or 0),
         "height": int(getattr(module, "height", 0) or 0),
@@ -357,6 +358,111 @@ async def kp_docx(
     )
 
 
+ALLOWED_TYPES = {
+    "lower_base", "upper_base", "penal", "wardrobe", "table", "counter",
+    "open_unit", "shelf_unit", "column", "tumbler", "corner",
+}
+
+
+def _validate_modules(modules: Any) -> list[dict]:
+    """Проверить состав, который менеджер правит в редакторе.
+
+    Ошибки возвращаем списком, а не молча подставляем значения: смета
+    не должна считаться по нулевым или отрицательным размерам.
+    """
+    if not isinstance(modules, list) or not modules:
+        raise HTTPException(400, "Состав пустой — добавьте хотя бы один модуль")
+
+    cleaned: list[dict] = []
+    for index, module in enumerate(modules, start=1):
+        if not isinstance(module, dict):
+            raise HTTPException(400, f"Модуль #{index}: неверный формат")
+        kind = str(module.get("type") or "")
+        if kind not in ALLOWED_TYPES:
+            raise HTTPException(400, f"Модуль #{index}: неизвестный тип «{kind}»")
+        try:
+            width = int(module.get("width") or 0)
+            depth = int(module.get("depth") or 0)
+            height = int(module.get("height") or 0)
+            quantity = int(module.get("quantity") or 1)
+            doors = int((module.get("facades") or {}).get("count") or 0)
+            drawers = int((module.get("drawers") or {}).get("count") or 0)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, f"Модуль #{index}: размеры должны быть числами") from exc
+
+        if width <= 0 or height <= 0:
+            raise HTTPException(400, f"Модуль #{index}: ширина и высота должны быть больше нуля")
+        if depth < 0 or quantity < 1 or doors < 0 or drawers < 0:
+            raise HTTPException(400, f"Модуль #{index}: проверьте глубину, количество, двери и ящики")
+        if width > 6000 or height > 3500:
+            raise HTTPException(400, f"Модуль #{index}: размеры выглядят нереально ({width}×{height})")
+
+        cleaned.append({
+            "type": kind,
+            "width": width,
+            "depth": depth,
+            "height": height,
+            "quantity": quantity,
+            "facades": {"count": doors},
+            "drawers": {"count": drawers},
+            "is_corner": bool(module.get("is_corner")),
+        })
+    return cleaned
+
+
+@app.post("/api/recalc/{quote_id}")
+async def recalc(quote_id: str, payload: dict = Body(default={})) -> JSONResponse:  # noqa: B008
+    """Пересчитать смету по составу, отредактированному в вебе."""
+    data = QUOTES.get(quote_id)
+    if not data:
+        raise HTTPException(404, "Расчёт не найден — распознайте заново")
+
+    modules = _validate_modules(payload.get("modules"))
+    materials, hardware = default_materials()
+    result = calculate_full_cost(
+        modules, materials, hardware, [], zone_type=data.get("zone"),
+        price_book=load_price_book_sync(),
+    )
+    breakdown = result.cost_breakdown
+
+    # Обновляем снимок: Excel и КП должны взять исправленный состав.
+    data["modules"] = modules
+    data["quote"] = quote_from_result(result, reason="web-edit")
+    QUOTES[quote_id] = data
+
+    doors = sum(module["facades"]["count"] * module["quantity"] for module in modules)
+    drawers = sum(module["drawers"]["count"] * module["quantity"] for module in modules)
+    rows = []
+    for module in modules:
+        facades = module.get("facades") or {}
+        module_drawers = module.get("drawers") or {}
+        rows.append({
+            "type": TYPE_LABELS.get(module["type"], module["type"]),
+            "type_key": module["type"],
+            "width": module["width"],
+            "depth": module["depth"],
+            "height": module["height"],
+            "quantity": module["quantity"],
+            "doors": int(facades.get("count") or 0),
+            "drawers": int(module_drawers.get("count") or 0),
+        })
+    return JSONResponse({
+        "ok": True,
+        "modules": rows,
+        "doors": doors,
+        "drawers": drawers,
+        "total_width_mm": sum(module["width"] for module in modules if module["type"] != "upper_base"),
+        "totals": {
+            "cost_price": round(breakdown.cost_price),
+            "subtotal": round(breakdown.subtotal),
+            "final_cash": round(breakdown.final_cash),
+            "final_noncash": round(result.total_noncash),
+        },
+        "can_issue_kp": bool(result.can_issue_kp),
+        "missing_prices": list(result.missing_prices or []),
+    })
+
+
 INDEX_HTML = """<!doctype html>
 <html lang="ru">
 <head>
@@ -420,13 +526,20 @@ INDEX_HTML = """<!doctype html>
     </div>
     <div class="card">
       <h3 style="margin:0 0 4px;font-size:15px">Состав</h3>
+      <p class="muted" style="margin:0 0 6px">Состав можно править: измените размеры,
+        двери или ящики и нажмите «Пересчитать». Excel и КП возьмут исправленный состав.</p>
       <table>
         <thead><tr>
           <th>Модуль</th><th class="num">Ш</th><th class="num">Г</th><th class="num">В</th>
           <th class="num">Корпусов</th><th class="num">Двери</th><th class="num">Ящики</th>
+          <th></th>
         </tr></thead>
         <tbody id="modules"></tbody>
       </table>
+      <div style="margin-top:10px">
+        <button class="button secondary" id="add-module">+ Добавить модуль</button>
+        <button class="button" id="recalc" style="background:#1d2330">Пересчитать</button>
+      </div>
       <button class="button" id="excel">Скачать Excel</button>
       <button class="button secondary" id="reset">Новый расчёт</button>
 
@@ -469,6 +582,50 @@ const statusText = document.getElementById('status-text');
 const errorBox = document.getElementById('error');
 const result = document.getElementById('result');
 let quoteId = null;
+let currentModules = [];
+
+const TYPE_OPTIONS = [
+  ["lower_base", "Нижняя база"], ["upper_base", "Верхний модуль"], ["penal", "Пенал"],
+  ["corner", "Угловой модуль"], ["wardrobe", "Шкаф"], ["open_unit", "Открытая тумба"],
+  ["shelf_unit", "Стеллаж"], ["table", "Стол"], ["counter", "Стойка"],
+  ["tumbler", "Тумба"], ["column", "Колонна"],
+];
+
+function numberCell(index, field, value) {
+  return `<td class="num"><input class="cell-input" type="number" min="0"
+    data-index="${index}" data-field="${field}" value="${value}"></td>`;
+}
+
+function renderModules() {
+  document.getElementById('modules').innerHTML = currentModules.map((module, index) => {
+    const options = TYPE_OPTIONS.map(([key, label]) =>
+      `<option value="${key}"${module.type_key === key ? " selected" : ""}>${label}</option>`
+    ).join('');
+    return `<tr>
+      <td><select class="cell-input" data-index="${index}" data-field="type_key">${options}</select></td>
+      ${numberCell(index, 'width', module.width)}
+      ${numberCell(index, 'depth', module.depth)}
+      ${numberCell(index, 'height', module.height)}
+      ${numberCell(index, 'quantity', module.quantity)}
+      ${numberCell(index, 'doors', module.doors)}
+      ${numberCell(index, 'drawers', module.drawers)}
+      <td class="num"><button class="row-remove" data-index="${index}"
+        title="Удалить" style="border:0;background:none;cursor:pointer;color:#d64545">✕</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function collectModules() {
+  return currentModules.map(module => ({
+    type: module.type_key,
+    width: Number(module.width) || 0,
+    depth: Number(module.depth) || 0,
+    height: Number(module.height) || 0,
+    quantity: Number(module.quantity) || 1,
+    facades: { count: Number(module.doors) || 0 },
+    drawers: { count: Number(module.drawers) || 0 },
+  }));
+}
 
 drop.addEventListener('click', () => fileInput.click());
 drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('hover'); });
@@ -532,20 +689,73 @@ function render(data) {
     ? flags.map(f => `<div class="flag">⚠ ${f}</div>`).join('')
     : '';
 
-  document.getElementById('modules').innerHTML = (data.modules || []).map(m => `
-    <tr>
-      <td>${m.type}</td>
-      <td class="num">${m.width}</td>
-      <td class="num">${m.depth}</td>
-      <td class="num">${m.height}</td>
-      <td class="num">${m.quantity}</td>
-      <td class="num">${m.doors}</td>
-      <td class="num">${m.drawers}</td>
-    </tr>`).join('');
+  currentModules = (data.modules || []).map(m => ({ ...m }));
+  renderModules();
 
   status.classList.add('hidden');
   result.classList.remove('hidden');
 }
+
+// Изменение ячейки таблицы
+document.getElementById('modules').addEventListener('input', (event) => {
+  const target = event.target;
+  if (!target.dataset || target.dataset.index === undefined) return;
+  const index = Number(target.dataset.index);
+  const field = target.dataset.field;
+  if (!currentModules[index]) return;
+  currentModules[index][field] = target.value;
+});
+
+// Удаление строки
+document.getElementById('modules').addEventListener('click', (event) => {
+  if (!event.target.classList.contains('row-remove')) return;
+  const index = Number(event.target.dataset.index);
+  currentModules.splice(index, 1);
+  renderModules();
+});
+
+document.getElementById('add-module').addEventListener('click', () => {
+  currentModules.push({
+    type_key: 'lower_base', type: 'Нижняя база',
+    width: 600, depth: 560, height: 850, quantity: 1, doors: 1, drawers: 0,
+  });
+  renderModules();
+});
+
+document.getElementById('recalc').addEventListener('click', async () => {
+  if (!quoteId) return;
+  const button = document.getElementById('recalc');
+  button.disabled = true;
+  button.textContent = 'Считаю…';
+  try {
+    const response = await fetch('/api/recalc/' + quoteId, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modules: collectModules() }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      alert(data.detail || 'Не удалось пересчитать');
+      return;
+    }
+    currentModules = data.modules.map(m => ({ ...m }));
+    renderModules();
+    const totals = data.totals;
+    document.getElementById('kpi').innerHTML = [
+      ['Габарит', (data.total_width_mm || 0) + ' мм'],
+      ['Двери', data.doors],
+      ['Ящики', data.drawers],
+      ['Себестоимость', money(totals.cost_price)],
+      ['Клиенту (наличные)', money(totals.final_cash)],
+      ['Клиенту (безнал)', money(totals.final_noncash)],
+    ].map(([label, value]) => `<div class="kpi"><span>${label}</span><b>${value}</b></div>`).join('');
+    const flags = [...(data.missing_prices || []).map(p => 'без цены в прайсе: ' + p)];
+    document.getElementById('flags').innerHTML = flags.length
+      ? flags.map(f => `<div class="flag">⚠ ${f}</div>`).join('') : '';
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Пересчитать';
+  }
+});
 
 document.getElementById('excel').addEventListener('click', () => {
   if (quoteId) window.location = '/api/excel/' + quoteId;

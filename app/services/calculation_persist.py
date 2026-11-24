@@ -56,7 +56,10 @@ def apply_result(
         "created_at": datetime.now(UTC).isoformat(),
         "reason": reason,
         "zone_type": calculation.zone_type,
-        "lines": [asdict(line) for line in result.lines],
+        "lines": [
+            {**asdict(line), "cost_type": line.cost_type}
+            for line in result.lines
+        ],
         "cost_type_totals": cost_type_totals(result.lines),
         "warnings": result.warnings,
         "missing_prices": result.missing_prices,

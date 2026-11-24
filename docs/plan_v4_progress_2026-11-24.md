@@ -162,7 +162,8 @@
 ## Этап 6 — финансовое ядро (начат)
 
 - `CostLine.cost_type`: material / hardware / other; сумма групп = сумма строк;
-- `cost_type_totals` сохраняется в `quote`;
+- `cost_type_totals` сохраняется в `quote`, у каждой строки есть `cost_type`;
+- сумма групп равна `cost_price` (тест);
 - `PricingPolicy.policy_status = "approved"` (решение 24.11);
 - `policy_status` сохраняется в снимке рядом с `policy_version`;
 - `coerce_policy` больше не пытается сделать `float("approved")`;
@@ -172,7 +173,7 @@
 
 | Проверка | Результат |
 |---|---|
-| `pytest -q` | **750 passed, 1 skipped** |
+| `pytest -q` | **751 passed, 1 skipped** |
 | `check_phases.py` | 59/59 |
 | `ruff check app` | чисто |
 | Alembic | `a8c1e3f5b7d9` (head) |

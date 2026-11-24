@@ -16,7 +16,7 @@ import logging
 import shutil
 import sqlite3
 import uuid
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -521,6 +521,44 @@ async def quote_versions(quote_id: str) -> JSONResponse:
     return JSONResponse({"versions": await list_web_quote_versions(quote_id)})
 
 
+@app.get("/api/quotes/{quote_id}/approval")
+async def quote_approval(quote_id: str) -> JSONResponse:
+    data = await _get_quote(quote_id)
+    if not data:
+        raise HTTPException(404, "Расчёт не найден")
+    approval = (data.get("quote") or {}).get("approval") or {}
+    return JSONResponse({"approval": approval, "approved": bool(approval)})
+
+
+@app.post("/api/quotes/{quote_id}/approve")
+async def approve_quote(
+    quote_id: str,
+    payload: dict = Body(default={}),  # noqa: B008
+) -> JSONResponse:
+    """Подтвердить состав перед выпуском КП."""
+    data = await _get_quote(quote_id)
+    if not data:
+        raise HTTPException(404, "Расчёт не найден")
+    approved_by = str(payload.get("approved_by") or "manager").strip()[:120]
+    approval = {
+        "approved_by": approved_by,
+        "approved_at": datetime.now(UTC).isoformat(),
+    }
+    data.setdefault("quote", {})["approval"] = approval
+    await _put_quote(quote_id, data)
+    await save_web_quote_version(
+        quote_id,
+        {
+            "quote": data["quote"],
+            "modules": data.get("modules") or [],
+            "validation": data.get("validation") or {},
+        },
+        reason="approved",
+        created_by=approved_by,
+    )
+    return JSONResponse({"ok": True, "approval": approval})
+
+
 @app.get("/api/excel/{quote_id}")
 async def excel(quote_id: str) -> FileResponse:
     """Excel из снимка расчёта — тот же путь, что у бота."""
@@ -572,6 +610,8 @@ async def kp_docx(
     data = await _get_quote(quote_id)
     if not data:
         raise HTTPException(404, "Расчёт не найден — распознайте заново")
+    if not (data.get("quote") or {}).get("approval"):
+        raise HTTPException(409, "Сначала подтвердите состав кнопкой «Подтвердить состав»")
 
     try:
         payload_data = json.loads(payload or "{}")
@@ -865,6 +905,8 @@ INDEX_HTML = """<!doctype html>
       <div style="margin-top:10px">
         <button class="button secondary" id="add-module">+ Добавить модуль</button>
         <button class="button" id="recalc" style="background:#1d2330">Пересчитать</button>
+        <button class="button" id="approve">Подтвердить состав</button>
+        <span id="approval-status" class="muted"></span>
       </div>
       <button class="button" id="excel">Скачать Excel</button>
       <button class="button secondary" id="reset">Новый расчёт</button>
@@ -1207,9 +1249,29 @@ document.getElementById('recalc').addEventListener('click', async () => {
     document.getElementById('flags').innerHTML = flags.length
       ? flags.map(f => `<div class="flag">⚠ ${f}</div>`).join('') : '';
     loadVersions();
+    document.getElementById('approval-status').textContent = 'не подтверждено';
   } finally {
     button.disabled = false;
     button.textContent = 'Пересчитать';
+  }
+});
+
+document.getElementById('approve').addEventListener('click', async () => {
+  if (!quoteId) return;
+  const button = document.getElementById('approve');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/quotes/' + quoteId + '/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved_by: 'manager' }),
+    });
+    if (!response.ok) { alert('Не удалось подтвердить состав'); return; }
+    const data = await response.json();
+    document.getElementById('approval-status').textContent =
+      'подтверждено: ' + (data.approval.approved_by || 'manager');
+  } finally {
+    button.disabled = false;
   }
 });
 

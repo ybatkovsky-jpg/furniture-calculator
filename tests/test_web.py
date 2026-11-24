@@ -59,7 +59,7 @@ def test_kp_endpoint_returns_docx(monkeypatch) -> None:
     from tests.test_kp_variants import MODULES, build_variants, catalog
 
     server.QUOTES["test-quote"] = {
-        "quote": {},
+        "quote": {"approval": {"approved_by": "manager"}},
         "modules": MODULES,
         "zone": "Кухня",
         "image": None,
@@ -76,6 +76,52 @@ def test_kp_endpoint_returns_docx(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.content[:2] == b"PK"
     assert "wordprocessingml" in response.headers["content-type"]
+
+
+def test_kp_requires_approval(monkeypatch) -> None:
+    from app.web import server
+
+    server.QUOTES["unapproved-quote"] = {
+        "quote": {},
+        "modules": [],
+        "zone": "Кухня",
+        "image": None,
+    }
+    response = client.post(
+        "/api/kp/unapproved-quote",
+        json={"variants": ["Базовая"]},
+    )
+    assert response.status_code == 409
+    assert "подтвердите" in response.json()["detail"].lower()
+
+
+def test_approve_quote_sets_author(monkeypatch) -> None:
+    from app.web import server
+
+    server.QUOTES["approve-quote"] = {
+        "quote": {},
+        "modules": [],
+        "validation": {},
+        "zone": "Кухня",
+        "image": None,
+    }
+
+    async def fake_put(quote_id, data):
+        server.QUOTES[quote_id] = data
+
+    async def fake_version(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(server, "_put_quote", fake_put)
+    monkeypatch.setattr(server, "save_web_quote_version", fake_version)
+
+    response = client.post(
+        "/api/quotes/approve-quote/approve",
+        json={"approved_by": "Иван Петров"},
+    )
+    assert response.status_code == 200
+    assert response.json()["approval"]["approved_by"] == "Иван Петров"
+    assert server.QUOTES["approve-quote"]["quote"]["approval"]
 
 
 def test_get_quote_restores_from_db(monkeypatch) -> None:

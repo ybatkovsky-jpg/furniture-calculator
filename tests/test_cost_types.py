@@ -32,6 +32,34 @@ def test_unknown_kind_goes_to_other() -> None:
     assert _line("custom", 1).cost_type == "other"
 
 
+def test_draft_policy_blocks_kp() -> None:
+    result = calculate_full_cost(
+        [
+            {
+                "type": "lower_base",
+                "width": 600,
+                "depth": 560,
+                "height": 820,
+                "quantity": 1,
+                "shelves": 1,
+                "facades": {"count": 1},
+            }
+        ],
+        {
+            "ldsp": {"price": 5100, "price_unit": "лист"},
+            "facades": {"name": "ФАСАДЫ ПВХ", "price": 6000, "price_unit": "м²"},
+            "edge": {"price": 34, "thickness_mm": 0.8},
+        },
+        {"hinges": {"price": 172}, "handles": {"price": 550}},
+        [],
+        settings={"policy_status": "draft"},
+    )
+
+    assert result.policy["policy_status"] == "draft"
+    assert result.can_issue_kp is False
+    assert any("не утверждена" in warning for warning in result.warnings)
+
+
 def test_policy_status_is_approved() -> None:
     policy = PricingPolicy()
 

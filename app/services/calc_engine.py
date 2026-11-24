@@ -344,6 +344,12 @@ def calculate_full_cost(
     # P1-17: тип фасада не выбран — КП не выпускаем до явного выбора.
     if any("Тип фасада не выбран" in warning for warning in quantities.warnings):
         result.can_issue_kp = False
+    # Этап 6: черновая финансовая политика не выпускает КП.
+    if policy.policy_status != "approved":
+        result.warnings.append(
+            f"Финансовая политика не утверждена: {policy.policy_status}"
+        )
+        result.can_issue_kp = False
 
     totals = lines_result.sum_by_kind()
     result.material_cost = round(totals.get("ldsp", 0.0) + totals.get("hdf", 0.0), 2)

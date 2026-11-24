@@ -159,21 +159,23 @@
 - 23 позиции без цены блокируют КП до счёта поставщика;
 - тест `tests/test_price_sku.py`.
 
-## Этап 6 — финансовое ядро (начат)
+## Этап 6 — финансовое ядро — **закрыт 25.11**
 
 - `CostLine.cost_type`: material / hardware / other; сумма групп = сумма строк;
 - `cost_type_totals` сохраняется в `quote`, у каждой строки есть `cost_type`;
 - сумма групп равна `cost_price` (тест);
 - `PricingPolicy.policy_status = "approved"` (решение 24.11);
 - `policy_status` сохраняется в снимке рядом с `policy_version`;
+- `policy_status=draft` блокирует КП;
 - `coerce_policy` больше не пытается сделать `float("approved")`;
-- тест `tests/test_cost_types.py`.
+- паритет Telegram/Excel/Web: `quote` = результат, сумма строк = `cost_price`;
+- тесты `tests/test_cost_types.py`, `tests/test_interface_parity.py`.
 
 ## Проверки
 
 | Проверка | Результат |
 |---|---|
-| `pytest -q` | **751 passed, 1 skipped** |
+| `pytest -q` | **754 passed, 1 skipped** |
 | `check_phases.py` | 59/59 |
 | `ruff check app` | чисто |
 | Alembic | `a8c1e3f5b7d9` (head) |
